@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sidebar: #1e1e24;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

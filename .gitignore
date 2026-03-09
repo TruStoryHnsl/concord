@@ -1,0 +1,32 @@
+# Environment secrets
+.env
+.env.production
+.env.*.local
+
+# Docker volume data
+data/
+
+# Node
+node_modules/
+client/node_modules/
+
+# Desktop app
+desktop/node_modules/
+desktop/dist/
+downloads/
+
+# Python
+__pycache__/
+*.pyc
+server/.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Build caches
+.vite/
+
+# OS
+.DS_Store
+*.log
