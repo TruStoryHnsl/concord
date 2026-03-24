@@ -1,7 +1,109 @@
+import { useState, useEffect } from "react";
 import type { ChatMessage } from "../../hooks/useMatrix";
+import { useAuthStore } from "../../stores/auth";
 
 interface MessageContentProps {
   message: ChatMessage;
+}
+
+interface PreviewData {
+  title: string;
+  description: string | null;
+  image: string | null;
+  url: string;
+}
+
+// Module-level cache so the same URL isn't fetched multiple times across renders
+const previewCache = new Map<string, PreviewData | null>();
+
+const URL_REGEX = /https?:\/\/[^\s<>"]+[^\s<>"',;)]+/g;
+
+function extractUrls(text: string): string[] {
+  return [...new Set(text.match(URL_REGEX) ?? [])].slice(0, 3);
+}
+
+function TextWithLinks({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(URL_REGEX)) {
+    const url = match[0];
+    const start = match.index!;
+    if (start > lastIndex) {
+      parts.push(text.slice(lastIndex, start));
+    }
+    parts.push(
+      <a
+        key={start}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-indigo-400 hover:text-indigo-300 hover:underline break-all"
+      >
+        {url}
+      </a>,
+    );
+    lastIndex = start + url.length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return <>{parts}</>;
+}
+
+function LinkPreview({ url }: { url: string }) {
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const [data, setData] = useState<PreviewData | null | undefined>(
+    previewCache.has(url) ? previewCache.get(url) : undefined,
+  );
+
+  useEffect(() => {
+    if (!accessToken || previewCache.has(url)) return;
+
+    fetch(`/api/preview?url=${encodeURIComponent(url)}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: PreviewData | null) => {
+        previewCache.set(url, d);
+        setData(d);
+      })
+      .catch(() => {
+        previewCache.set(url, null);
+        setData(null);
+      });
+  }, [url, accessToken]);
+
+  if (!data) return null;
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block mt-2 max-w-sm border border-zinc-700 rounded-lg overflow-hidden hover:border-zinc-500 transition-colors bg-zinc-800/50"
+    >
+      {data.image && (
+        <img
+          src={data.image}
+          alt=""
+          className="w-full h-32 object-cover"
+          loading="lazy"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      )}
+      <div className="p-3">
+        <p className="text-sm font-medium text-zinc-100 truncate">{data.title}</p>
+        {data.description && (
+          <p className="text-xs text-zinc-400 mt-1 line-clamp-2">{data.description}</p>
+        )}
+        <p className="text-xs text-zinc-500 mt-1 truncate">{new URL(url).hostname}</p>
+      </div>
+    </a>
+  );
 }
 
 function formatSize(bytes: number): string {
@@ -95,6 +197,14 @@ export function MessageContent({ message }: MessageContentProps) {
     );
   }
 
-  // m.text or fallback
-  return <span className="text-sm text-zinc-200">{body}</span>;
+  // m.text or fallback — render with clickable links and URL previews
+  const urls = extractUrls(body);
+  return (
+    <div className="text-sm text-zinc-200">
+      <TextWithLinks text={body} />
+      {urls.map((u) => (
+        <LinkPreview key={u} url={u} />
+      ))}
+    </div>
+  );
 }

@@ -14,7 +14,7 @@ interface AuthState {
   restoreSession: () => boolean;
 }
 
-const STORAGE_KEY = "concorrd_session";
+const STORAGE_KEY = "concord_session";
 
 interface StoredSession {
   accessToken: string;

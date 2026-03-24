@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import shutil
 import time
 from typing import Literal
@@ -15,6 +16,8 @@ from database import get_db
 from dependencies import require_server_member, require_server_admin, require_server_owner
 from models import Server, Channel, ServerMember, ServerBan, ServerWhitelist, SoundboardClip
 from services.matrix_admin import create_matrix_room, join_room
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
 
@@ -54,6 +57,7 @@ class ServerOut(BaseModel):
     owner_id: str
     visibility: str
     abbreviation: str | None
+    media_uploads_enabled: bool = True
     channels: list[ChannelOut]
 
     model_config = {"from_attributes": True}
@@ -63,6 +67,7 @@ class ServerSettingsUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     visibility: str | None = None
     abbreviation: str | None = Field(default=None, max_length=3)
+    media_uploads_enabled: bool | None = None
 
 
 class MemberOut(BaseModel):
@@ -70,6 +75,8 @@ class MemberOut(BaseModel):
     role: str
     display_name: str | None
     joined_at: str
+    can_kick: bool = False
+    can_ban: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -131,8 +138,10 @@ async def get_user_id(authorization: str = Header(...)) -> str:
         raise HTTPException(502, "Unable to reach Matrix homeserver for auth")
 
     if resp.status_code == 401:
+        logger.warning("Auth failed: invalid or expired token (first 8 chars: %s...)", token[:8])
         raise HTTPException(401, "Invalid or expired access token")
     if resp.status_code != 200:
+        logger.warning("Auth failed: Matrix homeserver returned %d", resp.status_code)
         raise HTTPException(502, "Matrix homeserver auth check failed")
 
     user_id = resp.json().get("user_id")
@@ -177,6 +186,43 @@ async def list_servers(
         .order_by(Server.created_at)
     )
     return result.scalars().all()
+
+
+@router.get("/default")
+async def get_default_server(
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the default public lobby server info."""
+    import json
+    from config import INSTANCE_SETTINGS_FILE
+
+    settings: dict = {}
+    if INSTANCE_SETTINGS_FILE.exists():
+        settings = json.loads(INSTANCE_SETTINGS_FILE.read_text())
+
+    server_id = settings.get("default_server_id")
+    if not server_id:
+        return {"server_id": None}
+
+    # Check if user is already a member
+    existing = await db.execute(
+        select(ServerMember).where(
+            ServerMember.server_id == server_id,
+            ServerMember.user_id == user_id,
+        )
+    )
+    is_member = existing.scalar_one_or_none() is not None
+
+    server = await db.get(Server, server_id)
+    if not server:
+        return {"server_id": None}
+
+    return {
+        "server_id": server_id,
+        "server_name": server.name,
+        "is_member": is_member,
+    }
 
 
 @router.post("", response_model=ServerOut)
@@ -408,6 +454,34 @@ async def join_server(
     return {"status": "joined"}
 
 
+@router.post("/{server_id}/rejoin")
+async def rejoin_server_rooms(
+    server_id: str,
+    user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-join all Matrix rooms for a server. Fixes membership after server restarts."""
+    membership = await db.execute(
+        select(ServerMember).where(
+            ServerMember.server_id == server_id,
+            ServerMember.user_id == user_id,
+        )
+    )
+    if not membership.scalar_one_or_none():
+        raise HTTPException(403, "Not a member of this server")
+
+    result = await db.execute(select(Channel).where(Channel.server_id == server_id))
+    joined = 0
+    for channel in result.scalars().all():
+        try:
+            await join_room(access_token, channel.matrix_room_id)
+            joined += 1
+        except Exception:
+            pass
+    return {"status": "ok", "rooms_joined": joined}
+
+
 # --- Server Settings ---
 
 @router.get("/{server_id}/settings")
@@ -428,6 +502,7 @@ async def get_server_settings(
         "abbreviation": server.abbreviation,
         "icon_url": server.icon_url,
         "owner_id": server.owner_id,
+        "media_uploads_enabled": server.media_uploads_enabled,
     }
 
 
@@ -452,6 +527,8 @@ async def update_server_settings(
         server.visibility = body.visibility
     if body.abbreviation is not None:
         server.abbreviation = body.abbreviation if body.abbreviation else None
+    if body.media_uploads_enabled is not None:
+        server.media_uploads_enabled = body.media_uploads_enabled
 
     await db.commit()
     return {
@@ -459,6 +536,7 @@ async def update_server_settings(
         "name": server.name,
         "visibility": server.visibility,
         "abbreviation": server.abbreviation,
+        "media_uploads_enabled": server.media_uploads_enabled,
     }
 
 
@@ -484,6 +562,8 @@ async def list_members(
             role=m.role,
             display_name=m.display_name,
             joined_at=m.joined_at.isoformat(),
+            can_kick=m.can_kick,
+            can_ban=m.can_ban,
         )
         for m in members
     ]

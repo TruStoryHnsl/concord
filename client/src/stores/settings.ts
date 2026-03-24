@@ -168,7 +168,7 @@ export const useSettingsStore = create<SettingsState>()(
       resetToDefaults: () => set({ ...defaults, userVolumes: {}, userMuted: {}, serverNotifications: {}, channelNotifications: {} }),
     }),
     {
-      name: "concorrd_settings",
+      name: "concord_settings",
       partialize: ({ settingsOpen: _, settingsTab: __, serverSettingsId: ___, ...persisted }) => {
         return persisted;
       },

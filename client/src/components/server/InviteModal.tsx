@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
-import { createInvite, sendEmailInvite, checkEmailAvailable } from "../../api/concorrd";
+import { createInvite, sendEmailInvite, checkEmailAvailable } from "../../api/concord";
 
 interface Props {
   serverId: string;

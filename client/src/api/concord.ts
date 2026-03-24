@@ -15,6 +15,7 @@ export interface Server {
   owner_id: string;
   visibility: string;
   abbreviation: string | null;
+  media_uploads_enabled: boolean;
   channels: Channel[];
 }
 
@@ -35,6 +36,8 @@ export interface ServerMember {
   role: string;
   display_name: string | null;
   joined_at: string;
+  can_kick: boolean;
+  can_ban: boolean;
 }
 
 export interface ServerDiscoverResult {
@@ -247,6 +250,7 @@ export interface SoundboardClip {
   server_id: string;
   uploaded_by: string;
   duration: number | null;
+  keybind: string | null;
   url: string;
 }
 
@@ -279,6 +283,18 @@ export async function uploadSoundboardClip(
   }
 
   return resp.json();
+}
+
+export async function updateSoundboardClip(
+  clipId: number,
+  updates: { name?: string; keybind?: string },
+  accessToken: string,
+): Promise<{ status: string; name: string; keybind: string | null }> {
+  return apiFetch(
+    `/soundboard/${clipId}`,
+    { method: "PATCH", body: JSON.stringify(updates) },
+    accessToken,
+  );
 }
 
 export async function deleteSoundboardClip(
@@ -344,11 +360,24 @@ export async function discoverServers(
   return apiFetch(`/servers/discover${q}`, {}, accessToken);
 }
 
+export async function getDefaultServer(
+  accessToken: string,
+): Promise<{ server_id: string | null; server_name?: string; is_member?: boolean }> {
+  return apiFetch("/servers/default", {}, accessToken);
+}
+
 export async function joinServer(
   serverId: string,
   accessToken: string,
 ): Promise<void> {
   await apiFetch(`/servers/${serverId}/join`, { method: "POST" }, accessToken);
+}
+
+export async function rejoinServerRooms(
+  serverId: string,
+  accessToken: string,
+): Promise<{ status: string; rooms_joined: number }> {
+  return apiFetch(`/servers/${serverId}/rejoin`, { method: "POST" }, accessToken);
 }
 
 // --- Server Settings ---
@@ -362,9 +391,9 @@ export async function getServerSettings(
 
 export async function updateServerSettings(
   serverId: string,
-  settings: { name?: string; visibility?: string; abbreviation?: string | null },
+  settings: { name?: string; visibility?: string; abbreviation?: string | null; media_uploads_enabled?: boolean },
   accessToken: string,
-): Promise<{ id: string; name: string; visibility: string; abbreviation: string | null }> {
+): Promise<{ id: string; name: string; visibility: string; abbreviation: string | null; media_uploads_enabled: boolean }> {
   return apiFetch(
     `/servers/${serverId}/settings`,
     { method: "PATCH", body: JSON.stringify(settings) },
@@ -708,19 +737,184 @@ export async function respondToDirectInvite(
   );
 }
 
+// --- Stats ---
+
+export interface StatsDay {
+  day: string;
+  voice_seconds: number;
+  messages: number;
+}
+
+export interface UserStats {
+  total_voice_seconds: number;
+  total_messages: number;
+  active_since: string | null;
+  daily: StatsDay[];
+}
+
+export async function startVoiceSession(
+  channelId: string,
+  serverId: string,
+  accessToken: string,
+): Promise<{ session_id: number }> {
+  return apiFetch(
+    "/stats/voice/start",
+    { method: "POST", body: JSON.stringify({ channel_id: channelId, server_id: serverId }) },
+    accessToken,
+  );
+}
+
+export async function endVoiceSession(
+  sessionId: number,
+  accessToken: string,
+): Promise<{ status: string; duration_seconds?: number }> {
+  return apiFetch(
+    "/stats/voice/end",
+    { method: "POST", body: JSON.stringify({ session_id: sessionId }) },
+    accessToken,
+  );
+}
+
+export async function incrementMessageCount(
+  channelId: string,
+  serverId: string,
+  accessToken: string,
+): Promise<void> {
+  apiFetch(
+    "/stats/messages/increment",
+    { method: "POST", body: JSON.stringify({ channel_id: channelId, server_id: serverId }) },
+    accessToken,
+  ).catch(() => {}); // fire-and-forget
+}
+
+export async function getMyStats(
+  accessToken: string,
+  days = 30,
+): Promise<UserStats> {
+  return apiFetch(`/stats/me?days=${days}`, {}, accessToken);
+}
+
+// --- TOTP ---
+
+export interface TOTPSetupResult {
+  secret: string;
+  qr_code: string;
+  provisioning_uri: string;
+}
+
+export async function getTOTPStatus(accessToken: string): Promise<{ enabled: boolean }> {
+  return apiFetch("/user/totp/status", {}, accessToken);
+}
+
+export async function setupTOTP(accessToken: string): Promise<TOTPSetupResult> {
+  return apiFetch("/user/totp/setup", { method: "POST" }, accessToken);
+}
+
+export async function verifyTOTP(code: string, accessToken: string): Promise<{ status: string }> {
+  return apiFetch("/user/totp/verify", { method: "POST", body: JSON.stringify({ code }) }, accessToken);
+}
+
+export async function disableTOTP(code: string, accessToken: string): Promise<{ status: string }> {
+  return apiFetch("/user/totp/disable", { method: "POST", body: JSON.stringify({ code }) }, accessToken);
+}
+
+export async function loginVerifyTOTP(code: string, accessToken: string): Promise<{ status: string }> {
+  return apiFetch("/user/totp/login-verify", { method: "POST", body: JSON.stringify({ code }) }, accessToken);
+}
+
+export async function getUsersWithTOTP(accessToken: string): Promise<{ user_ids: string[] }> {
+  return apiFetch("/user/totp/users-with-totp", {}, accessToken);
+}
+
+// --- Channel Locks ---
+
+export async function lockChannel(channelId: number, pin: string, accessToken: string): Promise<{ status: string }> {
+  return apiFetch(`/channels/${channelId}/lock`, { method: "POST", body: JSON.stringify({ pin }) }, accessToken);
+}
+
+export async function unlockChannel(channelId: number, pin: string, accessToken: string): Promise<{ status: string }> {
+  return apiFetch(`/channels/${channelId}/unlock`, { method: "POST", body: JSON.stringify({ pin }) }, accessToken);
+}
+
+export async function verifyChannelPin(channelId: number, pin: string, accessToken: string): Promise<{ status: string }> {
+  return apiFetch(`/channels/${channelId}/verify-pin`, { method: "POST", body: JSON.stringify({ pin }) }, accessToken);
+}
+
+export async function getChannelLockStatus(channelId: number, accessToken: string): Promise<{ locked: boolean; locked_by: string | null; is_owner: boolean }> {
+  return apiFetch(`/channels/${channelId}/lock-status`, {}, accessToken);
+}
+
+// --- Vote Kick ---
+
+export async function startVoteKick(serverId: string, channelId: string, targetUserId: string, totalEligible: number, accessToken: string): Promise<{ vote_id: number; status: string }> {
+  return apiFetch(`/servers/${serverId}/vote-kick`, { method: "POST", body: JSON.stringify({ channel_id: channelId, target_user_id: targetUserId, total_eligible: totalEligible }) }, accessToken);
+}
+
+export async function castVoteKick(voteId: number, vote: boolean, accessToken: string): Promise<{ status: string; yes_count: number; no_count: number }> {
+  return apiFetch(`/vote-kicks/${voteId}/vote`, { method: "POST", body: JSON.stringify({ vote }) }, accessToken);
+}
+
+export async function getActiveVoteKicks(serverId: string, accessToken: string): Promise<{ id: number; channel_id: string; target_user_id: string; initiated_by: string; yes_count: number; no_count: number; total_eligible: number }[]> {
+  return apiFetch(`/servers/${serverId}/vote-kicks/active`, {}, accessToken);
+}
+
+export async function executeVoteKick(voteId: number, accessToken: string): Promise<{ status: string; kick_count: number; kick_limit?: number; ban_mode?: string; show_harsh_message?: boolean }> {
+  return apiFetch(`/vote-kicks/${voteId}/execute`, { method: "POST" }, accessToken);
+}
+
+// --- Ban Settings ---
+
+export interface BanSettings {
+  kick_limit: number;
+  kick_window_minutes: number;
+  ban_mode: string;
+}
+
+export async function getBanSettings(serverId: string, accessToken: string): Promise<BanSettings> {
+  return apiFetch(`/servers/${serverId}/ban-settings`, {}, accessToken);
+}
+
+export async function updateBanSettings(serverId: string, settings: Partial<BanSettings>, accessToken: string): Promise<BanSettings> {
+  return apiFetch(`/servers/${serverId}/ban-settings`, { method: "PATCH", body: JSON.stringify(settings) }, accessToken);
+}
+
+export async function getMyKickCount(serverId: string, accessToken: string): Promise<{ kick_count: number; kick_limit: number; kick_window_minutes: number; ban_mode: string }> {
+  return apiFetch(`/servers/${serverId}/my-kicks`, {}, accessToken);
+}
+
+// --- Member Permissions ---
+
+export async function updateMemberPermissions(
+  serverId: string,
+  userId: string,
+  permissions: { can_kick?: boolean; can_ban?: boolean },
+  accessToken: string,
+): Promise<{ status: string }> {
+  return apiFetch(
+    `/servers/${serverId}/members/${encodeURIComponent(userId)}/permissions`,
+    { method: "PATCH", body: JSON.stringify(permissions) },
+    accessToken,
+  );
+}
+
 // --- Instance ---
 
-export async function getInstanceInfo(): Promise<{ name: string }> {
+export interface InstanceInfo {
+  name: string;
+  require_totp: boolean;
+}
+
+export async function getInstanceInfo(): Promise<InstanceInfo> {
   return apiFetch("/instance");
 }
 
-export async function updateInstanceName(
-  name: string,
+export async function updateInstanceSettings(
+  settings: { name?: string; require_totp?: boolean },
   accessToken: string,
-): Promise<{ name: string }> {
+): Promise<InstanceInfo> {
   return apiFetch(
     "/admin/instance",
-    { method: "PATCH", body: JSON.stringify({ name }) },
+    { method: "PATCH", body: JSON.stringify(settings) },
     accessToken,
   );
 }

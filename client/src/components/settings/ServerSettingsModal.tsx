@@ -19,10 +19,14 @@ import {
   toggleWebhook,
   searchUsers,
   sendDirectInvite,
-} from "../../api/concorrd";
-import type { ServerMember, ServerBan, ServerWhitelistEntry, Webhook, UserSearchResult } from "../../api/concorrd";
+  getBanSettings,
+  updateBanSettings,
+  updateMemberPermissions,
+  type BanSettings,
+} from "../../api/concord";
+import type { ServerMember, ServerBan, ServerWhitelistEntry, Webhook, UserSearchResult } from "../../api/concord";
 
-type Tab = "general" | "members" | "invite" | "bans" | "whitelist" | "webhooks";
+type Tab = "general" | "members" | "invite" | "bans" | "whitelist" | "webhooks" | "moderation";
 
 interface Props {
   serverId: string;
@@ -54,6 +58,9 @@ export function ServerSettingsPanel({ serverId }: Props) {
       ? [{ key: "whitelist" as Tab, label: "Whitelist" }]
       : []),
     { key: "webhooks" as Tab, label: "Webhooks" },
+    ...(isOwner || isAdmin
+      ? [{ key: "moderation" as Tab, label: "Moderation" }]
+      : []),
   ];
 
   return (
@@ -95,6 +102,9 @@ export function ServerSettingsPanel({ serverId }: Props) {
         {tab === "webhooks" && (
           <WebhooksTab serverId={serverId} accessToken={accessToken} />
         )}
+        {tab === "moderation" && (
+          <ModerationTab serverId={serverId} accessToken={accessToken} />
+        )}
       </div>
     </div>
   );
@@ -108,6 +118,7 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
   const [name, setName] = useState(server?.name ?? "");
   const [abbreviation, setAbbreviation] = useState(server?.abbreviation ?? "");
   const [visibility, setVisibility] = useState(server?.visibility ?? "private");
+  const [mediaUploads, setMediaUploads] = useState(server?.media_uploads_enabled ?? true);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -119,6 +130,7 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
           name: name || undefined,
           visibility,
           abbreviation: abbreviation || null,
+          media_uploads_enabled: mediaUploads,
         },
         accessToken,
       );
@@ -126,6 +138,7 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
         name: result.name,
         visibility: result.visibility,
         abbreviation: result.abbreviation,
+        media_uploads_enabled: result.media_uploads_enabled,
       });
       addToast("Settings saved", "success");
     } catch (err) {
@@ -203,6 +216,30 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
           {visibility === "private"
             ? "Only invited users can join"
             : "Anyone can find and join this server"}
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-zinc-300 mb-2">
+          Media Uploads
+        </label>
+        <button
+          onClick={() => setMediaUploads(!mediaUploads)}
+          className={`relative w-10 h-5 rounded-full transition-colors ${
+            mediaUploads ? "bg-indigo-600" : "bg-zinc-600"
+          }`}
+          title={mediaUploads ? "Disable media uploads" : "Enable media uploads"}
+        >
+          <div
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              mediaUploads ? "translate-x-5" : ""
+            }`}
+          />
+        </button>
+        <p className="text-xs text-zinc-500 mt-1">
+          {mediaUploads
+            ? "Members can upload images and videos in text channels"
+            : "Image and video uploads are disabled in this server"}
         </p>
       </div>
 
@@ -696,6 +733,217 @@ function WebhooksTab({ serverId, accessToken }: { serverId: string; accessToken:
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ModerationTab({ serverId, accessToken }: { serverId: string; accessToken: string }) {
+  const [settings, setSettings] = useState<BanSettings | null>(null);
+  const [members, setMembers] = useState<ServerMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const addToast = useToastStore((s) => s.addToast);
+
+  const [kickLimit, setKickLimit] = useState(3);
+  const [kickWindow, setKickWindow] = useState(30);
+  const [banMode, setBanMode] = useState("soft");
+
+  const load = useCallback(async () => {
+    try {
+      const [banSettings, memberList] = await Promise.all([
+        getBanSettings(serverId, accessToken),
+        listMembers(serverId, accessToken),
+      ]);
+      setSettings(banSettings);
+      setKickLimit(banSettings.kick_limit);
+      setKickWindow(banSettings.kick_window_minutes);
+      setBanMode(banSettings.ban_mode);
+      setMembers(memberList);
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to load moderation settings");
+    } finally {
+      setLoading(false);
+    }
+  }, [serverId, accessToken, addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSaveSettings = async () => {
+    setSaving(true);
+    try {
+      const updated = await updateBanSettings(serverId, {
+        kick_limit: kickLimit,
+        kick_window_minutes: kickWindow,
+        ban_mode: banMode,
+      }, accessToken);
+      setSettings(updated);
+      addToast("Moderation settings saved", "success");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePermissionChange = async (userId: string, perm: "can_kick" | "can_ban", value: boolean) => {
+    try {
+      await updateMemberPermissions(serverId, userId, { [perm]: value }, accessToken);
+      setMembers((prev) =>
+        prev.map((m) => m.user_id === userId ? { ...m, [perm]: value } : m),
+      );
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to update permissions");
+    }
+  };
+
+  if (loading) return <p className="text-zinc-500 text-sm">Loading...</p>;
+
+  const nonOwnerMembers = members.filter((m) => m.role !== "owner");
+
+  return (
+    <div className="space-y-8">
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-white">Moderation Settings</h3>
+        <p className="text-xs text-zinc-500">
+          Configure kick limits and ban behavior for this server.
+        </p>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Kick Limit
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={kickLimit}
+              onChange={(e) => setKickLimit(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              Kicks before ban escalation
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Kick Window (minutes)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={kickWindow}
+              onChange={(e) => setKickWindow(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              Time window for counting kicks
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-zinc-300 mb-2">
+            Ban Mode
+          </label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setBanMode("soft")}
+              className={`px-4 py-2 rounded text-sm transition-colors ${
+                banMode === "soft"
+                  ? "bg-amber-600/30 text-amber-300 border border-amber-600/50"
+                  : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Soft Ban
+            </button>
+            <button
+              onClick={() => setBanMode("harsh")}
+              className={`px-4 py-2 rounded text-sm transition-colors ${
+                banMode === "harsh"
+                  ? "bg-red-600/30 text-red-300 border border-red-600/50"
+                  : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Harsh Ban
+            </button>
+          </div>
+          <p className="text-xs text-zinc-500 mt-1">
+            {banMode === "soft"
+              ? "Soft: Warns the user with escalation details after each kick."
+              : "Harsh: Bans the user's IP address with a dramatic prank overlay."}
+          </p>
+        </div>
+
+        <button
+          onClick={handleSaveSettings}
+          disabled={saving || (
+            settings?.kick_limit === kickLimit &&
+            settings?.kick_window_minutes === kickWindow &&
+            settings?.ban_mode === banMode
+          )}
+          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded transition-colors"
+        >
+          {saving ? "Saving..." : "Save Settings"}
+        </button>
+      </div>
+
+      <div className="border-t border-zinc-700 pt-6 space-y-4">
+        <h3 className="text-lg font-semibold text-white">Member Permissions</h3>
+        <p className="text-xs text-zinc-500">
+          Grant kick/ban permissions to individual members. Admins and owners always have these permissions.
+        </p>
+
+        {nonOwnerMembers.length === 0 ? (
+          <p className="text-zinc-500 text-sm">No non-owner members</p>
+        ) : (
+          <div className="space-y-1">
+            {nonOwnerMembers.map((m) => {
+              const name = m.display_name || m.user_id.split(":")[0].replace("@", "");
+              const isAdmin = m.role === "admin";
+              return (
+                <div
+                  key={m.user_id}
+                  className="flex items-center justify-between px-3 py-2 rounded bg-zinc-800/50"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm text-zinc-200 truncate">{name}</span>
+                    {isAdmin && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-400">
+                        admin
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isAdmin || m.can_kick}
+                        disabled={isAdmin}
+                        onChange={(e) => handlePermissionChange(m.user_id, "can_kick", e.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-700 text-indigo-500 focus:ring-0 focus:ring-offset-0"
+                      />
+                      <span className="text-xs text-zinc-400">Kick</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isAdmin || m.can_ban}
+                        disabled={isAdmin}
+                        onChange={(e) => handlePermissionChange(m.user_id, "can_ban", e.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-700 text-indigo-500 focus:ring-0 focus:ring-offset-0"
+                      />
+                      <span className="text-xs text-zinc-400">Ban</span>
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

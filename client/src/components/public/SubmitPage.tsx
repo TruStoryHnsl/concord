@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { getWebhookInfo, submitWebhookMessage } from "../../api/concorrd";
-import type { WebhookInfo } from "../../api/concorrd";
+import { getWebhookInfo, submitWebhookMessage } from "../../api/concord";
+import type { WebhookInfo } from "../../api/concord";
 
 interface Props {
   webhookId: string;

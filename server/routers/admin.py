@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +48,10 @@ def _write_instance_settings(settings: dict) -> None:
 async def get_instance():
     """Return public instance metadata (name, etc)."""
     settings = _read_instance_settings()
-    return {"name": settings.get("name", INSTANCE_NAME_DEFAULT)}
+    return {
+        "name": settings.get("name", INSTANCE_NAME_DEFAULT),
+        "require_totp": settings.get("require_totp", False),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +158,8 @@ async def admin_check(user_id: str = Depends(get_user_id)):
 # ---------------------------------------------------------------------------
 
 class InstanceUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
+    name: str | None = None
+    require_totp: bool | None = None
 
 
 @router.patch("/api/admin/instance")
@@ -166,9 +170,18 @@ async def admin_update_instance(
     """Update instance settings (admin only)."""
     require_admin(user_id)
     settings = _read_instance_settings()
-    settings["name"] = body.name
+    if body.name is not None:
+        if len(body.name) < 1 or len(body.name) > 64:
+            from fastapi import HTTPException
+            raise HTTPException(400, "Name must be 1-64 characters")
+        settings["name"] = body.name
+    if body.require_totp is not None:
+        settings["require_totp"] = body.require_totp
     _write_instance_settings(settings)
-    return {"name": body.name}
+    return {
+        "name": settings.get("name", INSTANCE_NAME_DEFAULT),
+        "require_totp": settings.get("require_totp", False),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +229,8 @@ async def admin_stats(
 async def admin_list_servers(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all servers with member counts."""
     require_admin(user_id)
@@ -232,6 +247,8 @@ async def admin_list_servers(
         .outerjoin(ServerMember, ServerMember.server_id == Server.id)
         .group_by(Server.id)
         .order_by(Server.created_at)
+        .limit(limit)
+        .offset(offset)
     )
 
     return [
@@ -255,6 +272,8 @@ async def admin_list_servers(
 async def admin_list_users(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all unique users with their server memberships."""
     require_admin(user_id)
@@ -268,6 +287,8 @@ async def admin_list_users(
         )
         .group_by(ServerMember.user_id)
         .order_by(func.min(ServerMember.joined_at))
+        .limit(limit)
+        .offset(offset)
     )
 
     users = []

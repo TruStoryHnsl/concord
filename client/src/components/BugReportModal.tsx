@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuthStore } from "../stores/auth";
 import { useVoiceStore } from "../stores/voice";
 import { useToastStore } from "../stores/toast";
-import { submitBugReport } from "../api/concorrd";
+import { submitBugReport } from "../api/concord";
 
 function gatherSystemInfo(): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -8,12 +8,12 @@ import {
   getAdminReports,
   updateAdminReport,
   getInstanceInfo,
-  updateInstanceName,
+  updateInstanceSettings,
   type AdminStats,
   type AdminServer,
   type AdminUser,
   type AdminBugReport,
-} from "../../api/concorrd";
+} from "../../api/concord";
 
 type Section = "overview" | "instance" | "servers" | "users" | "reports";
 
@@ -106,17 +106,21 @@ function OverviewSection({ token }: { token: string | null }) {
 function InstanceSection({ token }: { token: string | null }) {
   const addToast = useToastStore((s) => s.addToast);
   const [name, setName] = useState("");
+  const [requireTOTP, setRequireTOTP] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getInstanceInfo().then((info) => setName(info.name)).catch(() => {});
+    getInstanceInfo().then((info) => {
+      setName(info.name);
+      setRequireTOTP(info.require_totp);
+    }).catch(() => {});
   }, []);
 
-  const handleSave = async () => {
+  const handleSaveName = async () => {
     if (!token || !name.trim()) return;
     setSaving(true);
     try {
-      const result = await updateInstanceName(name.trim(), token);
+      const result = await updateInstanceSettings({ name: name.trim() }, token);
       setName(result.name);
       document.title = result.name;
       addToast("Instance name updated", "success");
@@ -127,8 +131,24 @@ function InstanceSection({ token }: { token: string | null }) {
     }
   };
 
+  const handleToggleTOTP = async () => {
+    if (!token) return;
+    try {
+      const result = await updateInstanceSettings({ require_totp: !requireTOTP }, token);
+      setRequireTOTP(result.require_totp);
+      addToast(
+        result.require_totp
+          ? "Two-factor authentication is now required"
+          : "Two-factor authentication requirement removed",
+        "success",
+      );
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to update", "error");
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <label className="text-sm text-zinc-400 block mb-1">Instance Name</label>
         <p className="text-xs text-zinc-500 mb-2">
@@ -144,11 +164,34 @@ function InstanceSection({ token }: { token: string | null }) {
             placeholder="Concord"
           />
           <button
-            onClick={handleSave}
+            onClick={handleSaveName}
             disabled={saving || !name.trim()}
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded transition-colors"
           >
             {saving ? "..." : "Save"}
+          </button>
+        </div>
+      </div>
+
+      <div className="border-t border-zinc-700 pt-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <label className="text-sm text-zinc-400 block">Require Two-Factor Authentication</label>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              When enabled, all users must set up an authenticator app to log in.
+            </p>
+          </div>
+          <button
+            onClick={handleToggleTOTP}
+            className={`relative w-11 h-6 rounded-full transition-colors ${
+              requireTOTP ? "bg-indigo-600" : "bg-zinc-700"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                requireTOTP ? "translate-x-5" : ""
+              }`}
+            />
           </button>
         </div>
       </div>

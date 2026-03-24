@@ -26,7 +26,9 @@ export async function getVoiceToken(
   });
 
   if (!resp.ok) {
-    throw new Error("Failed to get voice token");
+    const error = await resp.json().catch(() => ({ detail: resp.statusText }));
+    const message = typeof error.detail === "string" ? error.detail : "Failed to get voice token";
+    throw new Error(message);
   }
 
   return resp.json();

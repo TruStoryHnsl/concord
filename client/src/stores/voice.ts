@@ -1,6 +1,9 @@
 import { create } from "zustand";
+import { startVoiceSession, endVoiceSession } from "../api/concord";
+import { useAuthStore } from "./auth";
 
-const VOICE_SESSION_KEY = "concorrd_voice_session";
+const VOICE_SESSION_KEY = "concord_voice_session";
+const VOICE_STATS_SESSION_KEY = "concord_voice_stats_session";
 
 interface VoiceSession {
   serverId: string;
@@ -19,6 +22,7 @@ interface VoiceState {
   channelName: string | null;
   roomName: string | null; // LiveKit room name (same as matrix room id)
   micGranted: boolean;
+  statsSessionId: number | null;
 
   connect: (params: {
     token: string;
@@ -49,7 +53,7 @@ export function clearPendingVoiceSession(): void {
   sessionStorage.removeItem(VOICE_SESSION_KEY);
 }
 
-export const useVoiceStore = create<VoiceState>((set) => ({
+export const useVoiceStore = create<VoiceState>((set, get) => ({
   connected: false,
   token: null,
   livekitUrl: null,
@@ -59,6 +63,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   channelName: null,
   roomName: null,
   micGranted: false,
+  statsSessionId: null,
 
   connect: (params) => {
     // Persist session info so we can reconnect after page refresh
@@ -78,9 +83,32 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       connected: true,
       ...params,
     });
+
+    // Start stats tracking (fire-and-forget)
+    const token = useAuthStore.getState().accessToken;
+    if (token) {
+      startVoiceSession(params.channelId, params.serverId, token)
+        .then((res) => {
+          set({ statsSessionId: res.session_id });
+          try {
+            sessionStorage.setItem(VOICE_STATS_SESSION_KEY, String(res.session_id));
+          } catch {}
+        })
+        .catch(() => {});
+    }
   },
 
   disconnect: () => {
+    // End stats tracking (fire-and-forget)
+    const sessionId = get().statsSessionId || Number(sessionStorage.getItem(VOICE_STATS_SESSION_KEY) || 0);
+    if (sessionId) {
+      const token = useAuthStore.getState().accessToken;
+      if (token) {
+        endVoiceSession(sessionId, token).catch(() => {});
+      }
+      try { sessionStorage.removeItem(VOICE_STATS_SESSION_KEY); } catch {}
+    }
+
     clearPendingVoiceSession();
     set({
       connected: false,
@@ -92,6 +120,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       channelName: null,
       roomName: null,
       micGranted: false,
+      statsSessionId: null,
     });
   },
 }));

@@ -1,5 +1,6 @@
 import time
 from collections import defaultdict, deque
+from html import escape as html_escape
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -230,11 +231,14 @@ async def submit_webhook_message(
     if not channel:
         raise HTTPException(500, "Webhook channel not found")
 
-    # Format and send message
+    # Format and send message (HTML-escape user-supplied content to prevent XSS)
     username = body.username.strip() or "Anonymous"
+    safe_name = html_escape(webhook.name)
+    safe_username = html_escape(username)
+    safe_content = html_escape(body.content)
     formatted_body = f"**[{webhook.name}]** {username}\n\n{body.content}"
     html_body = (
-        f"<strong>[{webhook.name}]</strong> {username}<br><br>{body.content}"
+        f"<strong>[{safe_name}]</strong> {safe_username}<br><br>{safe_content}"
     )
 
     await bot_send_message(channel.matrix_room_id, {

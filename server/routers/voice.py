@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import require_server_member
-from models import Channel
+from models import Channel, ServerMember
 from routers.servers import get_user_id
 from services.livekit_tokens import generate_token, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
@@ -110,14 +110,37 @@ class VoiceParticipant(BaseModel):
 async def get_voice_participants(
     rooms: str = Query(..., description="Comma-separated room IDs"),
     user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
 ):
     """List active participants in voice channels.
 
     Returns a dict of room_id → participant list for each requested room.
+    Only returns data for rooms the user has access to (member of the server).
     """
     room_ids = [r.strip() for r in rooms.split(",") if r.strip()]
     if not room_ids:
         return {}
+
+    # Filter to only rooms the user has access to via server membership
+    accessible_rooms = set()
+    for room_id in room_ids:
+        result = await db.execute(
+            select(Channel).where(Channel.matrix_room_id == room_id)
+        )
+        channel = result.scalar_one_or_none()
+        if channel:
+            member_result = await db.execute(
+                select(ServerMember).where(
+                    ServerMember.server_id == channel.server_id,
+                    ServerMember.user_id == user_id,
+                )
+            )
+            if member_result.scalar_one_or_none():
+                accessible_rooms.add(room_id)
+
+    if not accessible_rooms:
+        return {}
+    room_ids = list(accessible_rooms)
 
     # Convert ws:// → http:// for LiveKit REST API
     lk_url = LIVEKIT_URL.replace("ws://", "http://").replace("wss://", "https://")

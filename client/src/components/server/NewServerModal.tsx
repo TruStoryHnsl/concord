@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useServerStore } from "../../stores/server";
 import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
-import { discoverServers, joinServer } from "../../api/concorrd";
-import type { ServerDiscoverResult } from "../../api/concorrd";
+import { discoverServers, joinServer } from "../../api/concord";
+import type { ServerDiscoverResult } from "../../api/concord";
 
 type Tab = "browse" | "create";
 

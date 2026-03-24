@@ -1,9 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   useParticipants,
   useLocalParticipant,
   useConnectionState,
   useTracks,
+  VideoTrack,
 } from "@livekit/components-react";
 import { Track, ConnectionState } from "livekit-client";
 import "@livekit/components-styles";
@@ -16,9 +17,12 @@ import { useDisplayName } from "../../hooks/useDisplayName";
 import { useVoiceNotifications } from "../../hooks/useVoiceNotifications";
 import { useMutedSpeaking } from "../../hooks/useMutedSpeaking";
 import { useToastStore } from "../../stores/toast";
-import { updateDisplayName } from "../../api/concorrd";
+import { updateDisplayName, getVoiceParticipants, getChannelLockStatus, verifyChannelPin, startVoteKick, getActiveVoteKicks, lockChannel, unlockChannel, getMyKickCount } from "../../api/concord";
 import { SoundboardPanel } from "./SoundboardPanel";
 import { Avatar } from "../ui/Avatar";
+import { PinDialog } from "../moderation/PinDialog";
+import { VoteKickBanner } from "../moderation/VoteKickBanner";
+import { BanOverlay } from "../moderation/BanOverlay";
 
 interface VoiceChannelProps {
   roomId: string;
@@ -37,6 +41,37 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
   const connect = useVoiceStore((s) => s.connect);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPinDialog, setShowPinDialog] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [pinVerified, setPinVerified] = useState(false);
+
+  // Check lock status
+  const activeChannel = useServerStore((s) => {
+    const server = s.servers.find((sv) => sv.id === serverId);
+    return server?.channels.find((c) => c.matrix_room_id === roomId);
+  });
+
+  useEffect(() => {
+    if (!accessToken || !activeChannel) return;
+    getChannelLockStatus(activeChannel.id, accessToken)
+      .then((res) => setIsLocked(res.locked))
+      .catch(() => {});
+  }, [accessToken, activeChannel]);
+
+  // Fetch participants for preview (before joining)
+  const [previewParticipants, setPreviewParticipants] = useState<{ identity: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!accessToken || !roomId) return;
+    if (voiceConnected && voiceChannelId === roomId) return; // already connected
+    const fetchParticipants = () => {
+      getVoiceParticipants([roomId], accessToken)
+        .then((data) => setPreviewParticipants(data[roomId] || []))
+        .catch(() => {});
+    };
+    fetchParticipants();
+    const interval = setInterval(fetchParticipants, 5000);
+    return () => clearInterval(interval);
+  }, [accessToken, roomId, voiceConnected, voiceChannelId]);
 
   const handleJoin = useCallback(async () => {
     if (!accessToken) return;
@@ -96,22 +131,81 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
 
   // Show join screen if not connected to THIS channel
   if (!voiceConnected || voiceChannelId !== roomId) {
+    const needsPin = isLocked && !pinVerified;
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4">
-        <p className="text-zinc-400">Voice Channel: #{channelName}</p>
+        <p className="text-zinc-400 flex items-center gap-2">
+          {isLocked && (
+            <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          )}
+          Voice Channel: #{channelName}
+        </p>
+
+        {/* Participant preview */}
+        {previewParticipants.length > 0 && (
+          <div className="flex flex-col items-center gap-2">
+            <p className="text-xs text-zinc-500">{previewParticipants.length} in channel</p>
+            <div className={`flex gap-3 ${needsPin ? "opacity-40 blur-[2px]" : ""}`}>
+              {previewParticipants.map((p) => (
+                <div key={p.identity} className="flex flex-col items-center gap-1">
+                  <Avatar userId={p.identity} size="lg" />
+                  <span className="text-xs text-zinc-400 max-w-[80px] truncate">
+                    {p.name || p.identity.split(":")[0].replace("@", "")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {previewParticipants.length === 0 && (
+          <p className="text-zinc-600 text-sm">No one in this channel yet</p>
+        )}
+
         {voiceConnected && voiceChannelId !== roomId && (
           <p className="text-yellow-400 text-sm">
             Already connected to another voice channel. Leave first.
           </p>
         )}
-        <button
-          onClick={handleJoin}
-          disabled={connecting || (voiceConnected && voiceChannelId !== roomId)}
-          className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 text-white font-medium rounded-lg transition-colors"
-        >
-          {connecting ? "Connecting..." : "Join Voice"}
-        </button>
+
+        {needsPin ? (
+          <button
+            onClick={() => setShowPinDialog(true)}
+            disabled={voiceConnected && voiceChannelId !== roomId}
+            className="px-6 py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            Enter PIN to Join
+          </button>
+        ) : (
+          <button
+            onClick={handleJoin}
+            disabled={connecting || (voiceConnected && voiceChannelId !== roomId)}
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 text-white font-medium rounded-lg transition-colors"
+          >
+            {connecting ? "Connecting..." : "Join Voice"}
+          </button>
+        )}
         {error && <p className="text-red-400 text-sm">{error}</p>}
+
+        {showPinDialog && activeChannel && (
+          <PinDialog
+            title="Locked Channel"
+            description="Enter the 4-digit PIN to access this channel."
+            submitLabel="Unlock"
+            onCancel={() => setShowPinDialog(false)}
+            onSubmit={async (pin) => {
+              if (!accessToken) return;
+              await verifyChannelPin(activeChannel.id, pin, accessToken);
+              setPinVerified(true);
+              setShowPinDialog(false);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -132,8 +226,15 @@ function VoiceRoomUI({
   const { localParticipant } = useLocalParticipant();
   const connectionState = useConnectionState();
   const tracks = useTracks([Track.Source.Microphone]);
+  const allCameraTracks = useTracks([Track.Source.Camera]);
+  // Filter to only active (unmuted, subscribed) camera tracks — setCameraEnabled(false)
+  // mutes the publication but useTracks still returns it.
+  const cameraTracks = allCameraTracks.filter(
+    (t) => t.publication && !t.publication.isMuted && t.publication.track,
+  );
   const disconnect = useVoiceStore((s) => s.disconnect);
   const [micError, setMicError] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
   const openSettings = useSettingsStore((s) => s.openSettings);
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
@@ -144,15 +245,125 @@ function VoiceRoomUI({
   const masterOutputVolume = useSettingsStore((s) => s.masterOutputVolume);
   const userMuted = useSettingsStore((s) => s.userMuted);
   const toggleUserMuted = useSettingsStore((s) => s.toggleUserMuted);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const addToast = useToastStore((s) => s.addToast);
+
+  // Vote kick state
+  const [activeVotes, setActiveVotes] = useState<{ id: number; channel_id: string; target_user_id: string; initiated_by: string; yes_count: number; no_count: number; total_eligible: number }[]>([]);
+
+  // Ban overlay state
+  const [banOverlay, setBanOverlay] = useState<{ banMode: "soft" | "harsh"; kickCount: number; kickLimit: number } | null>(null);
+  const lastKickCountRef = useRef<number | null>(null);
+
+  // Poll for active vote kicks
+  useEffect(() => {
+    if (!accessToken) return;
+    const poll = () => {
+      getActiveVoteKicks(serverId, accessToken)
+        .then(setActiveVotes)
+        .catch(() => {});
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [serverId, accessToken]);
+
+  // Poll for kicks against the current user (to detect being vote-kicked)
+  useEffect(() => {
+    if (!accessToken) return;
+    const poll = () => {
+      getMyKickCount(serverId, accessToken)
+        .then((data) => {
+          if (lastKickCountRef.current === null) {
+            lastKickCountRef.current = data.kick_count;
+            return;
+          }
+          if (data.kick_count > lastKickCountRef.current) {
+            lastKickCountRef.current = data.kick_count;
+            // User was kicked — show overlay and disconnect
+            setBanOverlay({
+              banMode: data.ban_mode as "soft" | "harsh",
+              kickCount: data.kick_count,
+              kickLimit: data.kick_limit,
+            });
+            disconnect();
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [serverId, accessToken, disconnect]);
+
+  const handleStartVoteKick = async (targetUserId: string) => {
+    if (!accessToken) return;
+    const channelId = useVoiceStore.getState().channelId;
+    if (!channelId) return;
+    try {
+      // total_eligible = everyone except the target
+      const eligible = participants.length - 1;
+      await startVoteKick(serverId, channelId, targetUserId, eligible, accessToken);
+      addToast("Vote kick started");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to start vote kick");
+    }
+  };
+
+  // Channel lock state for toggle button
+  const [channelLocked, setChannelLocked] = useState(false);
+  const [isLockOwner, setIsLockOwner] = useState(false);
+  const [showLockPinDialog, setShowLockPinDialog] = useState(false);
+  const [lockAction, setLockAction] = useState<"lock" | "unlock">("lock");
+  const activeChannel = useServerStore((s) => {
+    const server = s.servers.find((sv) => sv.id === serverId);
+    return server?.channels.find((c) => c.matrix_room_id === useVoiceStore.getState().channelId);
+  });
+
+  useEffect(() => {
+    if (!accessToken || !activeChannel) return;
+    getChannelLockStatus(activeChannel.id, accessToken)
+      .then((res) => {
+        setChannelLocked(res.locked);
+        setIsLockOwner(res.is_owner);
+      })
+      .catch(() => {});
+  }, [accessToken, activeChannel]);
 
   // Play join/leave sounds
   useVoiceNotifications(participants, localParticipant.identity, masterOutputVolume);
 
   const isMicEnabled = localParticipant.isMicrophoneEnabled;
+  const isCameraEnabled = localParticipant.isCameraEnabled;
   const preferredInputDeviceId = useSettingsStore((s) => s.preferredInputDeviceId);
 
   // Detect speaking while self-muted (local-only reminder)
   const isMutedSpeaking = useMutedSpeaking(isMicEnabled, preferredInputDeviceId ?? undefined);
+
+  const [cameraLoading, setCameraLoading] = useState(false);
+
+  const toggleCamera = useCallback(async () => {
+    setCameraError(null);
+    const enabling = !isCameraEnabled;
+    if (enabling) setCameraLoading(true);
+    try {
+      await localParticipant.setCameraEnabled(enabling);
+    } catch (err) {
+      console.error("Camera toggle failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Permission") || msg.includes("NotAllowed")) {
+        setCameraError(
+          window.isSecureContext
+            ? "Camera permission denied. Check browser settings."
+            : "Camera requires HTTPS.",
+        );
+      } else {
+        setCameraError(msg);
+      }
+    } finally {
+      setCameraLoading(false);
+    }
+  }, [localParticipant, isCameraEnabled]);
 
   const toggleMic = useCallback(async () => {
     setMicError(null);
@@ -200,7 +411,7 @@ function VoiceRoomUI({
           <div className="flex items-center gap-2">
             <button
               onClick={toggleMic}
-              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+              className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${
                 isMicEnabled
                   ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
                   : "bg-red-600/20 hover:bg-red-600/30 text-red-400"
@@ -209,15 +420,65 @@ function VoiceRoomUI({
               {isMicEnabled ? "Mute" : "Unmute"}
             </button>
             <button
+              onClick={toggleCamera}
+              disabled={cameraLoading}
+              className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
+                cameraLoading
+                  ? "bg-indigo-600/20 text-indigo-400 opacity-75 cursor-wait"
+                  : isCameraEnabled
+                    ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400"
+                    : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+              }`}
+              title={cameraLoading ? "Starting camera…" : isCameraEnabled ? "Stop Camera" : "Start Camera"}
+            >
+              {cameraLoading ? (
+                <svg className="w-4 h-4 animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {isCameraEnabled ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z M3 3l18 18" />
+                  )}
+                </svg>
+              )}
+              {cameraLoading ? "Starting…" : isCameraEnabled ? "Camera On" : "Camera"}
+            </button>
+            {isLockOwner && activeChannel && (
+              <button
+                onClick={() => {
+                  setLockAction(channelLocked ? "unlock" : "lock");
+                  setShowLockPinDialog(true);
+                }}
+                className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  channelLocked
+                    ? "bg-amber-600/20 hover:bg-amber-600/30 text-amber-400"
+                    : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                }`}
+                title={channelLocked ? "Unlock Channel" : "Lock Channel"}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {channelLocked ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                  )}
+                </svg>
+              </button>
+            )}
+            <button
               onClick={() => openSettings("audio")}
-              className="px-3 py-1.5 text-sm rounded-md transition-colors bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+              className="btn-press px-3 py-1.5 text-sm rounded-md transition-colors bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
               title="Audio Settings"
             >
               Settings
             </button>
             <button
               onClick={disconnect}
-              className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-sm rounded-md transition-colors"
+              className="btn-press px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-sm rounded-md transition-colors"
             >
               Leave
             </button>
@@ -225,6 +486,9 @@ function VoiceRoomUI({
         </div>
         {micError && (
           <p className="text-red-400 text-xs mt-2">{micError}</p>
+        )}
+        {cameraError && (
+          <p className="text-red-400 text-xs mt-2">{cameraError}</p>
         )}
         {!window.isSecureContext && (
           <p className="text-yellow-500 text-xs mt-2">
@@ -234,153 +498,452 @@ function VoiceRoomUI({
         )}
       </div>
 
-      {/* Participant list */}
-      <div className="flex-1 p-4 overflow-y-auto min-h-0">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {participants.map((p) => {
-            const isSelf = p.identity === localParticipant.identity;
-            const isMuted = !p.isMicrophoneEnabled;
-            const hasAudioTrack = tracks.some(
-              (t) =>
-                t.participant.identity === p.identity &&
-                t.source === Track.Source.Microphone,
-            );
-            const isUserMuted = !isSelf && !!userMuted[p.identity];
-            // Red glow when local user speaks into a muted mic
-            const showMutedSpeaking = isSelf && isMutedSpeaking;
+      {/* Ban overlay */}
+      {banOverlay && (
+        <BanOverlay
+          banMode={banOverlay.banMode}
+          kickCount={banOverlay.kickCount}
+          kickLimit={banOverlay.kickLimit}
+          onDismiss={() => setBanOverlay(null)}
+        />
+      )}
 
-            // Tile background: green for speaking, red for muted-speaking, desaturated red for user-muted
-            const tileBg = showMutedSpeaking
-              ? "bg-red-900/30"
-              : p.isSpeaking && !isUserMuted
-                ? "bg-emerald-900/30"
-                : isUserMuted
-                  ? "bg-red-950/40"
-                  : "bg-zinc-800/50";
-
-            // Avatar ring: green for speaking, red for muted-speaking
-            const ringClass = showMutedSpeaking
-              ? "ring-2 ring-red-500/60"
-              : p.isSpeaking && !isUserMuted
-                ? "ring-2 ring-emerald-500/50"
-                : "";
-
-            return (
-              <div
-                key={p.identity}
-                className={`relative flex flex-col items-center gap-2 p-4 rounded-xl transition-all ${tileBg} ${
-                  isUserMuted ? "opacity-60" : ""
-                }`}
-              >
-                {/* Red overlay stripe for user-muted */}
-                {isUserMuted && (
-                  <div className="absolute inset-0 rounded-xl border border-red-500/30 pointer-events-none" />
-                )}
-                {/* Avatar with speaking/muted-speaking ring */}
-                <div className={`relative rounded-full transition-all ${ringClass}`}>
-                  <Avatar userId={p.identity} size="lg" />
-                  <div
-                    className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-zinc-900 ${
-                      isMuted
-                        ? "bg-red-500"
-                        : hasAudioTrack
-                          ? "bg-emerald-500"
-                          : "bg-yellow-500"
-                    }`}
-                    title={
-                      isMuted
-                        ? "Muted"
-                        : hasAudioTrack
-                          ? "Audio active"
-                          : "No audio track"
-                    }
-                  />
-                </div>
-                {/* Name + status */}
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-1">
-                    <ParticipantNameLabel
-                      userId={p.identity}
-                      isSelf={isSelf}
-                      serverId={serverId}
-                      onClick={() =>
-                        !isSelf &&
-                        setExpandedUser(expandedUser === p.identity ? null : p.identity)
-                      }
-                    />
-                    {!isSelf && (
-                      <button
-                        onClick={() => toggleUserMuted(p.identity)}
-                        className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
-                          userMuted[p.identity]
-                            ? "text-red-400 hover:text-red-300"
-                            : "text-zinc-500 hover:text-zinc-300"
-                        }`}
-                        title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          {userMuted[p.identity] ? (
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                          ) : (
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-2.536a5 5 0 010-7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                          )}
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-zinc-500">
-                    {isUserMuted
-                      ? "Muted by you"
-                      : showMutedSpeaking
-                        ? "Muted"
-                        : isMuted
-                          ? "Muted"
-                          : p.isSpeaking
-                            ? "Speaking"
-                            : "Listening"}
-                  </p>
-                </div>
-                {/* Per-user volume slider (remote participants only, click name to toggle) */}
-                {!isSelf && expandedUser === p.identity && (
-                  <div className="w-full mt-1 flex items-center gap-1.5">
-                    <svg className="w-3 h-3 text-zinc-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                    </svg>
-                    <input
-                      type="range"
-                      min={0}
-                      max={2}
-                      step={0.01}
-                      value={userVolumes[p.identity] ?? 1.0}
-                      onChange={(e) => setUserVolume(p.identity, parseFloat(e.target.value))}
-                      className="w-full h-1 rounded-full appearance-none cursor-pointer bg-zinc-700
-                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5
-                        [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full
-                        [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-sm
-                        [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:h-2.5
-                        [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white
-                        [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-sm"
-                      style={{
-                        background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${((userVolumes[p.identity] ?? 1.0) / 2) * 100}%, #3f3f46 ${((userVolumes[p.identity] ?? 1.0) / 2) * 100}%, #3f3f46 100%)`,
-                      }}
-                      title={`${Math.round((userVolumes[p.identity] ?? 1.0) * 100)}%`}
-                    />
-                    <span className="text-[10px] text-zinc-500 tabular-nums w-7 text-right flex-shrink-0">
-                      {Math.round((userVolumes[p.identity] ?? 1.0) * 100)}%
-                    </span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+      {/* Active vote kick banners */}
+      {activeVotes.length > 0 && (
+        <div className="flex-shrink-0">
+          {activeVotes.map((vote) => (
+            <VoteKickBanner
+              key={vote.id}
+              voteId={vote.id}
+              targetUserId={vote.target_user_id}
+              initiatedBy={vote.initiated_by}
+              yesCount={vote.yes_count}
+              totalEligible={vote.total_eligible}
+              onVoted={() => {
+                // Re-poll immediately after voting
+                if (accessToken) {
+                  getActiveVoteKicks(serverId, accessToken)
+                    .then(setActiveVotes)
+                    .catch(() => {});
+                }
+              }}
+              onKickExecuted={(result) => {
+                if (result.show_harsh_message) {
+                  addToast(`${vote.target_user_id.split(":")[0].replace("@", "")} has been banned`);
+                }
+              }}
+            />
+          ))}
         </div>
-      </div>
+      )}
+
+      {/* Participant list — split into video and audio-only groups */}
+      {(() => {
+        const videoParticipants = participants.filter((p) =>
+          cameraTracks.some((t) => t.participant.identity === p.identity),
+        );
+        const audioOnlyParticipants = participants.filter(
+          (p) => !cameraTracks.some((t) => t.participant.identity === p.identity),
+        );
+        const videoCount = videoParticipants.length;
+        const cols = videoCount <= 1 ? 1 : videoCount <= 4 ? 2 : videoCount <= 9 ? 3 : 4;
+        const rows = Math.ceil(videoCount / cols);
+
+        // Helper to compute per-participant derived state
+        const getParticipantState = (p: (typeof participants)[number]) => {
+          const isSelf = p.identity === localParticipant.identity;
+          const isMuted = !p.isMicrophoneEnabled;
+          const hasAudioTrack = tracks.some(
+            (t) =>
+              t.participant.identity === p.identity &&
+              t.source === Track.Source.Microphone,
+          );
+          const cameraTrack = cameraTracks.find(
+            (t) => t.participant.identity === p.identity,
+          );
+          const isUserMuted = !isSelf && !!userMuted[p.identity];
+          const showMutedSpeaking = isSelf && isMutedSpeaking;
+
+          const tileBg = showMutedSpeaking
+            ? "bg-red-900/30"
+            : p.isSpeaking && !isUserMuted
+              ? "bg-emerald-900/30"
+              : isUserMuted
+                ? "bg-red-950/40"
+                : "bg-zinc-800/50";
+
+          const ringClass = showMutedSpeaking
+            ? "ring-2 ring-red-500/60"
+            : p.isSpeaking && !isUserMuted
+              ? "ring-2 ring-emerald-500/50"
+              : "";
+
+          return { isSelf, isMuted, hasAudioTrack, cameraTrack, isUserMuted, showMutedSpeaking, tileBg, ringClass };
+        };
+
+        // Reusable volume slider + vote kick controls
+        const renderExpandedControls = (p: (typeof participants)[number], isSelf: boolean) =>
+          !isSelf && expandedUser === p.identity && (
+            <div className="w-full mt-1 space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <svg className="w-3 h-3 text-zinc-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                </svg>
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.01}
+                  value={userVolumes[p.identity] ?? 1.0}
+                  onChange={(e) => setUserVolume(p.identity, parseFloat(e.target.value))}
+                  className="w-full h-1 rounded-full appearance-none cursor-pointer bg-zinc-700
+                    [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5
+                    [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full
+                    [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-sm
+                    [&::-moz-range-thumb]:w-2.5 [&::-moz-range-thumb]:h-2.5
+                    [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white
+                    [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-sm"
+                  style={{
+                    background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${((userVolumes[p.identity] ?? 1.0) / 2) * 100}%, #3f3f46 ${((userVolumes[p.identity] ?? 1.0) / 2) * 100}%, #3f3f46 100%)`,
+                  }}
+                  title={`${Math.round((userVolumes[p.identity] ?? 1.0) * 100)}%`}
+                />
+                <span className="text-[10px] text-zinc-500 tabular-nums w-7 text-right flex-shrink-0">
+                  {Math.round((userVolumes[p.identity] ?? 1.0) * 100)}%
+                </span>
+              </div>
+              {participants.length >= 3 && (
+                <button
+                  onClick={() => handleStartVoteKick(p.identity)}
+                  className="w-full text-xs py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded transition-colors"
+                >
+                  Vote Kick
+                </button>
+              )}
+            </div>
+          );
+
+        return (
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* Video grid — takes remaining space when videos exist */}
+            {videoParticipants.length > 0 && (
+              <div className="flex-1 p-2 min-h-0">
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                    gridTemplateRows: `repeat(${rows}, 1fr)`,
+                    gap: "0.5rem",
+                    height: "100%",
+                  }}
+                >
+                  {videoParticipants.map((p) => {
+                    const { isSelf, isMuted, cameraTrack, isUserMuted, showMutedSpeaking } = getParticipantState(p);
+
+                    const borderClass = showMutedSpeaking
+                      ? "border-2 border-red-500/60"
+                      : p.isSpeaking && !isUserMuted
+                        ? "border-2 border-emerald-500/50"
+                        : "border-2 border-transparent";
+
+                    return (
+                      <div
+                        key={p.identity}
+                        className={`relative rounded-lg overflow-hidden ${borderClass} ${isUserMuted ? "opacity-60" : ""}`}
+                      >
+                        {/* Red overlay stripe for user-muted */}
+                        {isUserMuted && (
+                          <div className="absolute inset-0 rounded-lg border border-red-500/30 pointer-events-none z-10" />
+                        )}
+                        {/* Video feed filling the cell, with loading state */}
+                        {cameraTrack ? (
+                          <VideoTrack
+                            trackRef={cameraTrack}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : isSelf && isCameraEnabled ? (
+                          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/80 z-[5]">
+                            <svg className="w-8 h-8 text-indigo-400 animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          </div>
+                        ) : null}
+                        {/* Bottom overlay bar: name + mute dot + controls */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2 z-10">
+                          <div className="flex items-center gap-1.5">
+                            <div
+                              className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                                isMuted ? "bg-red-500" : "bg-emerald-500"
+                              }`}
+                            />
+                            <ParticipantNameLabel
+                              userId={p.identity}
+                              isSelf={isSelf}
+                              serverId={serverId}
+                              onClick={() =>
+                                !isSelf &&
+                                setExpandedUser(expandedUser === p.identity ? null : p.identity)
+                              }
+                            />
+                            {!isSelf && (
+                              <button
+                                onClick={() => toggleUserMuted(p.identity)}
+                                className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
+                                  userMuted[p.identity]
+                                    ? "text-red-400 hover:text-red-300"
+                                    : "text-zinc-400 hover:text-zinc-200"
+                                }`}
+                                title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  {userMuted[p.identity] ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                                  ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-2.536a5 5 0 010-7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                  )}
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          {/* Expanded controls overlay */}
+                          {renderExpandedControls(p, isSelf)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Audio-only participants — compact strip when videos exist, full grid otherwise */}
+            {videoParticipants.length > 0 ? (
+              audioOnlyParticipants.length > 0 && (
+                <div className="flex-shrink-0 px-4 py-2 border-t border-zinc-700 overflow-x-auto">
+                  <div className="flex gap-2">
+                    {audioOnlyParticipants.map((p) => {
+                      const { isSelf, isMuted, hasAudioTrack, isUserMuted, showMutedSpeaking, ringClass } = getParticipantState(p);
+
+                      return (
+                        <div
+                          key={p.identity}
+                          className={`relative flex flex-col items-center gap-1 p-2 rounded-lg transition-all flex-shrink-0 ${
+                            showMutedSpeaking
+                              ? "bg-red-900/30"
+                              : p.isSpeaking && !isUserMuted
+                                ? "bg-emerald-900/30"
+                                : isUserMuted
+                                  ? "bg-red-950/40"
+                                  : "bg-zinc-800/50"
+                          } ${isUserMuted ? "opacity-60" : ""}`}
+                        >
+                          {isUserMuted && (
+                            <div className="absolute inset-0 rounded-lg border border-red-500/30 pointer-events-none" />
+                          )}
+                          <div className={`relative rounded-full transition-all ${ringClass}`}>
+                            <Avatar userId={p.identity} size="md" />
+                            <div
+                              className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-zinc-900 ${
+                                isMuted
+                                  ? "bg-red-500"
+                                  : hasAudioTrack
+                                    ? "bg-emerald-500"
+                                    : "bg-yellow-500"
+                              }`}
+                              title={
+                                isMuted
+                                  ? "Muted"
+                                  : hasAudioTrack
+                                    ? "Audio active"
+                                    : "No audio track"
+                              }
+                            />
+                          </div>
+                          <div className="text-center min-w-[60px] max-w-[80px]">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <ParticipantNameLabel
+                                userId={p.identity}
+                                isSelf={isSelf}
+                                serverId={serverId}
+                                onClick={() =>
+                                  !isSelf &&
+                                  setExpandedUser(expandedUser === p.identity ? null : p.identity)
+                                }
+                              />
+                              {!isSelf && (
+                                <button
+                                  onClick={() => toggleUserMuted(p.identity)}
+                                  className={`w-4 h-4 flex items-center justify-center rounded transition-colors ${
+                                    userMuted[p.identity]
+                                      ? "text-red-400 hover:text-red-300"
+                                      : "text-zinc-500 hover:text-zinc-300"
+                                  }`}
+                                  title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    {userMuted[p.identity] ? (
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                                    ) : (
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-2.536a5 5 0 010-7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                    )}
+                                  </svg>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {/* Expanded controls for audio-only in strip */}
+                          {renderExpandedControls(p, isSelf)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )
+            ) : (
+              /* Original full grid when no one has camera on */
+              <div className="flex-1 p-4 overflow-y-auto min-h-0">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {participants.map((p) => {
+                    const { isSelf, isMuted, hasAudioTrack, cameraTrack, isUserMuted, showMutedSpeaking, tileBg, ringClass } = getParticipantState(p);
+
+                    return (
+                      <div
+                        key={p.identity}
+                        className={`relative flex flex-col items-center gap-2 p-4 rounded-xl transition-all ${tileBg} ${
+                          isUserMuted ? "opacity-60" : ""
+                        }`}
+                      >
+                        {/* Red overlay stripe for user-muted */}
+                        {isUserMuted && (
+                          <div className="absolute inset-0 rounded-xl border border-red-500/30 pointer-events-none" />
+                        )}
+                        {/* Camera video (if active), loading spinner, or avatar */}
+                        {cameraTrack ? (
+                          <div className={`relative w-full rounded-lg overflow-hidden aspect-video transition-all ${ringClass}`}>
+                            <VideoTrack
+                              trackRef={cameraTrack}
+                              className="w-full h-full object-cover"
+                            />
+                            <div
+                              className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border border-zinc-900 ${
+                                isMuted ? "bg-red-500" : "bg-emerald-500"
+                              }`}
+                            />
+                          </div>
+                        ) : isSelf && isCameraEnabled ? (
+                          <div className={`relative w-full rounded-lg overflow-hidden aspect-video transition-all ${ringClass} bg-zinc-900 flex items-center justify-center`}>
+                            <svg className="w-8 h-8 text-indigo-400 animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          </div>
+                        ) : (
+                          <div className={`relative rounded-full transition-all ${ringClass}`}>
+                            <Avatar userId={p.identity} size="lg" />
+                            <div
+                              className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-zinc-900 ${
+                                isMuted
+                                  ? "bg-red-500"
+                                  : hasAudioTrack
+                                    ? "bg-emerald-500"
+                                    : "bg-yellow-500"
+                              }`}
+                              title={
+                                isMuted
+                                  ? "Muted"
+                                  : hasAudioTrack
+                                    ? "Audio active"
+                                    : "No audio track"
+                              }
+                            />
+                          </div>
+                        )}
+                        {/* Name + status */}
+                        <div className="text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <ParticipantNameLabel
+                              userId={p.identity}
+                              isSelf={isSelf}
+                              serverId={serverId}
+                              onClick={() =>
+                                !isSelf &&
+                                setExpandedUser(expandedUser === p.identity ? null : p.identity)
+                              }
+                            />
+                            {!isSelf && (
+                              <button
+                                onClick={() => toggleUserMuted(p.identity)}
+                                className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
+                                  userMuted[p.identity]
+                                    ? "text-red-400 hover:text-red-300"
+                                    : "text-zinc-500 hover:text-zinc-300"
+                                }`}
+                                title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  {userMuted[p.identity] ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                                  ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-2.536a5 5 0 010-7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                  )}
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-xs text-zinc-500">
+                            {isUserMuted
+                              ? "Muted by you"
+                              : showMutedSpeaking
+                                ? "Muted"
+                                : isMuted
+                                  ? "Muted"
+                                  : p.isSpeaking
+                                    ? "Speaking"
+                                    : "Listening"}
+                          </p>
+                        </div>
+                        {/* Per-user volume slider + vote kick */}
+                        {renderExpandedControls(p, isSelf)}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Soundboard */}
       <SoundboardPanel
         serverId={serverId}
         localParticipant={localParticipant}
       />
+
+      {/* Lock/Unlock PIN dialog */}
+      {showLockPinDialog && activeChannel && (
+        <PinDialog
+          title={lockAction === "lock" ? "Lock Channel" : "Unlock Channel"}
+          description={
+            lockAction === "lock"
+              ? "Set a 4-digit PIN. Others will need this PIN to join."
+              : "Enter the PIN to unlock this channel."
+          }
+          submitLabel={lockAction === "lock" ? "Lock" : "Unlock"}
+          onCancel={() => setShowLockPinDialog(false)}
+          onSubmit={async (pin) => {
+            if (!accessToken) return;
+            if (lockAction === "lock") {
+              await lockChannel(activeChannel.id, pin, accessToken);
+              setChannelLocked(true);
+            } else {
+              await unlockChannel(activeChannel.id, pin, accessToken);
+              setChannelLocked(false);
+            }
+            setShowLockPinDialog(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -16,6 +16,10 @@ class Server(Base):
     owner_id: Mapped[str] = mapped_column(String, nullable=False)  # Matrix user ID
     visibility: Mapped[str] = mapped_column(String, default="private")  # "private" or "public"
     abbreviation: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    kick_limit: Mapped[int] = mapped_column(Integer, default=3)  # kicks before ban
+    kick_window_minutes: Mapped[int] = mapped_column(Integer, default=30)  # window for kick counting
+    ban_mode: Mapped[str] = mapped_column(String, default="soft")  # "soft", "harsh"
+    media_uploads_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     channels: Mapped[list["Channel"]] = relationship(back_populates="server", cascade="all, delete-orphan")
@@ -75,6 +79,8 @@ class ServerMember(Base):
     server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
     user_id: Mapped[str] = mapped_column(String, nullable=False)  # Matrix user ID
     role: Mapped[str] = mapped_column(String, default="member")  # "owner", "admin", or "member"
+    can_kick: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_ban: Mapped[bool] = mapped_column(Boolean, default=False)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -135,6 +141,7 @@ class SoundboardClip(Base):
     filename: Mapped[str] = mapped_column(String, nullable=False)  # stored filename on disk
     uploaded_by: Mapped[str] = mapped_column(String, nullable=False)  # Matrix user ID
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)  # seconds
+    keybind: Mapped[str | None] = mapped_column(String, nullable=True)  # e.g. "Alt+1"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     server: Mapped["Server"] = relationship()
@@ -151,6 +158,90 @@ class DirectInvite(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     server: Mapped["Server"] = relationship()
+
+
+class VoiceSession(Base):
+    __tablename__ = "voice_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)  # matrix_room_id
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class MessageCount(Base):
+    __tablename__ = "message_counts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "channel_id", "day", name="uq_message_count"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)  # matrix_room_id
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
+    day: Mapped[str] = mapped_column(String, nullable=False)  # YYYY-MM-DD
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ChannelLock(Base):
+    __tablename__ = "channel_locks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_id: Mapped[int] = mapped_column(Integer, ForeignKey("channels.id"), unique=True, nullable=False)
+    pin_hash: Mapped[str] = mapped_column(String, nullable=False)  # hashed 4-digit PIN
+    locked_by: Mapped[str] = mapped_column(String, nullable=False)  # Matrix user ID
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class VoteKick(Base):
+    __tablename__ = "vote_kicks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)  # matrix_room_id
+    target_user_id: Mapped[str] = mapped_column(String, nullable=False)
+    initiated_by: Mapped[str] = mapped_column(String, nullable=False)
+    votes_yes: Mapped[str] = mapped_column(String, default="")  # comma-separated user IDs
+    votes_no: Mapped[str] = mapped_column(String, default="")
+    total_eligible: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default="active")  # active, passed, failed, expired
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class KickRecord(Base):
+    __tablename__ = "kick_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    kicked_by: Mapped[str] = mapped_column(String, nullable=False)  # "vote" or user_id
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class IPBan(Base):
+    __tablename__ = "ip_bans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ip_address: Mapped[str] = mapped_column(String, nullable=False)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
+    banned_by: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class UserTOTP(Base):
+    __tablename__ = "user_totp"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    secret: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class BugReport(Base):

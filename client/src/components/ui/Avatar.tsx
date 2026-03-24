@@ -1,5 +1,6 @@
 import { useAvatarUrl, usePresence } from "../../hooks/usePresence";
 import type { PresenceState } from "../../hooks/usePresence";
+import { useTOTPUsers } from "../../hooks/useTOTPUsers";
 
 // Deterministic fallback color from userId hash
 const COLORS = [
@@ -48,9 +49,16 @@ interface AvatarProps {
 export function Avatar({ userId, size = "md", showPresence = false }: AvatarProps) {
   const avatarUrl = useAvatarUrl(userId);
   const presence = usePresence(showPresence ? userId : null);
+  const totpUsers = useTOTPUsers();
   const initial = (userId.split(":")[0].replace("@", "") || "?")
     .charAt(0)
     .toUpperCase();
+
+  // TOTP-authorized users get their dot on the left side
+  const isAuthorized = totpUsers.has(userId);
+  const dotPosition = isAuthorized
+    ? "-bottom-0.5 -left-0.5"
+    : "-bottom-0.5 -right-0.5";
 
   return (
     <div className="relative inline-flex flex-shrink-0">
@@ -69,7 +77,7 @@ export function Avatar({ userId, size = "md", showPresence = false }: AvatarProp
       )}
       {showPresence && (
         <div
-          className={`absolute -bottom-0.5 -right-0.5 ${dotSizes[size]} ${presenceColors[presence]} rounded-full border-zinc-900`}
+          className={`absolute ${dotPosition} ${dotSizes[size]} ${presenceColors[presence]} rounded-full border-zinc-900`}
         />
       )}
     </div>

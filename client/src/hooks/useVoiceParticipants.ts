@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useAuthStore } from "../stores/auth";
-import { getVoiceParticipants } from "../api/concorrd";
-import type { VoiceRoomParticipant } from "../api/concorrd";
+import { getVoiceParticipants } from "../api/concord";
+import type { VoiceRoomParticipant } from "../api/concord";
 
 const POLL_INTERVAL = 10_000; // 10 seconds
 

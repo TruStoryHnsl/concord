@@ -8,7 +8,7 @@ from config import MATRIX_HOMESERVER_URL, MATRIX_SERVER_NAME, MATRIX_REGISTRATIO
 
 logger = logging.getLogger(__name__)
 
-BOT_USERNAME = "concorrd-bot"
+BOT_USERNAME = "concord-bot"
 BOT_USER_ID = f"@{BOT_USERNAME}:{MATRIX_SERVER_NAME}"
 BOT_ACCESS_TOKEN: str | None = None
 

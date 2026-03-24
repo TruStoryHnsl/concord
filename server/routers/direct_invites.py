@@ -1,7 +1,7 @@
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +23,11 @@ router = APIRouter(tags=["direct_invites"])
 
 @router.get("/api/users/search")
 async def search_users(
-    q: str = "",
+    q: str = Query(default="", max_length=200),
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search for users across servers the requester belongs to."""
+    """Search for users across servers the requester belongs to (max 50 results)."""
     # Get all server IDs the requester is a member of
     requester_servers = (
         await db.execute(
@@ -47,7 +47,7 @@ async def search_users(
         .where(
             ServerMember.server_id.in_(requester_servers),
             ServerMember.user_id != user_id,
-            ~ServerMember.user_id.startswith("@concorrd-bot:"),
+            ~ServerMember.user_id.startswith("@concord-bot:"),
         )
         .group_by(ServerMember.user_id)
     )
@@ -60,6 +60,7 @@ async def search_users(
             )
         )
 
+    stmt = stmt.limit(50)
     result = await db.execute(stmt)
     return [
         {"user_id": row.user_id, "display_name": row.display_name}

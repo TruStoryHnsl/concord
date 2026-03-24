@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
 
-DATA_DIR = Path(os.getenv("CONCORRD_DATA_DIR", "/home/corr/projects/concorrd/data/concorrd"))
-DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'concorrd.db'}"
+DATA_DIR = Path(os.getenv("CONCORD_DATA_DIR", os.getenv("CONCORRD_DATA_DIR", "/data")))
+DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'concord.db'}"
 SOUNDBOARD_DIR = DATA_DIR / "soundboard"
 
 # Matrix homeserver (internal Docker network or local dev)
@@ -18,7 +18,10 @@ if not MATRIX_REGISTRATION_TOKEN:
 
 # SMTP (email invites)
 SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+try:
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+except ValueError:
+    SMTP_PORT = 587
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "")
@@ -34,8 +37,8 @@ ADMIN_USER_IDS: set[str] = {
     if uid.strip()
 }
 
-# Instance name (configurable by admin, default from env or "Concord")
-INSTANCE_NAME_DEFAULT = os.getenv("INSTANCE_NAME", "Concord")
+# Instance name (configurable by admin, falls back to server name)
+INSTANCE_NAME_DEFAULT = os.getenv("INSTANCE_NAME", MATRIX_SERVER_NAME)
 INSTANCE_SETTINGS_FILE = DATA_DIR / "instance.json"
 
 # Ensure directories exist

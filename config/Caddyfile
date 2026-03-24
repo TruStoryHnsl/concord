@@ -1,0 +1,59 @@
+{
+    http_port 8080
+    https_port 8443
+}
+
+{$SITE_ADDRESS} {
+    # Compression
+    encode gzip
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+    }
+
+    # Max upload size (media, soundboard clips)
+    request_body {
+        max_size 20MB
+    }
+
+    # Matrix Client-Server API (streaming, no buffering)
+    handle /_matrix/* {
+        reverse_proxy conduwuit:6167 {
+            flush_interval -1
+        }
+    }
+
+    # Matrix server well-known (client discovery)
+    handle /.well-known/matrix/* {
+        reverse_proxy conduwuit:6167
+    }
+
+    # Concord API
+    handle /api/* {
+        reverse_proxy concord-api:8000
+    }
+
+    # LiveKit WebSocket signaling (strip /livekit/ prefix)
+    # Caddy handles WebSocket upgrade automatically
+    handle_path /livekit/* {
+        reverse_proxy livekit:7880
+    }
+
+    # Desktop app downloads (force download, not inline)
+    handle /downloads/* {
+        header Content-Disposition "attachment"
+        root * /srv
+        file_server
+    }
+
+    # React SPA — serve static files, fall back to index.html
+    handle {
+        root * /srv/html
+        try_files {path} /index.html
+        file_server
+    }
+}

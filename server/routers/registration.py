@@ -1,6 +1,8 @@
 import logging
+import time
+from collections import defaultdict, deque
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +15,23 @@ from services.matrix_admin import register_matrix_user, join_room
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/register", tags=["registration"])
+
+# Rate limit: 3 registrations per IP per 15 minutes
+_reg_rate_limits: dict[str, deque[float]] = defaultdict(deque)
+_REG_RATE_LIMIT = 3
+_REG_RATE_WINDOW = 900  # 15 minutes
+
+
+def _check_registration_rate_limit(ip: str) -> bool:
+    """Return True if within rate limit, False if exceeded."""
+    now = time.time()
+    window = _reg_rate_limits[ip]
+    while window and window[0] < now - _REG_RATE_WINDOW:
+        window.popleft()
+    if len(window) >= _REG_RATE_LIMIT:
+        return False
+    window.append(now)
+    return True
 
 
 class RegisterRequest(BaseModel):
@@ -32,6 +51,7 @@ class RegisterResponse(BaseModel):
 @router.post("", response_model=RegisterResponse)
 async def register_user(
     body: RegisterRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Register a new user account.
@@ -39,6 +59,13 @@ async def register_user(
     If an invite_token is provided, also joins the user to that server.
     If no invite_token, just creates the Matrix account.
     """
+    # Rate limit by IP
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not client_ip and request.client:
+        client_ip = request.client.host
+    if client_ip and not _check_registration_rate_limit(client_ip):
+        raise HTTPException(429, "Too many registration attempts. Please try again later.")
+
     invite = None
 
     if body.invite_token:
@@ -96,6 +123,39 @@ async def register_user(
 
     server_id = None
     server_name = None
+
+    # Auto-join default public server (if one exists)
+    try:
+        import json
+        from config import INSTANCE_SETTINGS_FILE
+        if INSTANCE_SETTINGS_FILE.exists():
+            inst_settings = json.loads(INSTANCE_SETTINGS_FILE.read_text())
+            default_id = inst_settings.get("default_server_id")
+            if default_id:
+                # Check not already joining via invite to same server
+                if not invite or invite.server_id != default_id:
+                    existing = await db.execute(
+                        select(ServerMember).where(
+                            ServerMember.server_id == default_id,
+                            ServerMember.user_id == user_id,
+                        )
+                    )
+                    if not existing.scalar_one_or_none():
+                        db.add(ServerMember(
+                            server_id=default_id,
+                            user_id=user_id,
+                            role="member",
+                        ))
+                        default_channels = await db.execute(
+                            select(Channel).where(Channel.server_id == default_id)
+                        )
+                        for ch in default_channels.scalars().all():
+                            try:
+                                await join_room(access_token, ch.matrix_room_id)
+                            except Exception as e:
+                                logger.warning("Auto-join default room %s failed: %s", ch.matrix_room_id, e)
+    except Exception as e:
+        logger.warning("Default server auto-join failed: %s", e)
 
     # If invite provided, join the server
     if invite:

@@ -1,16 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import { useAuthStore } from "./stores/auth";
 import { useServerStore } from "./stores/server";
 import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
-import { redeemInvite } from "./api/concorrd";
+import { redeemInvite } from "./api/concord";
 import { getVoiceToken } from "./api/livekit";
 import { LoginForm } from "./components/auth/LoginForm";
 import { SubmitPage } from "./components/public/SubmitPage";
 import { ChatLayout } from "./components/layout/ChatLayout";
-import { BugReportModal } from "./components/BugReportModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
@@ -19,7 +18,7 @@ import { CustomAudioRenderer } from "./components/voice/CustomAudioRenderer";
 
 // Capture invite token immediately at module load — before React mounts,
 // before session restoration, before anything can clear the URL.
-const INVITE_STORAGE_KEY = "concorrd_pending_invite";
+const INVITE_STORAGE_KEY = "concord_pending_invite";
 const urlParams = new URLSearchParams(window.location.search);
 const initialInviteToken = urlParams.get("invite");
 if (initialInviteToken) {
@@ -37,7 +36,6 @@ export default function App() {
   const setActiveServer = useServerStore((s) => s.setActiveServer);
   const addToast = useToastStore((s) => s.addToast);
   const inviteHandled = useRef(false);
-  const [showBugReport, setShowBugReport] = useState(false);
 
   // Voice state
   const voiceConnected = useVoiceStore((s) => s.connected);
@@ -173,18 +171,23 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="h-screen bg-zinc-900 flex items-center justify-center">
-        <span className="text-zinc-500">Loading...</span>
+        <div className="flex flex-col items-center gap-3">
+          <span className="inline-block w-6 h-6 border-2 border-zinc-600 border-t-indigo-400 rounded-full animate-spin" />
+          <span className="text-zinc-500 text-sm">Loading...</span>
+        </div>
       </div>
     );
   }
 
   // Authenticated content, optionally wrapped in LiveKitRoom
   const authenticatedContent = (
-    <>
-      <ChatLayout />
+    <div className="h-screen flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0">
+        <ChatLayout />
+      </div>
       <VoiceConnectionBar />
       <DirectInviteBanner />
-    </>
+    </div>
   );
 
   return (
@@ -228,21 +231,6 @@ export default function App() {
         <LoginForm />
       )}
       <ToastContainer />
-      {/* Bug report button — always visible when logged in */}
-      {isLoggedIn && (
-        <button
-          onClick={() => setShowBugReport(true)}
-          className="fixed bottom-4 right-4 z-40 w-10 h-10 flex items-center justify-center rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 hover:text-white hover:border-zinc-400 shadow-lg transition-colors"
-          title="Report a Bug"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-          </svg>
-        </button>
-      )}
-      {showBugReport && (
-        <BugReportModal onClose={() => setShowBugReport(false)} />
-      )}
     </ErrorBoundary>
   );
 }

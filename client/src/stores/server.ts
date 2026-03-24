@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Server, Channel, ServerMember } from "../api/concorrd";
+import type { Server, Channel, ServerMember } from "../api/concord";
 import {
   listServers,
   createServer as apiCreateServer,
@@ -9,7 +9,9 @@ import {
   deleteChannel as apiDeleteChannel,
   leaveServer as apiLeaveServer,
   listMembers as apiListMembers,
-} from "../api/concorrd";
+  getDefaultServer,
+  joinServer as apiJoinServer,
+} from "../api/concord";
 import { useToastStore } from "./toast";
 
 interface ServerState {
@@ -63,6 +65,20 @@ export const useServerStore = create<ServerState>((set, get) => ({
       );
       return;
     }
+
+    // Auto-join default server if user has no servers
+    if (servers.length === 0) {
+      try {
+        const defaultInfo = await getDefaultServer(accessToken);
+        if (defaultInfo.server_id && !defaultInfo.is_member) {
+          await apiJoinServer(defaultInfo.server_id, accessToken);
+          servers = await listServers(accessToken);
+        }
+      } catch {
+        // Default server may not exist — that's fine
+      }
+    }
+
     set({ servers });
 
     // Auto-select first server and channel if none selected

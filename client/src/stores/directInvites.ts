@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import type { DirectInvite } from "../api/concorrd";
-import { getPendingDirectInvites, respondToDirectInvite } from "../api/concorrd";
+import type { DirectInvite } from "../api/concord";
+import { getPendingDirectInvites, respondToDirectInvite } from "../api/concord";
 import { useServerStore } from "./server";
 import { useToastStore } from "./toast";
 

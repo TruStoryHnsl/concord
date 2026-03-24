@@ -5,12 +5,13 @@ import {
   listSoundboardClips,
   uploadSoundboardClip,
   deleteSoundboardClip,
+  updateSoundboardClip,
   searchSoundLibrary,
   importLibrarySound,
   type SoundboardClip,
   type LibrarySound,
   type LibrarySortOption,
-} from "../../api/concorrd";
+} from "../../api/concord";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useSettingsStore } from "../../stores/settings";
@@ -41,6 +42,10 @@ export function SoundboardPanel({
   const [showUpload, setShowUpload] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editingClipId, setEditingClipId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editKeybind, setEditKeybind] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const activePlaybackRef = useRef<ActivePlayback | null>(null);
@@ -176,6 +181,45 @@ export function SoundboardPanel({
     [playingId],
   );
 
+  const stopClip = useCallback(() => {
+    const playback = activePlaybackRef.current;
+    if (!playback) return;
+    try { playback.source.stop(); } catch { /* already stopped */ }
+    // onended handler will clean up state, unpublish track, etc.
+  }, []);
+
+  // Soundboard hotkey listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger hotkeys when typing in inputs
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      const parts: string[] = [];
+      if (e.ctrlKey) parts.push("Ctrl");
+      if (e.altKey) parts.push("Alt");
+      if (e.shiftKey) parts.push("Shift");
+      if (!["Control", "Alt", "Shift", "Meta"].includes(e.key)) {
+        parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+      }
+      if (parts.length === 0) return;
+
+      const combo = parts.join("+");
+      const match = clips.find((c) => c.keybind === combo);
+      if (match) {
+        e.preventDefault();
+        if (playingId === match.id) {
+          stopClip();
+        } else if (!playingId) {
+          playClip(match);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [clips, playingId, playClip, stopClip]);
+
   const handleDelete = async (clipId: number) => {
     if (!accessToken) return;
     try {
@@ -185,6 +229,17 @@ export function SoundboardPanel({
       console.error("Failed to delete clip:", err);
     }
     setConfirmDeleteId(null);
+  };
+
+  const handleUpdateClip = async (clipId: number, updates: { name?: string; keybind?: string }) => {
+    if (!accessToken) return;
+    try {
+      const result = await updateSoundboardClip(clipId, updates, accessToken);
+      setClips((prev) => prev.map((c) => c.id === clipId ? { ...c, name: result.name, keybind: result.keybind } : c));
+    } catch (err) {
+      console.error("Failed to update clip:", err);
+    }
+    setEditingClipId(null);
   };
 
   const soundboardVolume = useSettingsStore((s) => s.soundboardVolume);
@@ -215,6 +270,14 @@ export function SoundboardPanel({
           </button>
         </div>
         <div className="flex items-center gap-2">
+          {(isOwner || clips.some((c) => c.uploaded_by === userId)) && (
+            <button
+              onClick={() => { setEditMode(!editMode); setEditingClipId(null); setConfirmDeleteId(null); }}
+              className={`text-xs transition-colors ${editMode ? "text-indigo-400" : "text-zinc-500 hover:text-white"}`}
+            >
+              {editMode ? "Done" : "Edit"}
+            </button>
+          )}
           <button
             onClick={() => { setShowLibrary(!showLibrary); if (!showLibrary) setShowUpload(false); }}
             className={`text-xs transition-colors ${showLibrary ? "text-indigo-400" : "text-zinc-500 hover:text-white"}`}
@@ -290,41 +353,97 @@ export function SoundboardPanel({
               return (
                 <div key={clip.id} className="group relative">
                   <button
-                    onClick={() => playClip(clip)}
-                    disabled={playingId !== null}
+                    onClick={() => playingId === clip.id ? stopClip() : playClip(clip)}
+                    disabled={playingId !== null && playingId !== clip.id}
                     className={`rounded-md font-medium transition-all truncate ${sizeClass} ${
                       playingId === clip.id
-                        ? "bg-emerald-600 text-white animate-pulse"
+                        ? "bg-emerald-600 text-white animate-pulse cursor-pointer"
                         : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white disabled:opacity-50"
                     }`}
-                    title={clip.name}
+                    title={playingId === clip.id ? "Click to stop" : clip.keybind ? `${clip.name} [${clip.keybind}]` : clip.name}
                   >
                     {clip.name}
                   </button>
-                  {/* Delete button — only for uploader or server owner */}
-                  {canDelete && (
-                    confirmDeleteId === clip.id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(clip.id);
-                        }}
-                        onMouseLeave={() => setConfirmDeleteId(null)}
-                        className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 text-white rounded-full text-[9px] leading-none flex items-center justify-center animate-pulse"
-                        title="Click again to confirm"
-                      >
-                        ?
-                      </button>
+                  {/* Edit mode overlay */}
+                  {editMode && canDelete && (
+                    editingClipId === clip.id ? (
+                      <div className="absolute inset-0 bg-zinc-900/95 rounded-md flex items-center justify-center gap-1 p-1 z-10">
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleUpdateClip(clip.id, { name: editName.trim() || undefined, keybind: editKeybind });
+                            if (e.key === "Escape") setEditingClipId(null);
+                          }}
+                          className="flex-1 min-w-0 bg-zinc-800 text-white text-[10px] px-1.5 py-0.5 rounded border border-zinc-600 focus:outline-none focus:border-indigo-500"
+                          placeholder="Name"
+                          autoFocus
+                        />
+                        <input
+                          type="text"
+                          value={editKeybind}
+                          onChange={(e) => setEditKeybind(e.target.value)}
+                          onKeyDown={(e) => {
+                            // Capture key combo (e.g. Alt+1)
+                            if (e.key === "Escape") { setEditingClipId(null); return; }
+                            if (e.key === "Enter") { handleUpdateClip(clip.id, { name: editName.trim() || undefined, keybind: editKeybind }); return; }
+                            if (e.key === "Backspace" && !editKeybind) return;
+                            if (e.key === "Backspace") { e.preventDefault(); setEditKeybind(""); return; }
+                            const parts: string[] = [];
+                            if (e.ctrlKey) parts.push("Ctrl");
+                            if (e.altKey) parts.push("Alt");
+                            if (e.shiftKey) parts.push("Shift");
+                            if (!["Control", "Alt", "Shift", "Meta"].includes(e.key)) {
+                              parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+                            }
+                            if (parts.length > 0 && !["Control", "Alt", "Shift", "Meta"].includes(e.key)) {
+                              e.preventDefault();
+                              setEditKeybind(parts.join("+"));
+                            }
+                          }}
+                          className="w-16 shrink-0 bg-zinc-800 text-white text-[10px] px-1.5 py-0.5 rounded border border-zinc-600 focus:outline-none focus:border-indigo-500"
+                          placeholder="Hotkey"
+                          readOnly={false}
+                        />
+                        <button
+                          onClick={() => handleUpdateClip(clip.id, { name: editName.trim() || undefined, keybind: editKeybind })}
+                          className="text-emerald-400 hover:text-emerald-300 text-[10px] shrink-0"
+                          title="Save"
+                        >
+                          OK
+                        </button>
+                        {confirmDeleteId === clip.id ? (
+                          <button
+                            onClick={() => handleDelete(clip.id)}
+                            onMouseLeave={() => setConfirmDeleteId(null)}
+                            className="text-red-400 hover:text-red-300 text-[10px] shrink-0 animate-pulse"
+                            title="Click to confirm delete"
+                          >
+                            Del?
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteId(clip.id)}
+                            className="text-zinc-500 hover:text-red-400 text-[10px] shrink-0"
+                            title="Delete clip"
+                          >
+                            Del
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setConfirmDeleteId(clip.id);
+                          setEditingClipId(clip.id);
+                          setEditName(clip.name);
+                          setEditKeybind(clip.keybind ?? "");
+                          setConfirmDeleteId(null);
                         }}
-                        className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-600 text-white rounded-full text-[9px] leading-none items-center justify-center hidden group-hover:flex"
-                        title="Delete clip"
+                        className="absolute inset-0 bg-zinc-900/70 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                       >
-                        x
+                        <span className="text-[10px] text-zinc-300">{clip.keybind ? `[${clip.keybind}]` : "Edit"}</span>
                       </button>
                     )
                   )}

@@ -19,3 +19,26 @@ html, body, #root {
     transform: translateY(0);
   }
 }
+
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Press feedback for interactive buttons */
+.btn-press {
+  transition: transform 100ms ease, background-color 150ms ease, color 150ms ease;
+}
+.btn-press:active {
+  transform: scale(0.93);
+}

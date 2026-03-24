@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSettingsStore } from "../../stores/settings";
 import { useAuthStore } from "../../stores/auth";
-import { checkAdmin } from "../../api/concorrd";
+import { checkAdmin } from "../../api/concord";
 import { AudioTab } from "./AudioTab";
 import { VoiceTab } from "./VoiceTab";
 import { NotificationsTab } from "./NotificationsTab";

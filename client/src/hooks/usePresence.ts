@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { UserEvent } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
+import { mxcToThumbnail } from "../api/media";
 
 // Module-level cache: mxc:// → HTTP URL. Avatars rarely change,
-// so a simple Map avoids redundant mxcUrlToHttp() calls and re-renders.
+// so a simple Map avoids redundant conversions and re-renders.
 // Capped at 200 entries to prevent unbounded memory growth.
 const AVATAR_CACHE_MAX = 200;
 const avatarCache = new Map<string, string | null>();
@@ -43,7 +44,8 @@ export function useAvatarUrl(userId: string | null): string | null {
         setUrl(cached);
         return;
       }
-      const httpUrl = client.mxcUrlToHttp(mxcUrl, 96, 96, "crop") ?? null;
+      const token = useAuthStore.getState().accessToken;
+      const httpUrl = mxcToThumbnail(mxcUrl, token, 96, 96, "crop");
       avatarCacheSet(userId, httpUrl);
       setUrl(httpUrl);
     };

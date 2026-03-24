@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { Room, MatrixEvent } from "matrix-js-sdk";
 import type { RoomMessageEventContent, ReactionEventContent } from "matrix-js-sdk/lib/@types/events";
-import { ClientEvent, RoomEvent, EventType, RelationType } from "matrix-js-sdk";
+import { ClientEvent, RoomEvent, EventType, RelationType, type SyncState, type SyncStateData } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
 import { useToastStore } from "../stores/toast";
+import { mxcToHttp } from "../api/media";
 
 // Maximum events kept per room timeline to prevent unbounded memory growth.
 // matrix-js-sdk's MemoryStore accumulates every synced event forever — on a
@@ -30,8 +31,19 @@ export function useMatrixSync() {
   useEffect(() => {
     if (!client) return;
 
-    const onSync = (state: string) => {
+    const onSync = (state: SyncState, _prev: SyncState | null, data?: SyncStateData) => {
       setSyncing(state === "SYNCING" || state === "PREPARED");
+      // If sync enters ERROR with an auth failure, the stored token is invalid.
+      // Auto-logout so the user gets the login screen instead of a blank app.
+      if (state === "ERROR") {
+        const errcode = (data as Record<string, unknown>)?.error &&
+          typeof (data as Record<string, unknown>).error === "object" &&
+          ((data as Record<string, unknown>).error as { errcode?: string })?.errcode;
+        if (errcode === "M_UNKNOWN_TOKEN") {
+          console.warn("Matrix token invalid, logging out");
+          useAuthStore.getState().logout();
+        }
+      }
     };
 
     client.on(ClientEvent.Sync, onSync);
@@ -222,7 +234,8 @@ export function useRoomMessages(roomId: string | null): RoomMessagesResult {
           let url: string | null = null;
           const mxcUrl = content.url as string | undefined;
           if (mxcUrl && !redacted) {
-            url = client.mxcUrlToHttp(mxcUrl) || null;
+            const token = useAuthStore.getState().accessToken;
+            url = mxcToHttp(mxcUrl, token);
           }
 
           const reactions: Reaction[] = [];
@@ -333,8 +346,41 @@ export function useSendMessage(roomId: string | null) {
   const client = useAuthStore((s) => s.client);
 
   return async (body: string) => {
-    if (!client || !roomId) return;
-    await client.sendTextMessage(roomId, body);
+    if (!client || !roomId) throw new Error("Not connected to a channel");
+
+    try {
+      await client.sendTextMessage(roomId, body);
+    } catch (err: unknown) {
+      // Auto-rejoin on 403 (membership lost after server restart) and retry once
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("M_FORBIDDEN") && msg.includes("membership")) {
+        const { rejoinServerRooms } = await import("../api/concord");
+        const { useServerStore } = await import("../stores/server");
+        const token = useAuthStore.getState().accessToken;
+        const serverId = useServerStore.getState().activeServerId;
+        if (token && serverId) {
+          await rejoinServerRooms(serverId, token);
+          await client.sendTextMessage(roomId, body);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    // Fire-and-forget message stat increment
+    try {
+      const { incrementMessageCount } = await import("../api/concord");
+      const { useServerStore } = await import("../stores/server");
+      const token = useAuthStore.getState().accessToken;
+      const serverId = useServerStore.getState().activeServerId;
+      if (token && serverId) {
+        incrementMessageCount(roomId, serverId, token);
+      }
+    } catch {
+      // Stats tracking is non-critical
+    }
   };
 }
 

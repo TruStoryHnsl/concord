@@ -27,7 +27,7 @@ export function VoiceConnectionBar() {
   const serverName = servers.find((s) => s.id === serverId)?.name ?? "Server";
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2 bg-emerald-900/90 border-t border-emerald-700/50 backdrop-blur-sm">
+    <div className="flex items-center justify-between px-4 py-2 bg-emerald-900/90 border-t border-emerald-700/50 backdrop-blur-sm flex-shrink-0">
       <div className="flex items-center gap-2 text-sm text-emerald-200">
         <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
         <span>
@@ -94,7 +94,7 @@ function VoiceBarControls({
       {/* Mute */}
       <button
         onClick={toggleMic}
-        className={`px-2.5 py-1 text-xs rounded transition-colors ${
+        className={`btn-press px-2.5 py-1 text-xs rounded transition-colors ${
           isMicEnabled
             ? "bg-emerald-800 hover:bg-emerald-700 text-emerald-200"
             : "bg-red-600/30 text-red-300 hover:bg-red-600/50"
@@ -107,7 +107,7 @@ function VoiceBarControls({
       {/* Deafen */}
       <button
         onClick={toggleDeafen}
-        className={`px-2.5 py-1 text-xs rounded transition-colors ${
+        className={`btn-press px-2.5 py-1 text-xs rounded transition-colors ${
           deafened
             ? "bg-red-600/30 text-red-300 hover:bg-red-600/50"
             : "bg-emerald-800 hover:bg-emerald-700 text-emerald-200"
@@ -120,7 +120,7 @@ function VoiceBarControls({
       {/* Return to channel */}
       <button
         onClick={onReturn}
-        className="px-2.5 py-1 text-xs bg-emerald-800 hover:bg-emerald-700 text-emerald-200 rounded transition-colors"
+        className="btn-press px-2.5 py-1 text-xs bg-emerald-800 hover:bg-emerald-700 text-emerald-200 rounded transition-colors"
         title="Return to voice channel"
       >
         Return
@@ -129,7 +129,7 @@ function VoiceBarControls({
       {/* Leave */}
       <button
         onClick={onLeave}
-        className="px-2.5 py-1 text-xs bg-red-600/30 text-red-300 hover:bg-red-600/50 rounded transition-colors"
+        className="btn-press px-2.5 py-1 text-xs bg-red-600/30 text-red-300 hover:bg-red-600/50 rounded transition-colors"
         title="Disconnect from voice"
       >
         Leave

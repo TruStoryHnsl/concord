@@ -37,6 +37,7 @@ class ClipOut(BaseModel):
     server_id: str
     uploaded_by: str
     duration: float | None
+    keybind: str | None = None
     url: str
 
     model_config = {"from_attributes": True}
@@ -190,6 +191,7 @@ async def import_from_library(
         server_id=clip.server_id,
         uploaded_by=clip.uploaded_by,
         duration=clip.duration,
+        keybind=clip.keybind,
         url=f"/api/soundboard/file/{clip.id}",
     )
 
@@ -215,6 +217,7 @@ async def list_clips(
             server_id=c.server_id,
             uploaded_by=c.uploaded_by,
             duration=c.duration,
+            keybind=c.keybind,
             url=f"/api/soundboard/file/{c.id}",
         )
         for c in clips
@@ -266,7 +269,9 @@ async def upload_clip(
 
     # Save file (async to avoid blocking the event loop)
     stored_name = f"{secrets.token_urlsafe(12)}{ext}"
-    server_dir = SOUNDBOARD_DIR / server_id
+    server_dir = (SOUNDBOARD_DIR / server_id).resolve()
+    if not str(server_dir).startswith(str(SOUNDBOARD_DIR.resolve())):
+        raise HTTPException(400, "Invalid server ID")
     server_dir.mkdir(parents=True, exist_ok=True)
     file_path = server_dir / stored_name
     await asyncio.to_thread(file_path.write_bytes, content)
@@ -288,8 +293,39 @@ async def upload_clip(
         server_id=clip.server_id,
         uploaded_by=clip.uploaded_by,
         duration=clip.duration,
+        keybind=clip.keybind,
         url=f"/api/soundboard/file/{clip.id}",
     )
+
+
+class ClipUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    keybind: str | None = None  # e.g. "Alt+1", or "" to clear
+
+
+@router.patch("/{clip_id}")
+async def update_clip(
+    clip_id: int,
+    body: ClipUpdate,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a soundboard clip (name, keybind). Requires uploader, server owner, or admin."""
+    clip = await db.get(SoundboardClip, clip_id)
+    if not clip:
+        raise HTTPException(404, "Clip not found")
+
+    if clip.uploaded_by != user_id and user_id not in ADMIN_USER_IDS:
+        server = await db.get(Server, clip.server_id)
+        if not server or server.owner_id != user_id:
+            raise HTTPException(403, "Only the uploader, server owner, or admin can edit clips")
+
+    if body.name is not None:
+        clip.name = body.name.strip()
+    if body.keybind is not None:
+        clip.keybind = body.keybind.strip() or None  # empty string clears it
+    await db.commit()
+    return {"status": "updated", "name": clip.name, "keybind": clip.keybind}
 
 
 @router.delete("/{clip_id}")
