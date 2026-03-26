@@ -5,6 +5,9 @@ use crate::db::{Database, Result};
 
 impl Database {
     /// Save a TOTP secret for a peer (the local node).
+    ///
+    /// If a `storage_key` is provided, the secret is encrypted before storing.
+    /// Otherwise it is stored in plaintext (backward compatible).
     pub fn save_totp_secret(&self, peer_id: &str, secret: &[u8]) -> Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.conn.execute(
@@ -20,6 +23,18 @@ impl Database {
         Ok(())
     }
 
+    /// Save a TOTP secret encrypted with a storage key.
+    pub fn save_totp_secret_encrypted(
+        &self,
+        peer_id: &str,
+        secret: &[u8],
+        storage_key: &[u8; 32],
+    ) -> Result<()> {
+        let encrypted = concord_core::crypto::encrypt_storage(storage_key, secret)
+            .map_err(|e| crate::db::StoreError::InvalidData(e.to_string()))?;
+        self.save_totp_secret(peer_id, &encrypted)
+    }
+
     /// Retrieve the TOTP secret for a peer.
     pub fn get_totp_secret(&self, peer_id: &str) -> Result<Option<Vec<u8>>> {
         let mut stmt = self
@@ -31,6 +46,27 @@ impl Database {
         })?;
         match rows.next() {
             Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Retrieve the TOTP secret, decrypting it with the storage key.
+    ///
+    /// If decryption fails (e.g. the secret was stored in plaintext before
+    /// encryption was enabled), falls back to returning the raw bytes.
+    pub fn get_totp_secret_decrypted(
+        &self,
+        peer_id: &str,
+        storage_key: &[u8; 32],
+    ) -> Result<Option<Vec<u8>>> {
+        match self.get_totp_secret(peer_id)? {
+            Some(data) => {
+                // Try to decrypt; if it fails, assume plaintext (migration path).
+                match concord_core::crypto::decrypt_storage(storage_key, &data) {
+                    Ok(plaintext) => Ok(Some(plaintext)),
+                    Err(_) => Ok(Some(data)),
+                }
+            }
             None => Ok(None),
         }
     }

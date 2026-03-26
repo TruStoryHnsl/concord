@@ -125,6 +125,9 @@ fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<Message> {
         signature: row.get(5)?,
         alias_id: row.get(6)?,
         alias_name: row.get(7)?,
+        // Stored messages are always decrypted locally; encryption fields are wire-only.
+        encrypted_content: None,
+        nonce: None,
     })
 }
 
@@ -146,6 +149,8 @@ mod tests {
             signature: vec![0u8; 64],
             alias_id: None,
             alias_name: None,
+            encrypted_content: None,
+            nonce: None,
         }
     }
 

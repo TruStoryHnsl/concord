@@ -389,13 +389,62 @@ fn spawn_event_forwarder(
                             let _ = app_handle.emit(events::PEER_DEPARTED, &event);
                         }
                         NetworkEvent::ConcordMessageReceived { message } => {
-                            // Store the message locally.
+                            // Decrypt the message if it has encrypted content.
+                            let decrypted_msg = if message.encrypted_content.is_some()
+                                && message.nonce.is_some()
+                            {
+                                // Try to find the server key by parsing the channel topic.
+                                // The channel_id is in the message; we need to find which
+                                // server this channel belongs to.
+                                let mut m = message.clone();
+                                if let Ok(db) = db.lock() {
+                                    // Look up which server this channel belongs to
+                                    if let Ok(Some(channel)) = db.get_channel(&m.channel_id) {
+                                        if let Ok(Some(server_key)) =
+                                            db.get_server_key(&channel.server_id)
+                                        {
+                                            let channel_key =
+                                                concord_core::crypto::derive_channel_key(
+                                                    &server_key,
+                                                    &m.channel_id,
+                                                );
+                                            if let (Some(ct), Some(nonce_vec)) =
+                                                (&m.encrypted_content, &m.nonce)
+                                            {
+                                                if nonce_vec.len() == 12 {
+                                                    let mut nonce_arr = [0u8; 12];
+                                                    nonce_arr.copy_from_slice(nonce_vec);
+                                                    if let Ok(plaintext) =
+                                                        concord_core::crypto::decrypt_channel_message(
+                                                            &channel_key,
+                                                            ct,
+                                                            &nonce_arr,
+                                                        )
+                                                    {
+                                                        m.content =
+                                                            String::from_utf8_lossy(&plaintext)
+                                                                .to_string();
+                                                        m.encrypted_content = None;
+                                                        m.nonce = None;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                m
+                            } else {
+                                message.clone()
+                            };
+
+                            // Store the decrypted message locally.
                             if let Ok(db) = db.lock() {
-                                if let Err(e) = db.insert_message(message) {
+                                if let Err(e) = db.insert_message(&decrypted_msg) {
                                     warn!(%e, "failed to store received message");
                                 }
                             }
-                            let payload = commands::messaging::MessagePayload::from(message);
+                            let payload =
+                                commands::messaging::MessagePayload::from(&decrypted_msg);
                             let _ = app_handle.emit(events::NEW_MESSAGE, &payload);
                         }
                         NetworkEvent::ConnectionStatusChanged { connected_peers } => {
@@ -499,11 +548,49 @@ fn spawn_event_forwarder(
                             );
                         }
                         NetworkEvent::ForumPostReceived { post } => {
-                            // Store the forum post locally (dedup)
+                            // Decrypt the forum post if it has encrypted content.
+                            let decrypted_post =
+                                if post.encrypted_content.is_some() && post.nonce.is_some()
+                                {
+                                    let scope_str = match post.forum_scope {
+                                        concord_core::types::ForumScope::Local => "local",
+                                        concord_core::types::ForumScope::Global => "global",
+                                    };
+                                    let forum_key =
+                                        concord_core::crypto::derive_forum_key(scope_str);
+                                    let mut p = post.clone();
+                                    if let (Some(ct), Some(nonce_vec)) =
+                                        (&p.encrypted_content, &p.nonce)
+                                    {
+                                        if nonce_vec.len() == 12 {
+                                            let mut nonce_arr = [0u8; 12];
+                                            nonce_arr.copy_from_slice(nonce_vec);
+                                            if let Ok(plaintext) =
+                                                concord_core::crypto::decrypt_channel_message(
+                                                    &forum_key,
+                                                    ct,
+                                                    &nonce_arr,
+                                                )
+                                            {
+                                                p.content =
+                                                    String::from_utf8_lossy(&plaintext)
+                                                        .to_string();
+                                                p.encrypted_content = None;
+                                                p.nonce = None;
+                                            }
+                                        }
+                                    }
+                                    p
+                                } else {
+                                    post.clone()
+                                };
+
+                            // Store the decrypted forum post locally (dedup)
                             if let Ok(db) = db.lock() {
-                                let _ = db.store_forum_post(post);
+                                let _ = db.store_forum_post(&decrypted_post);
                             }
-                            let payload = commands::forums::ForumPostPayload::from(post);
+                            let payload =
+                                commands::forums::ForumPostPayload::from(&decrypted_post);
                             let _ = app_handle.emit(events::FORUM_POST_RECEIVED, &payload);
                         }
                         NetworkEvent::FriendSignalReceived { signal } => {

@@ -57,15 +57,41 @@ pub async fn send_message(
     };
 
     // Build the message.
+    // Encrypt content if we have a server key for this server.
+    let plaintext_content = content.clone();
+    let (wire_content, encrypted_content, enc_nonce) = if let Some(ref sid) = server_id {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(server_key)) = db.get_server_key(sid) {
+            let channel_key =
+                concord_core::crypto::derive_channel_key(&server_key, &channel_id);
+            match concord_core::crypto::encrypt_channel_message(
+                &channel_key,
+                content.as_bytes(),
+            ) {
+                Ok((ct, nonce)) => {
+                    // On the wire: content is empty, encrypted_content carries the payload
+                    (String::new(), Some(ct), Some(nonce.to_vec()))
+                }
+                Err(_) => (content, None, None),
+            }
+        } else {
+            (content, None, None)
+        }
+    } else {
+        (content, None, None)
+    };
+
     let msg = Message {
         id: Uuid::new_v4().to_string(),
         channel_id: channel_id.clone(),
         sender_id: state.peer_id.clone(),
-        content,
+        content: wire_content,
         timestamp: now,
         signature: state.keypair.sign(b""), // sign placeholder — full signing in a later phase
         alias_id,
         alias_name,
+        encrypted_content,
+        nonce: enc_nonce,
     };
 
     // Serialize with MessagePack for the wire.
@@ -87,13 +113,23 @@ pub async fn send_message(
 
     debug!(msg_id = %msg.id, %channel_id, ?server_id, "message published");
 
-    // Store locally.
+    // Store locally with decrypted content (we know the plaintext).
+    let local_msg = if msg.encrypted_content.is_some() {
+        let mut m = msg.clone();
+        m.content = plaintext_content;
+        m.encrypted_content = None;
+        m.nonce = None;
+        m
+    } else {
+        msg.clone()
+    };
+
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.insert_message(&msg).map_err(|e| e.to_string())?;
+        db.insert_message(&local_msg).map_err(|e| e.to_string())?;
     }
 
-    Ok(MessagePayload::from(&msg))
+    Ok(MessagePayload::from(&local_msg))
 }
 
 /// Retrieves messages from the local database for a given channel.

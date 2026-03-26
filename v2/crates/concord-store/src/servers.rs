@@ -60,6 +60,18 @@ impl Database {
         Ok(())
     }
 
+    /// Retrieve a single channel by ID.
+    pub fn get_channel(&self, channel_id: &str) -> Result<Option<Channel>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, server_id, name, channel_type FROM channels WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![channel_id], row_to_channel)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     /// Retrieve all channels belonging to a server.
     pub fn get_channels(&self, server_id: &str) -> Result<Vec<Channel>> {
         let mut stmt = self.conn.prepare(

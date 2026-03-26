@@ -164,6 +164,9 @@ pub async fn create_server(
 
     let invite_code = generate_invite_code();
 
+    // Generate a server encryption key for channel E2E encryption.
+    let server_secret = concord_core::crypto::generate_random_key();
+
     // Persist to DB
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -173,6 +176,8 @@ pub async fn create_server(
         db.add_member(&server_id, &state.peer_id, "owner")
             .map_err(|e| e.to_string())?;
         db.create_invite(&invite_code, &server_id, &state.peer_id, None)
+            .map_err(|e| e.to_string())?;
+        db.store_server_key(&server_id, &server_secret)
             .map_err(|e| e.to_string())?;
     }
 

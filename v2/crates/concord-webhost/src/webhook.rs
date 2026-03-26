@@ -166,15 +166,44 @@ pub async fn webhook_handler(
     let sender_id = format!("bot:{}", webhook.name);
     let msg_id = uuid_v4();
 
+    let plaintext_content = body.content;
+
+    // Encrypt the webhook message content with the channel key before publishing.
+    // The webhook handler has access to the DB so it can look up the server key.
+    let (wire_content, encrypted_content, enc_nonce) = {
+        let db_lock = state.db.lock();
+        if let Ok(db) = db_lock {
+            if let Ok(Some(server_key)) = db.get_server_key(&webhook.server_id) {
+                let channel_key = concord_core::crypto::derive_channel_key(
+                    &server_key,
+                    &webhook.channel_id,
+                );
+                match concord_core::crypto::encrypt_channel_message(
+                    &channel_key,
+                    plaintext_content.as_bytes(),
+                ) {
+                    Ok((ct, nonce)) => (String::new(), Some(ct), Some(nonce.to_vec())),
+                    Err(_) => (plaintext_content.clone(), None, None),
+                }
+            } else {
+                (plaintext_content.clone(), None, None)
+            }
+        } else {
+            (plaintext_content.clone(), None, None)
+        }
+    };
+
     let message = concord_core::types::Message {
         id: msg_id.clone(),
         channel_id: webhook.channel_id.clone(),
         sender_id,
-        content: body.content,
+        content: wire_content,
         timestamp: chrono::Utc::now(),
         signature: Vec::new(), // bots don't sign
         alias_id: None,
         alias_name: Some(display_name),
+        encrypted_content,
+        nonce: enc_nonce,
     };
 
     // 5. Encode and publish to GossipSub.
@@ -205,7 +234,16 @@ pub async fn webhook_handler(
         }
     }
 
-    // 6. Store the message locally.
+    // 6. Store the message locally (with decrypted content).
+    let local_message = if message.encrypted_content.is_some() {
+        let mut m = message.clone();
+        m.content = plaintext_content;
+        m.encrypted_content = None;
+        m.nonce = None;
+        m
+    } else {
+        message.clone()
+    };
     {
         let db = match state.db.lock() {
             Ok(db) => db,
@@ -219,7 +257,7 @@ pub async fn webhook_handler(
                 .into_response();
             }
         };
-        if let Err(e) = db.insert_message(&message) {
+        if let Err(e) = db.insert_message(&local_message) {
             warn!(%e, "failed to store webhook message locally");
         }
         if let Err(e) = db.increment_webhook_usage(&webhook.id) {

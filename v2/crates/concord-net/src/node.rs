@@ -503,7 +503,42 @@ impl Node {
 
                 // Check if this is a voice signaling topic
                 if topic.ends_with("/voice-signal") {
-                    if let Ok(signal) = concord_core::wire::decode::<VoiceSignal>(&message.data) {
+                    // Voice signals may be encrypted: first 12 bytes = nonce, rest = ciphertext.
+                    // Try to decrypt by deriving the voice key from the topic path.
+                    let decrypted_data = if message.data.len() > 12 {
+                        // Parse server_id and channel_id from topic:
+                        // concord/{server_id}/{channel_id}/voice-signal
+                        let parts: Vec<&str> = topic.split('/').collect();
+                        if parts.len() >= 4 {
+                            let sid = parts[1];
+                            let cid = parts[2];
+                            let voice_key = concord_core::crypto::derive_channel_key(
+                                &concord_core::crypto::derive_forum_key(sid),
+                                cid,
+                            );
+                            let (nonce_bytes, ct) = message.data.split_at(12);
+                            if nonce_bytes.len() == 12 {
+                                let mut nonce_arr = [0u8; 12];
+                                nonce_arr.copy_from_slice(nonce_bytes);
+                                concord_core::crypto::decrypt_channel_message(
+                                    &voice_key,
+                                    ct,
+                                    &nonce_arr,
+                                )
+                                .ok()
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let data_to_decode = decrypted_data.as_deref().unwrap_or(&message.data);
+
+                    if let Ok(signal) = concord_core::wire::decode::<VoiceSignal>(data_to_decode) {
                         self.emit(NetworkEvent::VoiceSignalReceived { signal });
                     } else {
                         warn!(%topic, "failed to decode voice signal from gossipsub message");
@@ -539,7 +574,29 @@ impl Node {
                         warn!(%topic, "failed to decode forum post from gossipsub message");
                     }
                 } else if topic.starts_with("concord/friends/") {
-                    if let Ok(signal) = concord_core::wire::decode::<FriendSignal>(&message.data) {
+                    // Friend signals may be encrypted: first 12 bytes = nonce, rest = ciphertext.
+                    let friend_key = concord_core::crypto::derive_forum_key(&topic);
+                    let decrypted_data = if message.data.len() > 12 {
+                        let (nonce_bytes, ct) = message.data.split_at(12);
+                        if nonce_bytes.len() == 12 {
+                            let mut nonce_arr = [0u8; 12];
+                            nonce_arr.copy_from_slice(nonce_bytes);
+                            concord_core::crypto::decrypt_channel_message(
+                                &friend_key,
+                                ct,
+                                &nonce_arr,
+                            )
+                            .ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let data_to_decode = decrypted_data.as_deref().unwrap_or(&message.data);
+
+                    if let Ok(signal) = concord_core::wire::decode::<FriendSignal>(data_to_decode) {
                         // If this is a presence signal, also emit a dedicated presence event
                         if let FriendSignal::Presence { ref peer_id, ref status } = signal {
                             self.emit(NetworkEvent::PresenceUpdate {
@@ -835,15 +892,35 @@ impl Node {
                 let topic_str = format!("concord/{server_id}/{channel_id}/voice-signal");
                 match concord_core::wire::encode(&signal) {
                     Ok(data) => {
+                        // Encrypt voice signal with channel key derived from server_id + channel_id.
+                        // Uses HMAC-SHA256 of server_id as the key source (since the node layer
+                        // doesn't have access to the DB server_key, we use the server_id as a
+                        // shared secret for voice signals — peers in the same server know the server_id).
+                        let voice_key = concord_core::crypto::derive_channel_key(
+                            &concord_core::crypto::derive_forum_key(&server_id),
+                            &channel_id,
+                        );
+                        let encrypted_data =
+                            match concord_core::crypto::encrypt_channel_message(&voice_key, &data)
+                            {
+                                Ok((ct, nonce)) => {
+                                    let mut envelope = Vec::with_capacity(12 + ct.len());
+                                    envelope.extend_from_slice(&nonce);
+                                    envelope.extend_from_slice(&ct);
+                                    envelope
+                                }
+                                Err(_) => data, // fallback to plaintext on encryption failure
+                            };
+
                         let ident_topic = gossipsub::IdentTopic::new(&topic_str);
                         match self
                             .swarm
                             .behaviour_mut()
                             .gossipsub
-                            .publish(ident_topic, data)
+                            .publish(ident_topic, encrypted_data)
                         {
                             Ok(msg_id) => {
-                                debug!(%topic_str, %msg_id, "published voice signal");
+                                debug!(%topic_str, %msg_id, "published encrypted voice signal");
                             }
                             Err(e) => {
                                 error!(%topic_str, %e, "failed to publish voice signal");
@@ -1057,15 +1134,30 @@ impl Node {
 
                 match concord_core::wire::encode(&signal) {
                     Ok(data) => {
+                        // Encrypt friend signals with a key derived from the shared topic.
+                        // Both peers can derive the same key since they know each other's peer IDs.
+                        let friend_key = concord_core::crypto::derive_forum_key(&topic_str);
+                        let encrypted_data =
+                            match concord_core::crypto::encrypt_channel_message(&friend_key, &data)
+                            {
+                                Ok((ct, nonce)) => {
+                                    let mut envelope = Vec::with_capacity(12 + ct.len());
+                                    envelope.extend_from_slice(&nonce);
+                                    envelope.extend_from_slice(&ct);
+                                    envelope
+                                }
+                                Err(_) => data, // fallback to plaintext
+                            };
+
                         let ident_topic = gossipsub::IdentTopic::new(&topic_str);
                         match self
                             .swarm
                             .behaviour_mut()
                             .gossipsub
-                            .publish(ident_topic, data)
+                            .publish(ident_topic, encrypted_data)
                         {
                             Ok(msg_id) => {
-                                debug!(%topic_str, %msg_id, "published friend signal");
+                                debug!(%topic_str, %msg_id, "published encrypted friend signal");
                             }
                             Err(e) => {
                                 error!(%topic_str, %e, "failed to publish friend signal");

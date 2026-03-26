@@ -109,6 +109,9 @@ fn row_to_forum_post(row: &rusqlite::Row) -> rusqlite::Result<ForumPost> {
         origin_peer: row.get(7)?,
         forum_scope,
         signature: row.get(9)?,
+        // Stored posts are decrypted locally; encryption fields are wire-only.
+        encrypted_content: None,
+        nonce: None,
     })
 }
 
@@ -133,6 +136,8 @@ mod tests {
             origin_peer: "peer1".to_string(),
             forum_scope: scope,
             signature: vec![0u8; 64],
+            encrypted_content: None,
+            nonce: None,
         }
     }
 
@@ -237,6 +242,8 @@ mod tests {
             origin_peer: "p".to_string(),
             forum_scope: ForumScope::Local,
             signature: vec![0],
+            encrypted_content: None,
+            nonce: None,
         };
         let p2 = ForumPost {
             id: "late".to_string(),
@@ -249,6 +256,8 @@ mod tests {
             origin_peer: "p".to_string(),
             forum_scope: ForumScope::Local,
             signature: vec![0],
+            encrypted_content: None,
+            nonce: None,
         };
         db.store_forum_post(&p1).unwrap();
         db.store_forum_post(&p2).unwrap();

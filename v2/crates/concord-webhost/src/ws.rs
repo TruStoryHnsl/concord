@@ -193,6 +193,11 @@ async fn handle_connection(
                                     signature: Vec::new(), // guests don't sign
                                     alias_id: None,
                                     alias_name: None,
+                                    // Guest messages are published plaintext for now;
+                                    // full guest encryption requires channel key exchange
+                                    // during PIN auth (future enhancement).
+                                    encrypted_content: None,
+                                    nonce: None,
                                 };
 
                                 match concord_core::wire::encode(&message) {

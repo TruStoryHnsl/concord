@@ -155,14 +155,16 @@ pub fn delete_alias(
 
 /// Generate a TOTP secret and return the setup info (secret + otpauth:// URI).
 /// The secret is saved but NOT enabled until `enable_totp` is called.
+/// The secret is encrypted at rest using a key derived from the signing key.
 #[tauri::command]
 pub fn setup_totp(state: tauri::State<'_, AppState>) -> Result<TotpSetupPayload, String> {
     let secret = totp::generate_totp_secret();
+    let storage_key = concord_core::crypto::derive_storage_key(&state.keypair.to_bytes());
 
-    // Save the secret (not yet enabled)
+    // Save the secret encrypted (not yet enabled)
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.save_totp_secret(&state.peer_id, &secret)
+        db.save_totp_secret_encrypted(&state.peer_id, &secret, &storage_key)
             .map_err(|e| e.to_string())?;
     }
 
@@ -181,9 +183,10 @@ pub fn verify_totp_code(
     state: tauri::State<'_, AppState>,
     code: u32,
 ) -> Result<bool, String> {
+    let storage_key = concord_core::crypto::derive_storage_key(&state.keypair.to_bytes());
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let secret = db
-        .get_totp_secret(&state.peer_id)
+        .get_totp_secret_decrypted(&state.peer_id, &storage_key)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no TOTP secret configured".to_string())?;
 
@@ -197,9 +200,10 @@ pub fn enable_totp(
     state: tauri::State<'_, AppState>,
     code: u32,
 ) -> Result<(), String> {
+    let storage_key = concord_core::crypto::derive_storage_key(&state.keypair.to_bytes());
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let secret = db
-        .get_totp_secret(&state.peer_id)
+        .get_totp_secret_decrypted(&state.peer_id, &storage_key)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no TOTP secret configured — call setup_totp first".to_string())?;
 
@@ -219,9 +223,10 @@ pub fn disable_totp(
     state: tauri::State<'_, AppState>,
     code: u32,
 ) -> Result<(), String> {
+    let storage_key = concord_core::crypto::derive_storage_key(&state.keypair.to_bytes());
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let secret = db
-        .get_totp_secret(&state.peer_id)
+        .get_totp_secret_decrypted(&state.peer_id, &storage_key)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "TOTP is not configured".to_string())?;
 

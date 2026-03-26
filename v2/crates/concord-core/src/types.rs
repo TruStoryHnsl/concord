@@ -16,6 +16,12 @@ pub struct Message {
     /// Display name of the alias at time of sending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias_name: Option<String>,
+    /// Encrypted message content (when present, `content` is empty on the wire).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<Vec<u8>>,
+    /// Nonce used for encryption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<Vec<u8>>,
 }
 
 /// An alias (persona) belonging to a user identity.
@@ -201,6 +207,12 @@ pub struct ForumPost {
     pub origin_peer: String,
     pub forum_scope: ForumScope,
     pub signature: Vec<u8>,
+    /// Encrypted post content (when present, `content` is empty on the wire).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<Vec<u8>>,
+    /// Nonce used for encryption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<Vec<u8>>,
 }
 
 /// Whether a forum post is local (hop-limited) or global (unlimited propagation).
@@ -240,4 +252,14 @@ pub struct DirectConversation {
     pub created_at: DateTime<Utc>,
     pub is_group: bool,
     pub name: Option<String>,
+}
+
+/// Encrypted envelope for transmitting secrets (e.g., server keys via invites).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedEnvelope {
+    pub recipient_peer_id: String,
+    pub ciphertext: Vec<u8>,
+    pub nonce: Vec<u8>,
+    /// X25519 ephemeral public key of the sender.
+    pub sender_public_key: Vec<u8>,
 }

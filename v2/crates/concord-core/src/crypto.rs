@@ -5,7 +5,12 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
+use rand::RngCore;
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -124,6 +129,125 @@ pub fn compute_shared_secret(
     *shared.as_bytes()
 }
 
+// ─── Channel / Server Encryption ────────────────────────────────────
+
+/// Generate a cryptographically random 12-byte nonce.
+pub fn generate_random_nonce() -> [u8; 12] {
+    let mut nonce = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce);
+    nonce
+}
+
+/// Generate a cryptographically random 32-byte key (used as server secret).
+pub fn generate_random_key() -> [u8; 32] {
+    let mut key = [0u8; 32];
+    OsRng.fill_bytes(&mut key);
+    key
+}
+
+/// Derive a channel encryption key from the server key + channel ID.
+/// All members of a channel share this key.
+pub fn derive_channel_key(server_secret: &[u8; 32], channel_id: &str) -> [u8; 32] {
+    // HMAC-SHA256: server_secret as key, "concord-channel-key:" || channel_id as message
+    let mut mac =
+        <HmacSha256 as KeyInit>::new_from_slice(server_secret).unwrap();
+    mac.update(b"concord-channel-key:");
+    mac.update(channel_id.as_bytes());
+    let result = mac.finalize().into_bytes();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    key
+}
+
+/// Encrypt a message payload for a channel.
+pub fn encrypt_channel_message(
+    channel_key: &[u8; 32],
+    plaintext: &[u8],
+) -> Result<(Vec<u8>, [u8; 12]), CryptoError> {
+    let cipher = ChaCha20Poly1305::new_from_slice(channel_key)
+        .map_err(|_| CryptoError::EncryptionFailed)?;
+    let nonce_bytes = generate_random_nonce();
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|_| CryptoError::EncryptionFailed)?;
+    Ok((ciphertext, nonce_bytes))
+}
+
+/// Decrypt a channel message.
+pub fn decrypt_channel_message(
+    channel_key: &[u8; 32],
+    ciphertext: &[u8],
+    nonce: &[u8; 12],
+) -> Result<Vec<u8>, CryptoError> {
+    let cipher = ChaCha20Poly1305::new_from_slice(channel_key)
+        .map_err(|_| CryptoError::DecryptionFailed)?;
+    let nonce = Nonce::from_slice(nonce);
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| CryptoError::DecryptionFailed)
+}
+
+/// Derive a forum encryption key from a scope string.
+///
+/// This provides "encrypted radio" — any Concord node can derive the same key,
+/// but external observers (non-Concord) cannot read GossipSub traffic.
+pub fn derive_forum_key(scope: &str) -> [u8; 32] {
+    let mut mac =
+        <HmacSha256 as KeyInit>::new_from_slice(b"concord-forum-well-known-seed-v1").unwrap();
+    mac.update(b"concord-forum-key:");
+    mac.update(scope.as_bytes());
+    let result = mac.finalize().into_bytes();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    key
+}
+
+/// Derive a storage encryption key from the user's signing key.
+///
+/// Used to encrypt sensitive data at rest (TOTP secrets, etc.).
+/// The signing key itself is the root of trust — protecting it requires a
+/// user passphrase (future enhancement).
+pub fn derive_storage_key(signing_key_bytes: &[u8; 32]) -> [u8; 32] {
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(signing_key_bytes).unwrap();
+    mac.update(b"concord-storage-encryption-key");
+    let result = mac.finalize().into_bytes();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    key
+}
+
+/// Encrypt data for local storage using a device key.
+pub fn encrypt_storage(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    let cipher =
+        ChaCha20Poly1305::new_from_slice(key).map_err(|_| CryptoError::EncryptionFailed)?;
+    let nonce_bytes = generate_random_nonce();
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, data)
+        .map_err(|_| CryptoError::EncryptionFailed)?;
+    // Prepend the nonce so decryption can extract it
+    let mut result = Vec::with_capacity(12 + ciphertext.len());
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&ciphertext);
+    Ok(result)
+}
+
+/// Decrypt data from local storage using a device key.
+/// Expects the nonce prepended (first 12 bytes).
+pub fn decrypt_storage(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    if data.len() < 12 {
+        return Err(CryptoError::DecryptionFailed);
+    }
+    let (nonce_bytes, ciphertext) = data.split_at(12);
+    let cipher =
+        ChaCha20Poly1305::new_from_slice(key).map_err(|_| CryptoError::DecryptionFailed)?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| CryptoError::DecryptionFailed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +312,119 @@ mod tests {
         let session = E2ESession::from_shared_secret(shared).with_counters(10, 5);
         assert_eq!(session.send_count(), 10);
         assert_eq!(session.recv_count(), 5);
+    }
+
+    // ─── Channel encryption tests ───────────────────────────────────
+
+    #[test]
+    fn channel_key_derivation_deterministic() {
+        let server_secret = [42u8; 32];
+        let key1 = derive_channel_key(&server_secret, "channel-abc");
+        let key2 = derive_channel_key(&server_secret, "channel-abc");
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn channel_key_differs_by_channel() {
+        let server_secret = [42u8; 32];
+        let key1 = derive_channel_key(&server_secret, "general");
+        let key2 = derive_channel_key(&server_secret, "random");
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn channel_key_differs_by_server() {
+        let secret1 = [1u8; 32];
+        let secret2 = [2u8; 32];
+        let key1 = derive_channel_key(&secret1, "general");
+        let key2 = derive_channel_key(&secret2, "general");
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn channel_encrypt_decrypt_roundtrip() {
+        let server_secret = [42u8; 32];
+        let channel_key = derive_channel_key(&server_secret, "test-channel");
+        let plaintext = b"Hello, encrypted channel!";
+
+        let (ciphertext, nonce) = encrypt_channel_message(&channel_key, plaintext).unwrap();
+        assert_ne!(ciphertext, plaintext.to_vec());
+
+        let decrypted = decrypt_channel_message(&channel_key, &ciphertext, &nonce).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn channel_wrong_key_fails_decryption() {
+        let key1 = derive_channel_key(&[1u8; 32], "ch1");
+        let key2 = derive_channel_key(&[2u8; 32], "ch1");
+
+        let (ciphertext, nonce) = encrypt_channel_message(&key1, b"secret").unwrap();
+        assert!(decrypt_channel_message(&key2, &ciphertext, &nonce).is_err());
+    }
+
+    #[test]
+    fn forum_key_derivation() {
+        let key_local = derive_forum_key("local");
+        let key_global = derive_forum_key("global");
+        assert_ne!(key_local, key_global);
+
+        // Deterministic
+        let key_local2 = derive_forum_key("local");
+        assert_eq!(key_local, key_local2);
+    }
+
+    #[test]
+    fn forum_encrypt_decrypt_roundtrip() {
+        let key = derive_forum_key("global");
+        let plaintext = b"A forum post";
+
+        let (ct, nonce) = encrypt_channel_message(&key, plaintext).unwrap();
+        let decrypted = decrypt_channel_message(&key, &ct, &nonce).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn storage_encrypt_decrypt_roundtrip() {
+        let signing_key = [99u8; 32];
+        let storage_key = derive_storage_key(&signing_key);
+        let data = b"TOTP secret data here";
+
+        let encrypted = encrypt_storage(&storage_key, data).unwrap();
+        assert_ne!(&encrypted[12..], data); // ciphertext differs
+        assert!(encrypted.len() > data.len()); // nonce + AEAD tag overhead
+
+        let decrypted = decrypt_storage(&storage_key, &encrypted).unwrap();
+        assert_eq!(decrypted, data);
+    }
+
+    #[test]
+    fn storage_wrong_key_fails() {
+        let key1 = derive_storage_key(&[1u8; 32]);
+        let key2 = derive_storage_key(&[2u8; 32]);
+
+        let encrypted = encrypt_storage(&key1, b"secret").unwrap();
+        assert!(decrypt_storage(&key2, &encrypted).is_err());
+    }
+
+    #[test]
+    fn storage_short_data_fails() {
+        let key = derive_storage_key(&[1u8; 32]);
+        // Less than 12 bytes (nonce size)
+        assert!(decrypt_storage(&key, &[0u8; 5]).is_err());
+    }
+
+    #[test]
+    fn random_nonce_uniqueness() {
+        let n1 = generate_random_nonce();
+        let n2 = generate_random_nonce();
+        assert_ne!(n1, n2);
+    }
+
+    #[test]
+    fn random_key_uniqueness() {
+        let k1 = generate_random_key();
+        let k2 = generate_random_key();
+        assert_ne!(k1, k2);
     }
 }

@@ -69,33 +69,52 @@ pub async fn post_to_local_forum(
             .map(|a| a.display_name)
     };
 
-    let post = ForumPost {
+    // Encrypt the forum post content for the wire.
+    let plaintext_content = content.clone();
+    let forum_key = concord_core::crypto::derive_forum_key("local");
+    let (wire_content, encrypted_content, enc_nonce) =
+        match concord_core::crypto::encrypt_channel_message(&forum_key, content.as_bytes()) {
+            Ok((ct, nonce)) => (String::new(), Some(ct), Some(nonce.to_vec())),
+            Err(_) => (content, None, None),
+        };
+
+    let wire_post = ForumPost {
         id: Uuid::new_v4().to_string(),
         author_id: state.peer_id.clone(),
-        alias_name,
-        content,
+        alias_name: alias_name.clone(),
+        content: wire_content,
         timestamp: Utc::now(),
         hop_count: 0,
         max_hops: hops,
         origin_peer: state.peer_id.clone(),
         forum_scope: ForumScope::Local,
         signature: state.keypair.sign(b""),
+        encrypted_content,
+        nonce: enc_nonce,
     };
 
-    // Store locally
+    // Store locally with decrypted content.
+    let local_post = {
+        let mut p = wire_post.clone();
+        p.content = plaintext_content;
+        p.encrypted_content = None;
+        p.nonce = None;
+        p
+    };
+
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.store_forum_post(&post).map_err(|e| e.to_string())?;
+        db.store_forum_post(&local_post).map_err(|e| e.to_string())?;
     }
 
-    // Publish to mesh
+    // Publish encrypted version to mesh
     state
         .node
-        .post_to_forum(post.clone())
+        .post_to_forum(wire_post)
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(ForumPostPayload::from(&post))
+    Ok(ForumPostPayload::from(&local_post))
 }
 
 /// Post a message to the global forum (unlimited propagation).
@@ -112,33 +131,52 @@ pub async fn post_to_global_forum(
             .map(|a| a.display_name)
     };
 
-    let post = ForumPost {
+    // Encrypt the forum post content for the wire.
+    let plaintext_content = content.clone();
+    let forum_key = concord_core::crypto::derive_forum_key("global");
+    let (wire_content, encrypted_content, enc_nonce) =
+        match concord_core::crypto::encrypt_channel_message(&forum_key, content.as_bytes()) {
+            Ok((ct, nonce)) => (String::new(), Some(ct), Some(nonce.to_vec())),
+            Err(_) => (content, None, None),
+        };
+
+    let wire_post = ForumPost {
         id: Uuid::new_v4().to_string(),
         author_id: state.peer_id.clone(),
-        alias_name,
-        content,
+        alias_name: alias_name.clone(),
+        content: wire_content,
         timestamp: Utc::now(),
         hop_count: 0,
         max_hops: 255, // unlimited for global
         origin_peer: state.peer_id.clone(),
         forum_scope: ForumScope::Global,
         signature: state.keypair.sign(b""),
+        encrypted_content,
+        nonce: enc_nonce,
     };
 
-    // Store locally
+    // Store locally with decrypted content.
+    let local_post = {
+        let mut p = wire_post.clone();
+        p.content = plaintext_content;
+        p.encrypted_content = None;
+        p.nonce = None;
+        p
+    };
+
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.store_forum_post(&post).map_err(|e| e.to_string())?;
+        db.store_forum_post(&local_post).map_err(|e| e.to_string())?;
     }
 
-    // Publish to mesh
+    // Publish encrypted version to mesh
     state
         .node
-        .post_to_forum(post.clone())
+        .post_to_forum(wire_post)
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(ForumPostPayload::from(&post))
+    Ok(ForumPostPayload::from(&local_post))
 }
 
 /// Retrieve forum posts by scope with pagination.

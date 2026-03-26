@@ -13,6 +13,7 @@ pub mod forum_store;
 pub mod friends_store;
 pub mod conversation_store;
 pub mod settings_store;
+pub mod server_keys_store;
 
 pub use db::{Database, StoreError};
 pub use invites::{InviteRecord, MemberRecord};

@@ -232,6 +232,12 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS server_keys (
+                server_id TEXT PRIMARY KEY,
+                secret_key BLOB NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             ",
         )?;
         info!("database schema initialized");
@@ -250,11 +256,11 @@ mod tests {
         let count: i32 = db
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks','forum_posts','friends','conversations','settings')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks','forum_posts','friends','conversations','settings','server_keys')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 18);
+        assert_eq!(count, 19);
     }
 }
