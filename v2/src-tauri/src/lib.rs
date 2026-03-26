@@ -63,6 +63,22 @@ pub fn run() {
             let (display_name, keypair) = match db.load_identity() {
                 Ok(Some((name, kp))) => {
                     info!(%name, "loaded existing identity");
+                    // Ensure at least one alias exists (migration for existing identities)
+                    let aliases = db.get_aliases(&kp.peer_id())
+                        .map_err(|e| anyhow::anyhow!("failed to get aliases: {e}"))?;
+                    if aliases.is_empty() {
+                        let default_alias = concord_core::types::Alias {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            root_identity: kp.peer_id(),
+                            display_name: name.clone(),
+                            avatar_seed: uuid::Uuid::new_v4().to_string(),
+                            created_at: chrono::Utc::now(),
+                            is_active: true,
+                        };
+                        db.create_alias(&default_alias)
+                            .map_err(|e| anyhow::anyhow!("failed to create default alias: {e}"))?;
+                        info!("created default alias for existing identity");
+                    }
                     (name, kp)
                 }
                 Ok(None) => {
@@ -70,7 +86,18 @@ pub fn run() {
                     let name = format!("Node-{}", &kp.peer_id()[..8]);
                     db.save_identity(&name, &kp)
                         .map_err(|e| anyhow::anyhow!("failed to save identity: {e}"))?;
-                    info!(%name, "generated new identity");
+                    // Auto-create a default alias for the new identity
+                    let default_alias = concord_core::types::Alias {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        root_identity: kp.peer_id(),
+                        display_name: name.clone(),
+                        avatar_seed: uuid::Uuid::new_v4().to_string(),
+                        created_at: chrono::Utc::now(),
+                        is_active: true,
+                    };
+                    db.create_alias(&default_alias)
+                        .map_err(|e| anyhow::anyhow!("failed to create default alias: {e}"))?;
+                    info!(%name, "generated new identity with default alias");
                     (name, kp)
                 }
                 Err(e) => {
@@ -193,6 +220,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::auth::get_identity,
+            commands::auth::get_aliases,
+            commands::auth::create_alias,
+            commands::auth::switch_alias,
+            commands::auth::update_alias,
+            commands::auth::delete_alias,
             commands::auth::setup_totp,
             commands::auth::verify_totp_code,
             commands::auth::enable_totp,
@@ -216,6 +248,7 @@ pub fn run() {
             commands::servers::leave_server,
             commands::trust::get_peer_trust,
             commands::trust::attest_peer,
+            commands::trust::report_peer,
             commands::trust::get_attestations,
             commands::dm::initiate_dm_session,
             commands::dm::send_dm,
@@ -354,6 +387,24 @@ fn spawn_event_forwarder(
                                     );
                                 }
                             }
+                        }
+                        NetworkEvent::AliasAnnouncementReceived { announcement } => {
+                            // Store the known alias mapping
+                            if let Ok(db) = db.lock() {
+                                let _ = db.store_known_alias(
+                                    &announcement.alias_id,
+                                    &announcement.root_identity,
+                                    &announcement.display_name,
+                                );
+                            }
+                            let _ = app_handle.emit(
+                                events::ALIAS_ANNOUNCED,
+                                serde_json::json!({
+                                    "aliasId": announcement.alias_id,
+                                    "rootIdentity": announcement.root_identity,
+                                    "displayName": announcement.display_name,
+                                }),
+                            );
                         }
                         _ => {}
                     }

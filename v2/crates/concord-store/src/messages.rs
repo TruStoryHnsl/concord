@@ -10,8 +10,8 @@ impl Database {
     /// Insert a message into the local store. Ignores duplicates.
     pub fn insert_message(&self, msg: &Message) -> Result<()> {
         self.conn.execute(
-            "INSERT OR IGNORE INTO messages (id, channel_id, sender_id, content, timestamp, signature)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR IGNORE INTO messages (id, channel_id, sender_id, content, timestamp, signature, alias_id, alias_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 msg.id,
                 msg.channel_id,
@@ -19,6 +19,8 @@ impl Database {
                 msg.content,
                 msg.timestamp.timestamp_millis(),
                 msg.signature,
+                msg.alias_id,
+                msg.alias_name,
             ],
         )?;
         debug!(msg_id = %msg.id, "message stored");
@@ -39,7 +41,7 @@ impl Database {
         let mut messages = match before {
             Some(before_ts) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT id, channel_id, sender_id, content, timestamp, signature
+                    "SELECT id, channel_id, sender_id, content, timestamp, signature, alias_id, alias_name
                      FROM messages
                      WHERE channel_id = ?1 AND timestamp < ?2
                      ORDER BY timestamp DESC
@@ -50,7 +52,7 @@ impl Database {
             }
             None => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT id, channel_id, sender_id, content, timestamp, signature
+                    "SELECT id, channel_id, sender_id, content, timestamp, signature, alias_id, alias_name
                      FROM messages
                      WHERE channel_id = ?1
                      ORDER BY timestamp DESC
@@ -69,7 +71,7 @@ impl Database {
     /// Get the latest message in a channel.
     pub fn get_latest_message(&self, channel_id: &str) -> Result<Option<Message>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, channel_id, sender_id, content, timestamp, signature
+            "SELECT id, channel_id, sender_id, content, timestamp, signature, alias_id, alias_name
              FROM messages
              WHERE channel_id = ?1
              ORDER BY timestamp DESC
@@ -95,7 +97,7 @@ impl Database {
     pub fn search_messages(&self, query: &str, limit: u32) -> Result<Vec<Message>> {
         let pattern = format!("%{query}%");
         let mut stmt = self.conn.prepare(
-            "SELECT id, channel_id, sender_id, content, timestamp, signature
+            "SELECT id, channel_id, sender_id, content, timestamp, signature, alias_id, alias_name
              FROM messages
              WHERE content LIKE ?1
              ORDER BY timestamp DESC
@@ -121,6 +123,8 @@ fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<Message> {
         content: row.get(3)?,
         timestamp,
         signature: row.get(5)?,
+        alias_id: row.get(6)?,
+        alias_name: row.get(7)?,
     })
 }
 
@@ -140,6 +144,8 @@ mod tests {
                 .single()
                 .unwrap(),
             signature: vec![0u8; 64],
+            alias_id: None,
+            alias_name: None,
         }
     }
 

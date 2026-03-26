@@ -53,7 +53,9 @@ impl Database {
                 sender_id   TEXT NOT NULL,
                 content     TEXT NOT NULL,
                 timestamp   INTEGER NOT NULL,
-                signature   BLOB
+                signature   BLOB,
+                alias_id    TEXT,
+                alias_name  TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_channel_ts
@@ -109,11 +111,36 @@ impl Database {
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 attester_id     TEXT NOT NULL,
                 subject_id      TEXT NOT NULL,
+                attestation_type TEXT NOT NULL DEFAULT 'positive',
                 since_timestamp INTEGER NOT NULL,
+                reason          TEXT,
                 signature       BLOB NOT NULL,
+                attester_trust_weight REAL NOT NULL DEFAULT 0.0,
                 received_at     INTEGER NOT NULL,
                 UNIQUE(attester_id, subject_id)
             );
+
+            CREATE TABLE IF NOT EXISTS aliases (
+                id              TEXT PRIMARY KEY,
+                root_identity   TEXT NOT NULL,
+                display_name    TEXT NOT NULL,
+                avatar_seed     TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                is_active       INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_aliases_root
+                ON aliases(root_identity);
+
+            CREATE TABLE IF NOT EXISTS known_aliases (
+                alias_id        TEXT PRIMARY KEY,
+                root_identity   TEXT NOT NULL,
+                display_name    TEXT NOT NULL,
+                first_seen      INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_known_aliases_root
+                ON known_aliases(root_identity);
 
             CREATE TABLE IF NOT EXISTS totp_secrets (
                 peer_id     TEXT PRIMARY KEY,
@@ -164,11 +191,11 @@ mod tests {
         let count: i32 = db
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 11);
+        assert_eq!(count, 13);
     }
 }

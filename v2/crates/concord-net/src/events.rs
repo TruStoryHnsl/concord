@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use concord_core::trust::TrustAttestation;
-use concord_core::types::{DmSignal, Message, VoiceSignal};
+use concord_core::types::{AliasAnnouncement, DmSignal, Message, VoiceSignal};
 
 /// Events emitted by the network layer to the application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,5 +68,10 @@ pub enum NetworkEvent {
     /// A DM signal (key exchange or encrypted message) was received.
     DmSignalReceived {
         signal: DmSignal,
+    },
+
+    /// An alias announcement was received via GossipSub.
+    AliasAnnouncementReceived {
+        announcement: AliasAnnouncement,
     },
 }

@@ -4,8 +4,8 @@ import GlassPanel from "@/components/ui/GlassPanel";
 import Button from "@/components/ui/Button";
 import TrustBadge from "@/components/ui/TrustBadge";
 import { useAuthStore } from "@/stores/auth";
-import { getPeerTrust } from "@/api/tauri";
-import type { TrustInfo } from "@/api/tauri";
+import { getPeerTrust, getAliases, createAlias, switchAlias, updateAlias, deleteAlias } from "@/api/tauri";
+import type { TrustInfo, AliasPayload } from "@/api/tauri";
 
 
 function ProfilePage() {
@@ -13,10 +13,15 @@ function ProfilePage() {
   const displayName = useAuthStore((s) => s.displayName);
   const [trustInfo, setTrustInfo] = useState<TrustInfo | null>(null);
   const [copied, setCopied] = useState(false);
+  const [aliases, setAliases] = useState<AliasPayload[]>([]);
+  const [newAliasName, setNewAliasName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
 
   useEffect(() => {
     if (!peerId) return;
     void getPeerTrust(peerId).then(setTrustInfo).catch(() => {});
+    void getAliases().then(setAliases).catch(() => {});
   }, [peerId]);
 
   const copyDid = useCallback(() => {
@@ -25,6 +30,35 @@ function ProfilePage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [peerId]);
+
+  const handleCreateAlias = useCallback(async () => {
+    if (!newAliasName.trim()) return;
+    const alias = await createAlias(newAliasName.trim());
+    setAliases((prev) => [...prev, alias]);
+    setNewAliasName("");
+  }, [newAliasName]);
+
+  const handleSwitchAlias = useCallback(async (aliasId: string) => {
+    await switchAlias(aliasId);
+    const refreshed = await getAliases();
+    setAliases(refreshed);
+  }, []);
+
+  const handleUpdateAlias = useCallback(async (aliasId: string) => {
+    if (!editName.trim()) return;
+    await updateAlias(aliasId, editName.trim());
+    setAliases((prev) =>
+      prev.map((a) => (a.id === aliasId ? { ...a, displayName: editName.trim() } : a)),
+    );
+    setEditingId(null);
+    setEditName("");
+  }, [editName]);
+
+  const handleDeleteAlias = useCallback(async (aliasId: string) => {
+    await deleteAlias(aliasId);
+    const refreshed = await getAliases();
+    setAliases(refreshed);
+  }, []);
 
   return (
     <div className="mesh-background min-h-full p-6">
@@ -185,6 +219,120 @@ function ProfilePage() {
               </div>
             </GlassPanel>
 
+            {/* Aliases section */}
+            <GlassPanel className="p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary text-lg">
+                  face
+                </span>
+                <h2 className="font-headline font-semibold text-lg text-on-surface">
+                  Aliases
+                </h2>
+              </div>
+              <p className="text-xs text-on-surface-variant font-body">
+                Create personae tied to your root identity. Switch freely between them.
+              </p>
+
+              {/* Alias list */}
+              <div className="space-y-2">
+                {aliases.map((alias) => (
+                  <div
+                    key={alias.id}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-surface-container/50 hover:bg-surface-container-high/50 transition-colors"
+                  >
+                    <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-surface-container-high">
+                      <span className="material-symbols-outlined text-on-surface-variant text-lg">
+                        {alias.isActive ? "person" : "person_outline"}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {editingId === alias.id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void handleUpdateAlias(alias.id);
+                              if (e.key === "Escape") { setEditingId(null); setEditName(""); }
+                            }}
+                            className="flex-1 bg-surface-container px-2 py-1 rounded text-sm text-on-surface font-body outline-none focus:ring-1 focus:ring-primary"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => void handleUpdateAlias(alias.id)}
+                            className="text-secondary hover:text-primary transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">check</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm font-label font-medium text-on-surface truncate">
+                          {alias.displayName}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {alias.isActive ? (
+                        <span className="text-[10px] font-label uppercase tracking-wider text-secondary px-2 py-0.5 rounded-full bg-secondary/10">
+                          Active
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => void handleSwitchAlias(alias.id)}
+                          className="text-on-surface-variant hover:text-primary text-xs transition-colors"
+                          title="Switch to this alias"
+                        >
+                          <span className="material-symbols-outlined text-sm">swap_horiz</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setEditingId(alias.id);
+                          setEditName(alias.displayName);
+                        }}
+                        className="text-on-surface-variant hover:text-primary transition-colors"
+                        title="Edit alias"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span>
+                      </button>
+                      {aliases.length > 1 && (
+                        <button
+                          onClick={() => void handleDeleteAlias(alias.id)}
+                          className="text-on-surface-variant hover:text-red-400 transition-colors"
+                          title="Delete alias"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Create new alias */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newAliasName}
+                  onChange={(e) => setNewAliasName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleCreateAlias();
+                  }}
+                  placeholder="New alias name..."
+                  className="flex-1 bg-surface-container px-3 py-2 rounded-lg text-sm text-on-surface font-body placeholder:text-on-surface-variant/50 outline-none focus:ring-1 focus:ring-primary"
+                />
+                <Button
+                  variant="primary"
+                  onClick={() => void handleCreateAlias()}
+                  className="shrink-0"
+                >
+                  <span className="material-symbols-outlined text-lg">add</span>
+                  Create
+                </Button>
+              </div>
+            </GlassPanel>
+
             {/* Security section */}
             <GlassPanel className="p-5 space-y-4">
               <div className="flex items-center gap-2">
@@ -206,13 +354,13 @@ function ProfilePage() {
                     <div className="flex items-center gap-2">
                       <TrustBadge level={trustInfo.badge} size="md" />
                       <span className="text-sm text-on-surface-variant font-body">
-                        Score: {trustInfo.score}
+                        Score: {trustInfo.score.toFixed(2)}
                       </span>
                     </div>
                   </div>
                   <div className="text-right space-y-0.5">
                     <p className="text-sm font-headline font-semibold text-on-surface">
-                      {trustInfo.attestationCount}
+                      +{trustInfo.positiveCount} / -{trustInfo.negativeCount}
                     </p>
                     <p className="text-[10px] text-on-surface-variant font-label">
                       Attestations

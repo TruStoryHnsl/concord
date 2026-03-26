@@ -33,8 +33,14 @@ async function safeListen<T>(
 
 const MOCK_PEER_ID = "12D3KooW" + "MockNode00000000000000000000000000";
 
+const MOCK_ALIASES: AliasPayload[] = [
+  { id: "alias-main", displayName: "Node-preview", isActive: true, createdAt: Date.now() - 86400000 * 30 },
+  { id: "alias-alt", displayName: "Shadow Runner", isActive: false, createdAt: Date.now() - 86400000 * 7 },
+  { id: "alias-anon", displayName: "Anonymous", isActive: false, createdAt: Date.now() - 86400000 * 2 },
+];
+
 const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown> = {
-  get_identity: () => ({ peerId: MOCK_PEER_ID, displayName: "Node-preview" }),
+  get_identity: () => ({ peerId: MOCK_PEER_ID, displayName: "Node-preview", activeAlias: MOCK_ALIASES[0] }),
   get_node_status: () => ({ isOnline: true, connectedPeers: 3, peerId: MOCK_PEER_ID }),
   get_nearby_peers: () => [
     { peerId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", addresses: ["/ip4/192.168.1.10/udp/4001"], displayName: "Alice" },
@@ -42,9 +48,9 @@ const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown
     { peerId: "12D3KooWPeer3CCCCxxxxxxxxxxxxxx", addresses: ["/ip4/192.168.1.12/udp/4001"] },
   ],
   get_messages: () => [
-    { id: "m1", channelId: "general", senderId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", content: "hey everyone!", timestamp: Date.now() - 120000 },
-    { id: "m2", channelId: "general", senderId: MOCK_PEER_ID, content: "welcome to the mesh", timestamp: Date.now() - 60000 },
-    { id: "m3", channelId: "general", senderId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", content: "this is pretty cool", timestamp: Date.now() - 30000 },
+    { id: "m1", channelId: "general", senderId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", content: "hey everyone!", timestamp: Date.now() - 120000, aliasId: "alice-main", aliasName: "Alice" },
+    { id: "m2", channelId: "general", senderId: MOCK_PEER_ID, content: "welcome to the mesh", timestamp: Date.now() - 60000, aliasId: "alias-main", aliasName: "Node-preview" },
+    { id: "m3", channelId: "general", senderId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", content: "this is pretty cool", timestamp: Date.now() - 30000, aliasId: null, aliasName: null },
   ],
   send_message: (args) => ({
     id: "m-" + Date.now(),
@@ -113,16 +119,32 @@ const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown
   ],
   get_peer_trust: (args) => {
     const pid = (args?.peerId as string) ?? "";
-    if (pid === MOCK_PEER_ID) return { peerId: pid, score: 85, attestationCount: 12, badge: "trusted", identityAgeDays: 180 };
-    if (pid.includes("Peer1")) return { peerId: pid, score: 62, attestationCount: 5, badge: "established", identityAgeDays: 90 };
-    if (pid.includes("Peer2")) return { peerId: pid, score: 35, attestationCount: 2, badge: "recognized", identityAgeDays: 30 };
-    return { peerId: pid, score: 10, attestationCount: 0, badge: "unverified", identityAgeDays: 5 };
+    if (pid === MOCK_PEER_ID) return { peerId: pid, score: 0.85, attestationCount: 12, positiveCount: 12, negativeCount: 0, badge: "trusted", identityAgeDays: 180 };
+    if (pid.includes("Peer1")) return { peerId: pid, score: 0.62, attestationCount: 6, positiveCount: 5, negativeCount: 1, badge: "established", identityAgeDays: 90 };
+    if (pid.includes("Peer2")) return { peerId: pid, score: 0.35, attestationCount: 2, positiveCount: 2, negativeCount: 0, badge: "recognized", identityAgeDays: 30 };
+    if (pid.includes("Peer4")) return { peerId: pid, score: -0.45, attestationCount: 4, positiveCount: 1, negativeCount: 3, badge: "flagged", identityAgeDays: 60 };
+    return { peerId: pid, score: 0.0, attestationCount: 0, positiveCount: 0, negativeCount: 0, badge: "unverified", identityAgeDays: 5 };
   },
   get_attestations: () => [
-    { attesterId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", subjectId: MOCK_PEER_ID, sinceTimestamp: Date.now() - 86400000 * 30 },
-    { attesterId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", subjectId: MOCK_PEER_ID, sinceTimestamp: Date.now() - 86400000 * 14 },
+    { attesterId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", subjectId: MOCK_PEER_ID, attestationType: "Positive", sinceTimestamp: Date.now() - 86400000 * 30 },
+    { attesterId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", subjectId: MOCK_PEER_ID, attestationType: "Positive", sinceTimestamp: Date.now() - 86400000 * 14 },
   ],
   attest_peer: () => undefined,
+  report_peer: () => undefined,
+  get_aliases: () => MOCK_ALIASES,
+  create_alias: (args) => ({
+    id: "alias-" + Date.now(),
+    displayName: (args?.displayName as string) ?? "New Alias",
+    isActive: false,
+    createdAt: Date.now(),
+  }),
+  switch_alias: (args) => {
+    const id = (args?.aliasId as string) ?? "";
+    const found = MOCK_ALIASES.find((a) => a.id === id);
+    return found ?? MOCK_ALIASES[0];
+  },
+  update_alias: () => undefined,
+  delete_alias: () => undefined,
   get_dm_history: () => [
     { id: "dm1", fromPeer: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", toPeer: MOCK_PEER_ID, content: "Hey, are you online?", timestamp: Date.now() - 300000 },
     { id: "dm2", fromPeer: MOCK_PEER_ID, toPeer: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", content: "Yeah, just connected to the mesh!", timestamp: Date.now() - 240000 },
@@ -212,6 +234,15 @@ const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown
   get_webhost_status: () => null,
 };
 
+/* ── Alias Types ─────────────────────────────────────────────── */
+
+export interface AliasPayload {
+  id: string;
+  displayName: string;
+  isActive: boolean;
+  createdAt: number;
+}
+
 /* ── Trust Types ─────────────────────────────────────────────── */
 
 export type TrustLevel =
@@ -219,12 +250,15 @@ export type TrustLevel =
   | "recognized"
   | "established"
   | "trusted"
-  | "backbone";
+  | "backbone"
+  | "flagged";
 
 export interface TrustInfo {
   peerId: string;
   score: number;
   attestationCount: number;
+  positiveCount: number;
+  negativeCount: number;
   badge: TrustLevel;
   identityAgeDays: number;
 }
@@ -232,7 +266,9 @@ export interface TrustInfo {
 export interface Attestation {
   attesterId: string;
   subjectId: string;
+  attestationType: string;
   sinceTimestamp: number;
+  reason?: string;
 }
 
 /* ── DM Types ───────────────────────────────────────────────── */
@@ -287,6 +323,8 @@ export interface Message {
   senderId: string;
   content: string;
   timestamp: number;
+  aliasId?: string | null;
+  aliasName?: string | null;
 }
 
 export interface PeerInfo {
@@ -304,6 +342,7 @@ export interface NodeStatus {
 export interface Identity {
   peerId: string;
   displayName: string;
+  activeAlias?: AliasPayload | null;
 }
 
 export interface ChannelPayload {
@@ -457,8 +496,34 @@ export async function attestPeer(peerId: string): Promise<void> {
   return safeInvoke<void>("attest_peer", { peerId });
 }
 
+export async function reportPeer(peerId: string, reason?: string): Promise<void> {
+  return safeInvoke<void>("report_peer", { peerId, reason });
+}
+
 export async function getAttestations(peerId: string): Promise<Attestation[]> {
   return safeInvoke<Attestation[]>("get_attestations", { peerId });
+}
+
+/* ── Alias Commands ──────────────────────────────────────────── */
+
+export async function getAliases(): Promise<AliasPayload[]> {
+  return safeInvoke<AliasPayload[]>("get_aliases");
+}
+
+export async function createAlias(displayName: string): Promise<AliasPayload> {
+  return safeInvoke<AliasPayload>("create_alias", { displayName });
+}
+
+export async function switchAlias(aliasId: string): Promise<AliasPayload> {
+  return safeInvoke<AliasPayload>("switch_alias", { aliasId });
+}
+
+export async function updateAlias(aliasId: string, displayName: string): Promise<void> {
+  return safeInvoke<void>("update_alias", { aliasId, displayName });
+}
+
+export async function deleteAlias(aliasId: string): Promise<void> {
+  return safeInvoke<void>("delete_alias", { aliasId });
 }
 
 /* ── DM Commands ─────────────────────────────────────────────── */

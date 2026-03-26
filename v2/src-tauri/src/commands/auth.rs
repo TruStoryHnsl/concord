@@ -1,6 +1,8 @@
 use serde::Serialize;
+use uuid::Uuid;
 
 use concord_core::totp;
+use concord_core::types::Alias;
 
 use crate::AppState;
 
@@ -12,6 +14,28 @@ use crate::AppState;
 pub struct IdentityInfo {
     pub peer_id: String,
     pub display_name: String,
+    pub active_alias: Option<AliasPayload>,
+}
+
+/// Alias payload returned to the frontend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AliasPayload {
+    pub id: String,
+    pub display_name: String,
+    pub is_active: bool,
+    pub created_at: i64,
+}
+
+impl From<&Alias> for AliasPayload {
+    fn from(a: &Alias) -> Self {
+        Self {
+            id: a.id.clone(),
+            display_name: a.display_name.clone(),
+            is_active: a.is_active,
+            created_at: a.created_at.timestamp_millis(),
+        }
+    }
 }
 
 /// TOTP setup payload returned when the user sets up 2FA.
@@ -27,10 +51,106 @@ pub struct TotpSetupPayload {
 /// Returns the local node's identity.
 #[tauri::command]
 pub fn get_identity(state: tauri::State<'_, AppState>) -> Result<IdentityInfo, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let active_alias = db
+        .get_active_alias(&state.peer_id)
+        .map_err(|e| e.to_string())?
+        .map(|a| AliasPayload::from(&a));
     Ok(IdentityInfo {
         peer_id: state.peer_id.clone(),
         display_name: state.display_name.clone(),
+        active_alias,
     })
+}
+
+/// Get all aliases for the local identity.
+#[tauri::command]
+pub fn get_aliases(state: tauri::State<'_, AppState>) -> Result<Vec<AliasPayload>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let aliases = db
+        .get_aliases(&state.peer_id)
+        .map_err(|e| e.to_string())?;
+    Ok(aliases.iter().map(AliasPayload::from).collect())
+}
+
+/// Create a new alias for the local identity.
+#[tauri::command]
+pub fn create_alias(
+    state: tauri::State<'_, AppState>,
+    display_name: String,
+) -> Result<AliasPayload, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let alias_id = Uuid::new_v4().to_string();
+    let alias = Alias {
+        id: alias_id.clone(),
+        root_identity: state.peer_id.clone(),
+        display_name,
+        avatar_seed: Uuid::new_v4().to_string(),
+        created_at: chrono::Utc::now(),
+        is_active: false,
+    };
+    db.create_alias(&alias).map_err(|e| e.to_string())?;
+    Ok(AliasPayload::from(&alias))
+}
+
+/// Switch to a different alias.
+#[tauri::command]
+pub fn switch_alias(
+    state: tauri::State<'_, AppState>,
+    alias_id: String,
+) -> Result<AliasPayload, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_active_alias(&state.peer_id, &alias_id)
+        .map_err(|e| e.to_string())?;
+    let alias = db
+        .get_active_alias(&state.peer_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "alias not found".to_string())?;
+    Ok(AliasPayload::from(&alias))
+}
+
+/// Update an alias's display name.
+#[tauri::command]
+pub fn update_alias(
+    state: tauri::State<'_, AppState>,
+    alias_id: String,
+    display_name: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_alias(&alias_id, &display_name)
+        .map_err(|e| e.to_string())?;
+    // Also update the known alias record so remote peers see the new name
+    db.store_known_alias(&alias_id, &state.peer_id, &display_name)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Delete an alias. Cannot delete the last alias.
+#[tauri::command]
+pub fn delete_alias(
+    state: tauri::State<'_, AppState>,
+    alias_id: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let aliases = db
+        .get_aliases(&state.peer_id)
+        .map_err(|e| e.to_string())?;
+    if aliases.len() <= 1 {
+        return Err("cannot delete the last alias".to_string());
+    }
+    let was_active = aliases.iter().any(|a| a.id == alias_id && a.is_active);
+    db.delete_alias(&alias_id).map_err(|e| e.to_string())?;
+    // If we deleted the active alias, activate the first remaining one
+    if was_active {
+        let remaining = db
+            .get_aliases(&state.peer_id)
+            .map_err(|e| e.to_string())?;
+        if let Some(first) = remaining.first() {
+            db.set_active_alias(&state.peer_id, &first.id)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 /// Generate a TOTP secret and return the setup info (secret + otpauth:// URI).

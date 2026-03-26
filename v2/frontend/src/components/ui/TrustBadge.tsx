@@ -10,6 +10,12 @@ const BADGE_CONFIG: Record<
   TrustLevel,
   { icon: string; label: string; color: string; bg: string; glow?: string }
 > = {
+  flagged: {
+    icon: "warning",
+    label: "Flagged",
+    color: "text-red-400",
+    bg: "bg-red-500/15 border-red-400/30",
+  },
   unverified: {
     icon: "help_outline",
     label: "Unverified",

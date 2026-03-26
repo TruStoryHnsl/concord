@@ -12,6 +12,8 @@ pub struct TrustPayload {
     pub peer_id: String,
     pub score: f64,
     pub attestation_count: u32,
+    pub positive_count: u32,
+    pub negative_count: u32,
     pub badge: String,
 }
 
@@ -20,7 +22,9 @@ pub struct TrustPayload {
 pub struct AttestationPayload {
     pub attester_id: String,
     pub subject_id: String,
+    pub attestation_type: String,
     pub since_timestamp: u64,
+    pub reason: Option<String>,
 }
 
 /* ── Commands ────────────────────────────────────────────────── */
@@ -43,12 +47,16 @@ pub fn get_peer_trust(
             peer_id: ts.peer_id,
             score: ts.score,
             attestation_count: ts.attestation_count,
+            positive_count: ts.positive_count,
+            negative_count: ts.negative_count,
             badge: format!("{:?}", ts.badge),
         }),
         None => Ok(TrustPayload {
             peer_id,
             score: 0.0,
             attestation_count: 0,
+            positive_count: 0,
+            negative_count: 0,
             badge: "Unverified".to_string(),
         }),
     }
@@ -86,6 +94,39 @@ pub async fn attest_peer(
     Ok(())
 }
 
+/// Report a peer (create and broadcast a negative attestation).
+#[tauri::command]
+pub async fn report_peer(
+    state: tauri::State<'_, AppState>,
+    peer_id: String,
+    reason: Option<String>,
+) -> Result<(), String> {
+    let trust_manager = TrustManager::new(&state.keypair);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+
+    let attestation = trust_manager.create_negative_attestation(&peer_id, now, reason);
+
+    // Store locally
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.store_attestation(&attestation)
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Broadcast to the mesh
+    state
+        .node
+        .broadcast_attestation(attestation)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// Get all attestations for a peer.
 #[tauri::command]
 pub fn get_attestations(
@@ -102,7 +143,9 @@ pub fn get_attestations(
         .map(|a| AttestationPayload {
             attester_id: a.attester_id.clone(),
             subject_id: a.subject_id.clone(),
+            attestation_type: format!("{:?}", a.attestation_type),
             since_timestamp: a.since_timestamp,
+            reason: a.reason.clone(),
         })
         .collect())
 }

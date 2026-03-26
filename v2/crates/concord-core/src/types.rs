@@ -10,6 +10,32 @@ pub struct Message {
     pub content: String,
     pub timestamp: DateTime<Utc>,
     pub signature: Vec<u8>,
+    /// Which alias sent this message (None for legacy messages).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_id: Option<String>,
+    /// Display name of the alias at time of sending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_name: Option<String>,
+}
+
+/// An alias (persona) belonging to a user identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alias {
+    pub id: String,
+    pub root_identity: String,
+    pub display_name: String,
+    pub avatar_seed: String,
+    pub created_at: DateTime<Utc>,
+    pub is_active: bool,
+}
+
+/// Announcement broadcast when a user creates or updates an alias.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AliasAnnouncement {
+    pub alias_id: String,
+    pub root_identity: String,
+    pub display_name: String,
+    pub signature: Vec<u8>,
 }
 
 /// A communication channel within a server.

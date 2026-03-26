@@ -33,3 +33,6 @@ pub const ATTESTATION_RECEIVED: &str = "concord://attestation-received";
 
 /// Emitted when an encrypted DM is received from a peer.
 pub const DM_RECEIVED: &str = "concord://dm-received";
+
+/// Emitted when an alias announcement is received from the mesh.
+pub const ALIAS_ANNOUNCED: &str = "concord://alias-announced";

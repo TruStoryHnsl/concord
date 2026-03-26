@@ -191,6 +191,8 @@ async fn handle_connection(
                                     content: content.clone(),
                                     timestamp: chrono::Utc::now(),
                                     signature: Vec::new(), // guests don't sign
+                                    alias_id: None,
+                                    alias_name: None,
                                 };
 
                                 match concord_core::wire::encode(&message) {

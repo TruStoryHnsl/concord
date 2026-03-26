@@ -20,7 +20,7 @@ function ChatMessage({ message, isOwn }: ChatMessageProps) {
       >
         {!isOwn && (
           <p className="text-[11px] font-label font-semibold text-primary mb-0.5">
-            {shortenPeerId(message.senderId)}
+            {message.aliasName ?? shortenPeerId(message.senderId)}
           </p>
         )}
         <p className="font-body text-sm leading-relaxed break-words">

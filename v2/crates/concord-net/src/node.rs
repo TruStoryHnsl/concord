@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use concord_core::config::NodeConfig;
 use concord_core::trust::TrustAttestation;
-use concord_core::types::{DmSignal, VoiceSignal};
+use concord_core::types::{AliasAnnouncement, DmSignal, VoiceSignal};
 
 use crate::behaviour::{ConcordBehaviour, ConcordBehaviourEvent};
 use crate::discovery::{DiscoveryState, PeerInfo};
@@ -64,6 +64,10 @@ pub enum NodeCommand {
     /// Send a DM signal (key exchange or encrypted message) to a peer.
     SendDmSignal {
         signal: DmSignal,
+    },
+    /// Broadcast an alias announcement to the mesh.
+    BroadcastAliasAnnouncement {
+        announcement: AliasAnnouncement,
     },
     /// Shut down the node.
     Shutdown,
@@ -201,6 +205,15 @@ impl NodeHandle {
     pub async fn broadcast_attestation(&self, attestation: TrustAttestation) -> Result<()> {
         self.command_tx
             .send(NodeCommand::BroadcastAttestation { attestation })
+            .await
+            .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
+        Ok(())
+    }
+
+    /// Broadcast an alias announcement to the mesh.
+    pub async fn broadcast_alias_announcement(&self, announcement: AliasAnnouncement) -> Result<()> {
+        self.command_tx
+            .send(NodeCommand::BroadcastAliasAnnouncement { announcement })
             .await
             .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
         Ok(())
@@ -896,6 +909,31 @@ impl Node {
                     }
                     Err(e) => {
                         error!(%e, "failed to encode DM signal");
+                    }
+                }
+            }
+
+            NodeCommand::BroadcastAliasAnnouncement { announcement } => {
+                let topic_str = "concord/mesh/aliases";
+                match concord_core::wire::encode(&announcement) {
+                    Ok(data) => {
+                        let ident_topic = gossipsub::IdentTopic::new(topic_str);
+                        match self
+                            .swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .publish(ident_topic, data)
+                        {
+                            Ok(msg_id) => {
+                                debug!(%topic_str, %msg_id, "published alias announcement");
+                            }
+                            Err(e) => {
+                                error!(%topic_str, %e, "failed to publish alias announcement");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(%e, "failed to encode alias announcement");
                     }
                 }
             }

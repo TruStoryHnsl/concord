@@ -16,6 +16,8 @@ pub struct MessagePayload {
     pub sender_id: String,
     pub content: String,
     pub timestamp: i64, // unix millis
+    pub alias_id: Option<String>,
+    pub alias_name: Option<String>,
 }
 
 impl From<&Message> for MessagePayload {
@@ -26,6 +28,8 @@ impl From<&Message> for MessagePayload {
             sender_id: msg.sender_id.clone(),
             content: msg.content.clone(),
             timestamp: msg.timestamp.timestamp_millis(),
+            alias_id: msg.alias_id.clone(),
+            alias_name: msg.alias_name.clone(),
         }
     }
 }
@@ -43,6 +47,15 @@ pub async fn send_message(
 ) -> Result<MessagePayload, String> {
     let now = Utc::now();
 
+    // Look up the active alias (if any) so we can tag the message.
+    let (alias_id, alias_name) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        match db.get_active_alias(&state.peer_id) {
+            Ok(Some(alias)) => (Some(alias.id), Some(alias.display_name)),
+            _ => (None, None),
+        }
+    };
+
     // Build the message.
     let msg = Message {
         id: Uuid::new_v4().to_string(),
@@ -51,6 +64,8 @@ pub async fn send_message(
         content,
         timestamp: now,
         signature: state.keypair.sign(b""), // sign placeholder — full signing in a later phase
+        alias_id,
+        alias_name,
     };
 
     // Serialize with MessagePack for the wire.
