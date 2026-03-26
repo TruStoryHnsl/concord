@@ -261,6 +261,9 @@ pub fn run() {
             commands::webhost::start_webhost,
             commands::webhost::stop_webhost,
             commands::webhost::get_webhost_status,
+            commands::webhooks::create_webhook,
+            commands::webhooks::get_webhooks,
+            commands::webhooks::delete_webhook,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Concord");

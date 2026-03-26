@@ -35,6 +35,7 @@ pub async fn start_webhost(
         port: port.unwrap_or(0),
         pin: None, // auto-generate
         server_id: state.peer_id.clone(),
+        db: Some(state.db.clone()),
     };
 
     let server = WebhostServer::new(

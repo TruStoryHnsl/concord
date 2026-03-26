@@ -173,6 +173,25 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_attestations_subject
                 ON attestations(subject_id);
+
+            CREATE TABLE IF NOT EXISTS webhooks (
+                id          TEXT PRIMARY KEY,
+                server_id   TEXT NOT NULL,
+                channel_id  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                token       TEXT NOT NULL UNIQUE,
+                avatar_seed TEXT,
+                created_by  TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                last_used   INTEGER,
+                message_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_webhooks_server
+                ON webhooks(server_id);
+
+            CREATE INDEX IF NOT EXISTS idx_webhooks_token
+                ON webhooks(token);
             ",
         )?;
         info!("database schema initialized");
@@ -191,11 +210,11 @@ mod tests {
         let count: i32 = db
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 13);
+        assert_eq!(count, 14);
     }
 }

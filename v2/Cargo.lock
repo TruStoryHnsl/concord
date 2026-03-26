@@ -861,6 +861,7 @@ dependencies = [
  "concord-net",
  "concord-store",
  "concord-webhost",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tauri",

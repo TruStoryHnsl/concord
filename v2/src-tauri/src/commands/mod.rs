@@ -8,3 +8,4 @@ pub mod settings;
 pub mod trust;
 pub mod voice;
 pub mod webhost;
+pub mod webhooks;

@@ -2,6 +2,7 @@ mod admin;
 mod config;
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -192,6 +193,9 @@ async fn run_start(config_path: &str) -> anyhow::Result<()> {
         server_id_for_webhost = Some(server_id);
     }
 
+    // Wrap the database for shared access by the webhost webhook handler.
+    let db = Arc::new(Mutex::new(db));
+
     // Start webhost if enabled
     let mut webhost_url: Option<String> = None;
     let _webhost_handle = if daemon_config.webhost.enabled {
@@ -203,6 +207,7 @@ async fn run_start(config_path: &str) -> anyhow::Result<()> {
             port: daemon_config.webhost.port,
             pin: daemon_config.webhost.pin.clone(),
             server_id,
+            db: Some(db.clone()),
         };
 
         let webhost = WebhostServer::new(webhost_config, node_handle.clone(), event_tx.clone());

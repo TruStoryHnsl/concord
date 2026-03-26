@@ -17,9 +17,11 @@ use tracing::{error, info};
 
 use concord_net::events::NetworkEvent;
 use concord_net::node::NodeHandle;
+use concord_store::Database;
 
 use crate::assets::static_handler;
 use crate::auth::{generate_pin, GuestAuthManager};
+use crate::webhook::{self, RateLimiter, WebhookState};
 use crate::ws::ws_upgrade_handler;
 
 // ── Configuration ──────────────────────────────────────────────────
@@ -32,6 +34,9 @@ pub struct WebhostConfig {
     pub pin: Option<String>,
     /// The Concord server ID being hosted.
     pub server_id: String,
+    /// Optional shared database reference for webhook support. When provided,
+    /// the `/api/webhook/{token}` endpoint is enabled.
+    pub db: Option<Arc<std::sync::Mutex<Database>>>,
 }
 
 // ── Shared state ───────────────────────────────────────────────────
@@ -53,6 +58,7 @@ pub struct WebhostServer {
     auth: Arc<GuestAuthManager>,
     node_handle: NodeHandle,
     event_sender: broadcast::Sender<NetworkEvent>,
+    db: Option<Arc<std::sync::Mutex<Database>>>,
 }
 
 impl WebhostServer {
@@ -64,12 +70,14 @@ impl WebhostServer {
     ) -> Self {
         let pin = config.pin.clone().unwrap_or_else(generate_pin);
         let auth = Arc::new(GuestAuthManager::new(pin));
+        let db = config.db.clone();
 
         Self {
             config,
             auth,
             node_handle,
             event_sender,
+            db,
         }
     }
 
@@ -84,7 +92,7 @@ impl WebhostServer {
             server_id: self.config.server_id.clone(),
         };
 
-        let router = build_router(app_state);
+        let router = build_router(app_state, self.db.clone());
 
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], self.config.port));
         let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -159,15 +167,30 @@ impl Drop for WebhostHandle {
 
 // ── Router ─────────────────────────────────────────────────────────
 
-fn build_router(state: WebhostAppState) -> Router {
-    Router::new()
+fn build_router(state: WebhostAppState, db: Option<Arc<std::sync::Mutex<Database>>>) -> Router {
+    let mut router = Router::new()
         // Guest auth: POST /api/auth { pin, displayName } -> { token, guestId }
         .route("/api/auth", post(auth_handler))
         // REST endpoints (require session token in Authorization header)
         .route("/api/status", get(status_handler))
         .route("/api/peers", get(peers_handler))
         // WebSocket upgrade
-        .route("/ws", get(ws_upgrade_handler))
+        .route("/ws", get(ws_upgrade_handler));
+
+    // Webhook endpoint — only available when a database reference is provided.
+    if let Some(db) = db {
+        let webhook_state = WebhookState {
+            app_state: state.clone(),
+            db,
+            rate_limiter: Arc::new(RateLimiter::new()),
+        };
+        router = router.route(
+            "/api/webhook/{token}",
+            post(webhook::webhook_handler).with_state(webhook_state),
+        );
+    }
+
+    router
         // Static assets (SPA fallback)
         .fallback(static_handler)
         .layer(CorsLayer::permissive())
@@ -260,8 +283,10 @@ mod tests {
             port: 0,
             pin: None,
             server_id: "test-server".to_string(),
+            db: None,
         };
         assert_eq!(cfg.port, 0);
         assert!(cfg.pin.is_none());
+        assert!(cfg.db.is_none());
     }
 }

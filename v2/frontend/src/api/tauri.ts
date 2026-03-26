@@ -168,6 +168,32 @@ const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown
   bootstrap_dht: () => undefined,
   subscribe_channel: () => undefined,
   leave_server: () => undefined,
+  create_webhook: (args) => ({
+    id: "wh-" + Date.now(),
+    serverId: (args?.serverId as string) ?? "srv-demo-1",
+    channelId: (args?.channelId as string) ?? "ch1",
+    name: (args?.name as string) ?? "New Webhook",
+    token: "Wk" + Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 14),
+    webhookUrl: `http://localhost:8080/api/webhook/Wk${Math.random().toString(36).slice(2, 14)}`,
+    messageCount: 0,
+    createdAt: Date.now(),
+    lastUsed: null,
+  }),
+  get_webhooks: () => [
+    {
+      id: "wh-mock-1", serverId: "srv-demo-1", channelId: "ch1",
+      name: "GitHub CI", token: "WkA1b2C3d4E5f6G7h8I9j0K1l2M3n4",
+      webhookUrl: "http://localhost:8080/api/webhook/WkA1b2C3d4E5f6G7h8I9j0K1l2M3n4",
+      messageCount: 142, createdAt: Date.now() - 86400000 * 14, lastUsed: Date.now() - 3600000,
+    },
+    {
+      id: "wh-mock-2", serverId: "srv-demo-1", channelId: "ch2",
+      name: "Uptime Monitor", token: "WkX9y8Z7a6B5c4D3e2F1g0H9i8J7k6",
+      webhookUrl: "http://localhost:8080/api/webhook/WkX9y8Z7a6B5c4D3e2F1g0H9i8J7k6",
+      messageCount: 47, createdAt: Date.now() - 86400000 * 7, lastUsed: Date.now() - 600000,
+    },
+  ],
+  delete_webhook: () => undefined,
   join_voice: (args) => ({
     isInVoice: true,
     channelId: args?.channelId ?? "voice-lobby",
@@ -568,6 +594,20 @@ export async function isTotpEnabled(): Promise<boolean> {
   return safeInvoke<boolean>("is_totp_enabled");
 }
 
+/* ── Webhook Types ───────────────────────────────────────────── */
+
+export interface WebhookPayload {
+  id: string;
+  serverId: string;
+  channelId: string;
+  name: string;
+  token: string;
+  webhookUrl: string;
+  messageCount: number;
+  createdAt: number;
+  lastUsed: number | null;
+}
+
 /* ── System Health Types ─────────────────────────────────────── */
 
 export interface HealthEvent {
@@ -613,6 +653,30 @@ export async function stopWebhost(): Promise<void> {
 
 export async function getWebhostStatus(): Promise<WebhostInfo | null> {
   return safeInvoke<WebhostInfo | null>("get_webhost_status");
+}
+
+/* ── Webhook Commands ────────────────────────────────────────── */
+
+export async function createWebhook(
+  serverId: string,
+  channelId: string,
+  name: string,
+): Promise<WebhookPayload> {
+  return safeInvoke<WebhookPayload>("create_webhook", {
+    serverId,
+    channelId,
+    name,
+  });
+}
+
+export async function getWebhooks(
+  serverId: string,
+): Promise<WebhookPayload[]> {
+  return safeInvoke<WebhookPayload[]>("get_webhooks", { serverId });
+}
+
+export async function deleteWebhook(webhookId: string): Promise<void> {
+  return safeInvoke<void>("delete_webhook", { webhookId });
 }
 
 /* ── System Health Commands ──────────────────────────────────── */
