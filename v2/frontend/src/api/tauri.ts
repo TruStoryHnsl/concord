@@ -145,6 +145,68 @@ const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown
   },
   update_alias: () => undefined,
   delete_alias: () => undefined,
+  // Forum commands
+  get_forum_posts: (args) => {
+    const scope = (args?.scope as string) ?? "local";
+    if (scope === "local") {
+      return [
+        { id: "fp-l1", authorId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", aliasName: "Alice", content: "Anyone else noticing faster mesh sync today? My node is flying.", timestamp: Date.now() - 120000, hopCount: 1, maxHops: 3, forumScope: "local" },
+        { id: "fp-l2", authorId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", aliasName: "Bob", content: "New to the mesh. Running on a Raspberry Pi 5 — works great over BLE.", timestamp: Date.now() - 300000, hopCount: 2, maxHops: 3, forumScope: "local" },
+        { id: "fp-l3", authorId: "12D3KooWPeer3CCCCxxxxxxxxxxxxxx", aliasName: null, content: "Testing WiFi Direct throughput between two nodes in my apartment. Getting ~180Mbps.", timestamp: Date.now() - 600000, hopCount: 1, maxHops: 5, forumScope: "local" },
+        { id: "fp-l4", authorId: MOCK_PEER_ID, aliasName: "Node-preview", content: "Just set up a new relay node in my garage. Should help coverage for the block.", timestamp: Date.now() - 900000, hopCount: 0, maxHops: 3, forumScope: "local" },
+        { id: "fp-l5", authorId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", aliasName: "Alice", content: "Pro tip: keep your DHT bootstrap interval under 30s for faster peer discovery.", timestamp: Date.now() - 1800000, hopCount: 1, maxHops: 3, forumScope: "local" },
+      ];
+    }
+    return [
+      { id: "fp-g1", authorId: "12D3KooWGlobal1xxxxxxxxxxxxxxxx", aliasName: "MeshOps", content: "Global mesh uptime hit 99.7% this week. New record for the network!", timestamp: Date.now() - 60000, hopCount: 8, maxHops: 0, forumScope: "global" },
+      { id: "fp-g2", authorId: "12D3KooWGlobal2xxxxxxxxxxxxxxxx", aliasName: "NetRunner", content: "Running a backbone node in Berlin. Happy to peer with anyone in EU.", timestamp: Date.now() - 180000, hopCount: 12, maxHops: 0, forumScope: "global" },
+      { id: "fp-g3", authorId: "12D3KooWGlobal3xxxxxxxxxxxxxxxx", aliasName: null, content: "Just published a guide on setting up mesh nodes behind CGNAT. Link in my profile.", timestamp: Date.now() - 360000, hopCount: 15, maxHops: 0, forumScope: "global" },
+      { id: "fp-g4", authorId: "12D3KooWGlobal4xxxxxxxxxxxxxxxx", aliasName: "Cipher", content: "The new QUIC tunnel handshake is significantly faster. Great work on v2.", timestamp: Date.now() - 720000, hopCount: 6, maxHops: 0, forumScope: "global" },
+      { id: "fp-g5", authorId: MOCK_PEER_ID, aliasName: "Node-preview", content: "Hosting a public voice server this weekend for the mesh community meetup.", timestamp: Date.now() - 1200000, hopCount: 0, maxHops: 0, forumScope: "global" },
+    ];
+  },
+  post_to_local_forum: (args) => ({
+    id: "fp-" + Date.now(), authorId: MOCK_PEER_ID, aliasName: "Node-preview",
+    content: (args?.content as string) ?? "", timestamp: Date.now(),
+    hopCount: 0, maxHops: (args?.maxHops as number) ?? 3, forumScope: "local",
+  }),
+  post_to_global_forum: (args) => ({
+    id: "fp-" + Date.now(), authorId: MOCK_PEER_ID, aliasName: "Node-preview",
+    content: (args?.content as string) ?? "", timestamp: Date.now(),
+    hopCount: 0, maxHops: 0, forumScope: "global",
+  }),
+  set_local_forum_range: () => undefined,
+
+  // Friend commands (v2)
+  get_friends: () => [
+    { peerId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", displayName: "Alice", aliasName: "Alice", addedAt: Date.now() - 86400000 * 30, isMutual: true, lastOnline: Date.now() - 60000, presenceStatus: "online" },
+    { peerId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", displayName: "Bob", aliasName: "Bob", addedAt: Date.now() - 86400000 * 14, isMutual: true, lastOnline: Date.now() - 300000, presenceStatus: "away" },
+    { peerId: "12D3KooWPeer3CCCCxxxxxxxxxxxxxx", displayName: null, aliasName: null, addedAt: Date.now() - 86400000 * 7, isMutual: true, lastOnline: Date.now() - 7200000, presenceStatus: "dnd" },
+    { peerId: "12D3KooWPeer4DDDDxxxxxxxxxxxxxx", displayName: "Delta Node", aliasName: "Delta", addedAt: Date.now() - 86400000 * 3, isMutual: false, lastOnline: null, presenceStatus: "offline" },
+    { peerId: "12D3KooWPeer5EEEExxxxxxxxxxxxxx", displayName: "Echo", aliasName: "Echo", addedAt: Date.now() - 86400000, isMutual: true, lastOnline: Date.now() - 120000, presenceStatus: "online" },
+  ],
+  send_friend_request: () => undefined,
+  accept_friend_request: () => undefined,
+  remove_friend: () => undefined,
+  set_presence: () => undefined,
+  set_presence_visible: () => undefined,
+
+  // Conversation commands
+  get_conversations: () => [
+    { id: "conv-1", participants: ["12D3KooWPeer1AAAAxxxxxxxxxxxxxx"], createdAt: Date.now() - 86400000 * 7, isGroup: false, name: null, lastMessageAt: Date.now() - 120000 },
+    { id: "conv-2", participants: ["12D3KooWPeer2BBBBxxxxxxxxxxxxxx"], createdAt: Date.now() - 86400000 * 3, isGroup: false, name: null, lastMessageAt: Date.now() - 3600000 },
+    { id: "conv-3", participants: ["12D3KooWPeer1AAAAxxxxxxxxxxxxxx", "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", "12D3KooWPeer5EEEExxxxxxxxxxxxxx"], createdAt: Date.now() - 86400000, isGroup: true, name: "Mesh Builders", lastMessageAt: Date.now() - 600000 },
+  ],
+  create_group_conversation: (args) => ({
+    id: "conv-" + Date.now(),
+    participants: (args?.peerIds as string[]) ?? [],
+    createdAt: Date.now(),
+    isGroup: true,
+    name: (args?.name as string) ?? null,
+    lastMessageAt: null,
+  }),
+  add_to_conversation: () => undefined,
+
   get_dm_history: () => [
     { id: "dm1", fromPeer: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", toPeer: MOCK_PEER_ID, content: "Hey, are you online?", timestamp: Date.now() - 300000 },
     { id: "dm2", fromPeer: MOCK_PEER_ID, toPeer: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", content: "Yeah, just connected to the mesh!", timestamp: Date.now() - 240000 },
@@ -295,6 +357,44 @@ export interface Attestation {
   attestationType: string;
   sinceTimestamp: number;
   reason?: string;
+}
+
+/* ── Forum Types ──────────────────────────────────────────────── */
+
+export interface ForumPost {
+  id: string;
+  authorId: string;
+  aliasName: string | null;
+  content: string;
+  timestamp: number;
+  hopCount: number;
+  maxHops: number;
+  forumScope: "local" | "global";
+}
+
+/* ── Friend Types (v2) ────────────────────────────────────────── */
+
+export type PresenceStatus = "online" | "away" | "dnd" | "offline";
+
+export interface FriendPayload {
+  peerId: string;
+  displayName: string | null;
+  aliasName: string | null;
+  addedAt: number;
+  isMutual: boolean;
+  lastOnline: number | null;
+  presenceStatus: PresenceStatus;
+}
+
+/* ── Conversation Types ───────────────────────────────────────── */
+
+export interface ConversationPayload {
+  id: string;
+  participants: string[];
+  createdAt: number;
+  isGroup: boolean;
+  name: string | null;
+  lastMessageAt: number | null;
 }
 
 /* ── DM Types ───────────────────────────────────────────────── */
@@ -550,6 +650,77 @@ export async function updateAlias(aliasId: string, displayName: string): Promise
 
 export async function deleteAlias(aliasId: string): Promise<void> {
   return safeInvoke<void>("delete_alias", { aliasId });
+}
+
+/* ── Forum Commands ──────────────────────────────────────────── */
+
+export async function getForumPosts(
+  scope: "local" | "global",
+  limit?: number,
+  before?: string,
+): Promise<ForumPost[]> {
+  return safeInvoke<ForumPost[]>("get_forum_posts", { scope, limit, before });
+}
+
+export async function postToLocalForum(
+  content: string,
+  maxHops?: number,
+): Promise<ForumPost> {
+  return safeInvoke<ForumPost>("post_to_local_forum", { content, maxHops });
+}
+
+export async function postToGlobalForum(content: string): Promise<ForumPost> {
+  return safeInvoke<ForumPost>("post_to_global_forum", { content });
+}
+
+export async function setLocalForumRange(maxHops: number): Promise<void> {
+  return safeInvoke<void>("set_local_forum_range", { maxHops });
+}
+
+/* ── Friend Commands (v2) ────────────────────────────────────── */
+
+export async function getFriends(): Promise<FriendPayload[]> {
+  return safeInvoke<FriendPayload[]>("get_friends");
+}
+
+export async function sendFriendRequest(peerId: string): Promise<void> {
+  return safeInvoke<void>("send_friend_request", { peerId });
+}
+
+export async function acceptFriendRequest(peerId: string): Promise<void> {
+  return safeInvoke<void>("accept_friend_request", { peerId });
+}
+
+export async function removeFriend(peerId: string): Promise<void> {
+  return safeInvoke<void>("remove_friend", { peerId });
+}
+
+export async function setPresence(status: PresenceStatus): Promise<void> {
+  return safeInvoke<void>("set_presence", { status });
+}
+
+export async function setPresenceVisible(visible: boolean): Promise<void> {
+  return safeInvoke<void>("set_presence_visible", { visible });
+}
+
+/* ── Conversation Commands ───────────────────────────────────── */
+
+export async function getConversations(): Promise<ConversationPayload[]> {
+  return safeInvoke<ConversationPayload[]>("get_conversations");
+}
+
+export async function createGroupConversation(
+  peerIds: string[],
+  name?: string,
+): Promise<ConversationPayload> {
+  return safeInvoke<ConversationPayload>("create_group_conversation", { peerIds, name });
+}
+
+export async function addToConversation(
+  conversationId: string,
+  peerId: string,
+): Promise<void> {
+  return safeInvoke<void>("add_to_conversation", { conversationId, peerId });
 }
 
 /* ── DM Commands ─────────────────────────────────────────────── */

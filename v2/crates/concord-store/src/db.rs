@@ -192,6 +192,46 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_webhooks_token
                 ON webhooks(token);
+
+            CREATE TABLE IF NOT EXISTS forum_posts (
+                id TEXT PRIMARY KEY,
+                author_id TEXT NOT NULL,
+                alias_name TEXT,
+                content TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                hop_count INTEGER NOT NULL,
+                max_hops INTEGER NOT NULL,
+                origin_peer TEXT NOT NULL,
+                forum_scope TEXT NOT NULL,
+                signature BLOB NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_forum_timestamp
+                ON forum_posts(forum_scope, timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS friends (
+                peer_id TEXT PRIMARY KEY,
+                display_name TEXT,
+                alias_name TEXT,
+                added_at INTEGER NOT NULL,
+                is_mutual INTEGER NOT NULL DEFAULT 0,
+                auto_tunnel INTEGER NOT NULL DEFAULT 1,
+                last_online INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                participants TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                is_group INTEGER NOT NULL DEFAULT 0,
+                name TEXT,
+                last_message_at INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             ",
         )?;
         info!("database schema initialized");
@@ -210,11 +250,11 @@ mod tests {
         let count: i32 = db
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks','forum_posts','friends','conversations','settings')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 14);
+        assert_eq!(count, 18);
     }
 }

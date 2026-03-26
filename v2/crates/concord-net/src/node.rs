@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use concord_core::config::NodeConfig;
 use concord_core::trust::TrustAttestation;
-use concord_core::types::{AliasAnnouncement, DmSignal, VoiceSignal};
+use concord_core::types::{AliasAnnouncement, DmSignal, ForumPost, FriendSignal, PresenceStatus, VoiceSignal};
 
 use crate::behaviour::{ConcordBehaviour, ConcordBehaviourEvent};
 use crate::discovery::{DiscoveryState, PeerInfo};
@@ -68,6 +68,19 @@ pub enum NodeCommand {
     /// Broadcast an alias announcement to the mesh.
     BroadcastAliasAnnouncement {
         announcement: AliasAnnouncement,
+    },
+    /// Post a forum message to the mesh.
+    PostToForum {
+        post: ForumPost,
+    },
+    /// Broadcast presence status to all friends.
+    BroadcastPresence {
+        status: PresenceStatus,
+    },
+    /// Send a friend signal to a specific peer's shared topic.
+    SendFriendSignal {
+        peer_id: String,
+        signal: FriendSignal,
     },
     /// Shut down the node.
     Shutdown,
@@ -223,6 +236,36 @@ impl NodeHandle {
     pub async fn send_dm_signal(&self, signal: DmSignal) -> Result<()> {
         self.command_tx
             .send(NodeCommand::SendDmSignal { signal })
+            .await
+            .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
+        Ok(())
+    }
+
+    /// Post a forum message to the mesh (local or global).
+    pub async fn post_to_forum(&self, post: ForumPost) -> Result<()> {
+        self.command_tx
+            .send(NodeCommand::PostToForum { post })
+            .await
+            .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
+        Ok(())
+    }
+
+    /// Broadcast presence status to all friends.
+    pub async fn broadcast_presence(&self, status: PresenceStatus) -> Result<()> {
+        self.command_tx
+            .send(NodeCommand::BroadcastPresence { status })
+            .await
+            .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
+        Ok(())
+    }
+
+    /// Send a friend signal to a specific peer.
+    pub async fn send_friend_signal(&self, peer_id: &str, signal: FriendSignal) -> Result<()> {
+        self.command_tx
+            .send(NodeCommand::SendFriendSignal {
+                peer_id: peer_id.to_string(),
+                signal,
+            })
             .await
             .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
         Ok(())
@@ -476,6 +519,37 @@ impl Node {
                         self.emit(NetworkEvent::DmSignalReceived { signal });
                     } else {
                         warn!(%topic, "failed to decode DM signal from gossipsub message");
+                    }
+                } else if topic == "concord/forum/local" || topic == "concord/forum/global" {
+                    if let Ok(mut post) = concord_core::wire::decode::<ForumPost>(&message.data) {
+                        if topic == "concord/forum/local" {
+                            // For local forum: check TTL, increment hop_count, re-broadcast
+                            if post.hop_count < post.max_hops {
+                                post.hop_count += 1;
+                                // Re-broadcast with incremented hop count
+                                if let Ok(data) = concord_core::wire::encode(&post) {
+                                    let ident_topic = gossipsub::IdentTopic::new(&topic);
+                                    let _ = self.swarm.behaviour_mut().gossipsub.publish(ident_topic, data);
+                                }
+                            }
+                        }
+                        // Global forum: standard GossipSub handles propagation
+                        self.emit(NetworkEvent::ForumPostReceived { post });
+                    } else {
+                        warn!(%topic, "failed to decode forum post from gossipsub message");
+                    }
+                } else if topic.starts_with("concord/friends/") {
+                    if let Ok(signal) = concord_core::wire::decode::<FriendSignal>(&message.data) {
+                        // If this is a presence signal, also emit a dedicated presence event
+                        if let FriendSignal::Presence { ref peer_id, ref status } = signal {
+                            self.emit(NetworkEvent::PresenceUpdate {
+                                peer_id: peer_id.clone(),
+                                status: status.clone(),
+                            });
+                        }
+                        self.emit(NetworkEvent::FriendSignalReceived { signal });
+                    } else {
+                        warn!(%topic, "failed to decode friend signal from gossipsub message");
                     }
                 } else {
                     // Try to decode as a Concord Message
@@ -934,6 +1008,72 @@ impl Node {
                     }
                     Err(e) => {
                         error!(%e, "failed to encode alias announcement");
+                    }
+                }
+            }
+
+            NodeCommand::PostToForum { post } => {
+                let topic_str = match post.forum_scope {
+                    concord_core::types::ForumScope::Local => "concord/forum/local",
+                    concord_core::types::ForumScope::Global => "concord/forum/global",
+                };
+                match concord_core::wire::encode(&post) {
+                    Ok(data) => {
+                        let ident_topic = gossipsub::IdentTopic::new(topic_str);
+                        match self
+                            .swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .publish(ident_topic, data)
+                        {
+                            Ok(msg_id) => {
+                                debug!(%topic_str, %msg_id, "published forum post");
+                            }
+                            Err(e) => {
+                                error!(%topic_str, %e, "failed to publish forum post");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(%e, "failed to encode forum post");
+                    }
+                }
+            }
+
+            NodeCommand::BroadcastPresence { status } => {
+                // The presence is broadcast by the Tauri layer to per-friend topics.
+                // This is a fire-and-forget signal; the Tauri layer constructs the
+                // FriendSignal::Presence and sends it via SendFriendSignal per-friend.
+                // This command is a convenience that just logs.
+                debug!(?status, "broadcast_presence command received (handled by app layer)");
+            }
+
+            NodeCommand::SendFriendSignal { peer_id, signal } => {
+                // Friend topic: concord/friends/{sorted_peer_ids}
+                let my_peer = self.peer_id.clone();
+                let mut peers = [my_peer, peer_id.clone()];
+                peers.sort();
+                let topic_str = format!("concord/friends/{}_{}", peers[0], peers[1]);
+
+                match concord_core::wire::encode(&signal) {
+                    Ok(data) => {
+                        let ident_topic = gossipsub::IdentTopic::new(&topic_str);
+                        match self
+                            .swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .publish(ident_topic, data)
+                        {
+                            Ok(msg_id) => {
+                                debug!(%topic_str, %msg_id, "published friend signal");
+                            }
+                            Err(e) => {
+                                error!(%topic_str, %e, "failed to publish friend signal");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(%e, "failed to encode friend signal");
                     }
                 }
             }

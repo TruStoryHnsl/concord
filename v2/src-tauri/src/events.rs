@@ -36,3 +36,15 @@ pub const DM_RECEIVED: &str = "concord://dm-received";
 
 /// Emitted when an alias announcement is received from the mesh.
 pub const ALIAS_ANNOUNCED: &str = "concord://alias-announced";
+
+/// Emitted when a forum post is received from the mesh.
+pub const FORUM_POST_RECEIVED: &str = "concord://forum-post-received";
+
+/// Emitted when a friend request is received.
+pub const FRIEND_REQUEST_RECEIVED: &str = "concord://friend-request-received";
+
+/// Emitted when a friend request is accepted.
+pub const FRIEND_ACCEPTED: &str = "concord://friend-accepted";
+
+/// Emitted when a friend's presence status changes.
+pub const PRESENCE_UPDATED: &str = "concord://presence-updated";

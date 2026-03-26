@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use concord_core::trust::TrustAttestation;
-use concord_core::types::{AliasAnnouncement, DmSignal, Message, VoiceSignal};
+use concord_core::types::{AliasAnnouncement, DmSignal, ForumPost, FriendSignal, Message, PresenceStatus, VoiceSignal};
 
 /// Events emitted by the network layer to the application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,5 +73,21 @@ pub enum NetworkEvent {
     /// An alias announcement was received via GossipSub.
     AliasAnnouncementReceived {
         announcement: AliasAnnouncement,
+    },
+
+    /// A forum post was received via GossipSub.
+    ForumPostReceived {
+        post: ForumPost,
+    },
+
+    /// A friend signal was received via GossipSub.
+    FriendSignalReceived {
+        signal: FriendSignal,
+    },
+
+    /// A presence update was received from a friend.
+    PresenceUpdate {
+        peer_id: String,
+        status: PresenceStatus,
     },
 }

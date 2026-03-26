@@ -3,6 +3,8 @@ pub mod events;
 
 use std::sync::{Arc, Mutex};
 
+use std::time::Duration;
+
 use concord_core::config::NodeConfig;
 use concord_core::identity::Keypair;
 use concord_core::types::NodeType;
@@ -200,6 +202,75 @@ pub fn run() {
             let db_for_events = Arc::clone(&db);
             spawn_event_forwarder(app_handle, event_rx, db_for_events);
 
+            // 7b. Subscribe to forum topics.
+            {
+                let handle_clone = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = handle_clone.subscribe("concord/forum/local").await {
+                        error!(%e, "failed to subscribe to local forum topic");
+                    }
+                    if let Err(e) = handle_clone.subscribe("concord/forum/global").await {
+                        error!(%e, "failed to subscribe to global forum topic");
+                    }
+                    info!("subscribed to forum topics");
+                });
+            }
+
+            // 7c. Spawn the presence heartbeat task (broadcasts every 30s).
+            {
+                let presence_handle = handle.clone();
+                let presence_db = Arc::clone(&db);
+                let presence_peer_id = peer_id.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+
+                        // Check if presence is visible
+                        let (visible, status) = {
+                            let db = match presence_db.lock() {
+                                Ok(db) => db,
+                                Err(_) => continue,
+                            };
+                            let visible = db.get_setting("presence_visible")
+                                .ok()
+                                .flatten()
+                                .map(|v| v == "true")
+                                .unwrap_or(true);
+                            let status_str = db.get_setting("presence_status")
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| "online".to_string());
+                            let status = commands::friends::parse_presence_status(&status_str);
+                            (visible, status)
+                        };
+
+                        if !visible {
+                            continue;
+                        }
+
+                        // Get all friends to send presence to
+                        let friends = {
+                            let db = match presence_db.lock() {
+                                Ok(db) => db,
+                                Err(_) => continue,
+                            };
+                            db.get_friends().unwrap_or_default()
+                        };
+
+                        let signal = concord_core::types::FriendSignal::Presence {
+                            peer_id: presence_peer_id.clone(),
+                            status: status.clone(),
+                        };
+
+                        for friend in &friends {
+                            let _ = presence_handle
+                                .send_friend_signal(&friend.peer_id, signal.clone())
+                                .await;
+                        }
+                    }
+                });
+            }
+
             // 8. Store AppState as managed state.
             let state = AppState {
                 node: handle,
@@ -264,6 +335,24 @@ pub fn run() {
             commands::webhooks::create_webhook,
             commands::webhooks::get_webhooks,
             commands::webhooks::delete_webhook,
+            // Forum commands
+            commands::forums::post_to_local_forum,
+            commands::forums::post_to_global_forum,
+            commands::forums::get_forum_posts,
+            commands::forums::get_forum_settings,
+            commands::forums::set_local_forum_range,
+            // Friend commands
+            commands::friends::send_friend_request,
+            commands::friends::accept_friend_request,
+            commands::friends::get_friends,
+            commands::friends::remove_friend,
+            commands::friends::set_presence,
+            commands::friends::get_presence_settings,
+            commands::friends::set_presence_visible,
+            // Conversation commands
+            commands::conversations::get_conversations,
+            commands::conversations::create_group_conversation,
+            commands::conversations::add_to_conversation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Concord");
@@ -406,6 +495,82 @@ fn spawn_event_forwarder(
                                     "aliasId": announcement.alias_id,
                                     "rootIdentity": announcement.root_identity,
                                     "displayName": announcement.display_name,
+                                }),
+                            );
+                        }
+                        NetworkEvent::ForumPostReceived { post } => {
+                            // Store the forum post locally (dedup)
+                            if let Ok(db) = db.lock() {
+                                let _ = db.store_forum_post(post);
+                            }
+                            let payload = commands::forums::ForumPostPayload::from(post);
+                            let _ = app_handle.emit(events::FORUM_POST_RECEIVED, &payload);
+                        }
+                        NetworkEvent::FriendSignalReceived { signal } => {
+                            match signal {
+                                concord_core::types::FriendSignal::Request { from_peer, display_name } => {
+                                    let _ = app_handle.emit(
+                                        events::FRIEND_REQUEST_RECEIVED,
+                                        serde_json::json!({
+                                            "fromPeer": from_peer,
+                                            "displayName": display_name,
+                                        }),
+                                    );
+                                }
+                                concord_core::types::FriendSignal::Accept { from_peer } => {
+                                    // Mark as mutual in DB
+                                    if let Ok(db) = db.lock() {
+                                        let _ = db.set_friend_mutual(from_peer, true);
+                                    }
+                                    let _ = app_handle.emit(
+                                        events::FRIEND_ACCEPTED,
+                                        serde_json::json!({
+                                            "fromPeer": from_peer,
+                                        }),
+                                    );
+                                }
+                                concord_core::types::FriendSignal::Presence { peer_id, status } => {
+                                    // Update friend's last_online in DB
+                                    if let Ok(db) = db.lock() {
+                                        let now = chrono::Utc::now().timestamp_millis();
+                                        let _ = db.update_friend_online(peer_id, now);
+                                    }
+                                    let status_str = match status {
+                                        concord_core::types::PresenceStatus::Online => "online",
+                                        concord_core::types::PresenceStatus::Away => "away",
+                                        concord_core::types::PresenceStatus::DoNotDisturb => "dnd",
+                                        concord_core::types::PresenceStatus::Offline => "offline",
+                                    };
+                                    let _ = app_handle.emit(
+                                        events::PRESENCE_UPDATED,
+                                        serde_json::json!({
+                                            "peerId": peer_id,
+                                            "status": status_str,
+                                        }),
+                                    );
+                                }
+                                concord_core::types::FriendSignal::LedgerSync { .. } => {
+                                    // Future: handle ledger sync
+                                }
+                            }
+                        }
+                        NetworkEvent::PresenceUpdate { peer_id, status } => {
+                            // Also update friend's last_online
+                            if let Ok(db) = db.lock() {
+                                let now = chrono::Utc::now().timestamp_millis();
+                                let _ = db.update_friend_online(&peer_id, now);
+                            }
+                            let status_str = match &status {
+                                concord_core::types::PresenceStatus::Online => "online",
+                                concord_core::types::PresenceStatus::Away => "away",
+                                concord_core::types::PresenceStatus::DoNotDisturb => "dnd",
+                                concord_core::types::PresenceStatus::Offline => "offline",
+                            };
+                            let _ = app_handle.emit(
+                                events::PRESENCE_UPDATED,
+                                serde_json::json!({
+                                    "peerId": peer_id,
+                                    "status": status_str,
                                 }),
                             );
                         }

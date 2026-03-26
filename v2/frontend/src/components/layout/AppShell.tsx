@@ -33,8 +33,10 @@ function AppShell({ children }: AppShellProps) {
         {/* Desktop sidebar */}
         {showSidebar && (
           <aside className="flex w-16 flex-col items-center gap-2 py-3 bg-surface-container-low border-r border-outline-variant/30 shrink-0">
-            <NavIcon icon="hub" href="/" label="Dashboard" />
-            <NavIcon icon="share_reviews" href="/" label="Nodes" matchExact />
+            <NavIcon icon="hub" href="/" label="Home" matchExact />
+            <NavIcon icon="forum" href="/forum" label="Forums" />
+            <NavIcon icon="dns" href="/servers" label="Servers" matchPrefixes={["/servers", "/server/"]} />
+            <NavIcon icon="chat" href="/direct" label="Direct" />
             <NavIcon icon="group" href="/friends" label="Friends" />
             <NavIcon icon="map" href="/map" label="Map" />
             <div className="flex-1" />
@@ -67,16 +69,26 @@ function NavIcon({
   href,
   label,
   matchExact = false,
+  matchPrefixes,
 }: {
   icon: string;
   href: string;
   label: string;
   matchExact?: boolean;
+  matchPrefixes?: string[];
 }) {
   const location = useLocation();
-  const isActive = matchExact
-    ? location.pathname === href
-    : (location.pathname.startsWith(href) && href !== "/") || location.pathname === href;
+
+  let isActive: boolean;
+  if (matchPrefixes) {
+    isActive = matchPrefixes.some((prefix) => location.pathname.startsWith(prefix));
+  } else if (matchExact) {
+    isActive = location.pathname === href;
+  } else {
+    isActive =
+      (location.pathname.startsWith(href) && href !== "/") ||
+      location.pathname === href;
+  }
 
   return (
     <Link

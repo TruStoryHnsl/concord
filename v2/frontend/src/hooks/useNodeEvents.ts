@@ -1,17 +1,29 @@
 import { useEffect } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { onEvent } from "@/api/tauri";
-import type { Message, PeerInfo, TunnelInfo, VoiceParticipant, VoiceState, DmMessage } from "@/api/tauri";
+import type {
+  Message,
+  PeerInfo,
+  TunnelInfo,
+  VoiceParticipant,
+  VoiceState,
+  DmMessage,
+  ForumPost,
+  FriendPayload,
+  PresenceStatus,
+} from "@/api/tauri";
 import { useServersStore, MESH_GENERAL_CHANNEL } from "@/stores/servers";
 import { useMeshStore } from "@/stores/mesh";
 import { useVoiceStore } from "@/stores/voice";
 import { useDmStore } from "@/stores/dm";
+import { useForumStore } from "@/stores/forum";
+import { useFriendsStore } from "@/stores/friends";
 
 export function useNodeEvents() {
   useEffect(() => {
     const unlisteners: Promise<UnlistenFn>[] = [];
 
-    // Listen for new messages — route to the correct channel
+    // Listen for new messages -- route to the correct channel
     unlisteners.push(
       onEvent<Message>("concord://new-message", (msg) => {
         const state = useServersStore.getState();
@@ -31,7 +43,7 @@ export function useNodeEvents() {
           return;
         }
 
-        // Message is for a different channel — store could handle notifications later
+        // Message is for a different channel -- store could handle notifications later
         // For now we still add if it's the mesh channel (dashboard uses it)
         if (msg.channelId === MESH_GENERAL_CHANNEL) {
           state.addMessage(msg);
@@ -114,13 +126,12 @@ export function useNodeEvents() {
       ),
     );
 
-    // Trust: attestation received — could refresh trust data
+    // Trust: attestation received
     unlisteners.push(
       onEvent<{ peerId: string }>(
         "concord://attestation-received",
         (_payload) => {
           // Trust data refresh is handled by individual components
-          // This event can be used for notifications
         },
       ),
     );
@@ -131,6 +142,46 @@ export function useNodeEvents() {
         "concord://dm-received",
         (message) => {
           useDmStore.getState().addIncomingMessage(message);
+        },
+      ),
+    );
+
+    // Forum: post received
+    unlisteners.push(
+      onEvent<ForumPost>(
+        "concord://forum-post-received",
+        (post) => {
+          useForumStore.getState().addPost(post);
+        },
+      ),
+    );
+
+    // Friends: friend request
+    unlisteners.push(
+      onEvent<FriendPayload>(
+        "concord://friend-request",
+        (friend) => {
+          useFriendsStore.getState().addPendingRequest(friend);
+        },
+      ),
+    );
+
+    // Friends: friend accepted
+    unlisteners.push(
+      onEvent<{ peerId: string }>(
+        "concord://friend-accepted",
+        ({ peerId }) => {
+          useFriendsStore.getState().movePendingToFriends(peerId);
+        },
+      ),
+    );
+
+    // Friends: presence update
+    unlisteners.push(
+      onEvent<{ peerId: string; status: PresenceStatus }>(
+        "concord://presence-update",
+        ({ peerId, status }) => {
+          useFriendsStore.getState().updatePresence(peerId, status);
         },
       ),
     );

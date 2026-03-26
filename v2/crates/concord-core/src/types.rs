@@ -185,3 +185,59 @@ pub enum DmSignal {
     /// Encrypted message.
     EncryptedMessage(DirectMessage),
 }
+
+// ─── Three Pathways Types ───────────────────────────────────────────
+
+/// A forum post in the mesh.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumPost {
+    pub id: String,
+    pub author_id: String,
+    pub alias_name: Option<String>,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+    pub hop_count: u8,
+    pub max_hops: u8,
+    pub origin_peer: String,
+    pub forum_scope: ForumScope,
+    pub signature: Vec<u8>,
+}
+
+/// Whether a forum post is local (hop-limited) or global (unlimited propagation).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ForumScope {
+    Local,
+    Global,
+}
+
+/// Signals exchanged on the friend-specific GossipSub topics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FriendSignal {
+    /// Friend request.
+    Request { from_peer: String, display_name: String },
+    /// Accept friend request.
+    Accept { from_peer: String },
+    /// Presence heartbeat (sent every 30s to friends).
+    Presence { peer_id: String, status: PresenceStatus },
+    /// Ledger sync request/response between friends.
+    LedgerSync { peer_id: String, data: Vec<u8> },
+}
+
+/// Online presence status for a peer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PresenceStatus {
+    Online,
+    Away,
+    DoNotDisturb,
+    Offline,
+}
+
+/// A direct conversation between nodes (expandable to group).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectConversation {
+    pub id: String,
+    pub participants: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub is_group: bool,
+    pub name: Option<String>,
+}

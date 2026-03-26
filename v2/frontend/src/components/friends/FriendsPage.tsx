@@ -3,75 +3,56 @@ import { useNavigate } from "react-router-dom";
 import GlassPanel from "@/components/ui/GlassPanel";
 import Button from "@/components/ui/Button";
 import TrustBadge from "@/components/ui/TrustBadge";
-import NodeChip from "@/components/ui/NodeChip";
 import Skeleton from "@/components/ui/Skeleton";
+import { useFriendsStore } from "@/stores/friends";
 import { useMeshStore } from "@/stores/mesh";
-import { useAuthStore } from "@/stores/auth";
-import { getPeerTrust, getNearbyPeers } from "@/api/tauri";
-import type { TrustInfo, PeerInfo } from "@/api/tauri";
+import { getPeerTrust } from "@/api/tauri";
+import type { TrustInfo, FriendPayload, PresenceStatus } from "@/api/tauri";
 import { shortenPeerId } from "@/utils/format";
-
-/** Augmented peer for the friends list */
-interface FriendEntry {
-  peer: PeerInfo;
-  trust?: TrustInfo;
-  status: "online" | "away" | "offline";
-}
 
 function FriendsPage() {
   const navigate = useNavigate();
-  const nearbyPeers = useMeshStore((s) => s.nearbyPeers);
-  const setNearbyPeers = useMeshStore((s) => s.setNearbyPeers);
-  const myPeerId = useAuthStore((s) => s.peerId);
+  const friends = useFriendsStore((s) => s.friends);
+  const pendingRequests = useFriendsStore((s) => s.pendingRequests);
+  const loading = useFriendsStore((s) => s.loading);
+  const loadFriends = useFriendsStore((s) => s.loadFriends);
+  const acceptRequest = useFriendsStore((s) => s.acceptRequest);
+  const removeFriendAction = useFriendsStore((s) => s.removeFriend);
   const nodeStatus = useMeshStore((s) => s.nodeStatus);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [trustMap, setTrustMap] = useState<Record<string, TrustInfo>>({});
-  const [loading, setLoading] = useState(true);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [addPeerId, setAddPeerId] = useState("");
 
-  // Load peers and their trust info
+  // Load friends and trust data
   useEffect(() => {
-    async function loadData() {
-      try {
-        const peers = await getNearbyPeers();
-        setNearbyPeers(peers);
+    void loadFriends();
+  }, [loadFriends]);
 
-        // Load trust for each peer
-        const trustEntries = await Promise.all(
-          peers.map(async (p) => {
-            try {
-              const t = await getPeerTrust(p.peerId);
-              return [p.peerId, t] as const;
-            } catch {
-              return null;
-            }
-          }),
-        );
-        const map: Record<string, TrustInfo> = {};
-        for (const entry of trustEntries) {
-          if (entry) map[entry[0]] = entry[1];
-        }
-        setTrustMap(map);
-      } catch (err) {
-        console.warn("Failed to load friends data:", err);
-      } finally {
-        setLoading(false);
+  // Load trust info for friends
+  useEffect(() => {
+    async function loadTrust() {
+      const entries = await Promise.all(
+        friends.map(async (f) => {
+          try {
+            const t = await getPeerTrust(f.peerId);
+            return [f.peerId, t] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const map: Record<string, TrustInfo> = {};
+      for (const entry of entries) {
+        if (entry) map[entry[0]] = entry[1];
       }
+      setTrustMap(map);
     }
-    void loadData();
-  }, [setNearbyPeers]);
-
-  // Build friend entries from nearby peers (excluding self)
-  const friends: FriendEntry[] = useMemo(() => {
-    return nearbyPeers
-      .filter((p) => p.peerId !== myPeerId)
-      .map((peer, i) => ({
-        peer,
-        trust: trustMap[peer.peerId],
-        // Mock some varied statuses for display
-        status: (i === 0 ? "online" : i === 1 ? "away" : "online") as FriendEntry["status"],
-      }));
-  }, [nearbyPeers, myPeerId, trustMap]);
+    if (friends.length > 0) {
+      void loadTrust();
+    }
+  }, [friends]);
 
   // Filter by search
   const filtered = useMemo(() => {
@@ -79,20 +60,19 @@ function FriendsPage() {
     const q = searchQuery.toLowerCase();
     return friends.filter(
       (f) =>
-        (f.peer.displayName?.toLowerCase().includes(q) ?? false) ||
-        f.peer.peerId.toLowerCase().includes(q),
+        (f.displayName?.toLowerCase().includes(q) ?? false) ||
+        (f.aliasName?.toLowerCase().includes(q) ?? false) ||
+        f.peerId.toLowerCase().includes(q),
     );
   }, [friends, searchQuery]);
 
-  const onlineFriends = filtered.filter((f) => f.status === "online");
-  const awayFriends = filtered.filter((f) => f.status === "away");
-  const offlineFriends = filtered.filter((f) => f.status === "offline");
+  // Group by presence status
+  const onlineFriends = filtered.filter((f) => f.presenceStatus === "online");
+  const awayFriends = filtered.filter((f) => f.presenceStatus === "away");
+  const dndFriends = filtered.filter((f) => f.presenceStatus === "dnd");
+  const offlineFriends = filtered.filter((f) => f.presenceStatus === "offline");
 
-  // Mock pending requests
-  const pendingRequests = [
-    { id: "req1", name: "Nova_Node", peerId: "12D3KooWReq1xxxxxxxxxxxxxx", direction: "incoming" as const },
-    { id: "req2", name: "Echo_Runner", peerId: "12D3KooWReq2xxxxxxxxxxxxxx", direction: "incoming" as const },
-  ];
+  const sendRequest = useFriendsStore((s) => s.sendRequest);
 
   if (loading) {
     return (
@@ -130,14 +110,13 @@ function FriendsPage() {
         <div className="flex items-center justify-between">
           <div className="space-y-1">
             <h1 className="font-headline font-bold text-3xl text-on-surface">
-              Friends Hub
+              Friends
             </h1>
             <p className="text-on-surface-variant text-sm font-body">
-              Connect with peers across the decentralized mesh. Send DMs or
-              join a node for a group session.
+              Connect with peers across the decentralized mesh.
             </p>
           </div>
-          <Button variant="primary">
+          <Button variant="primary" onClick={() => setShowAddDialog(true)}>
             <span className="material-symbols-outlined text-lg">person_add</span>
             Add Friend
           </Button>
@@ -152,7 +131,7 @@ function FriendsPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search friends & peers..."
+            placeholder="Search friends..."
             className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-container text-on-surface placeholder:text-on-surface-variant/50 font-body text-sm border-none focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors"
           />
         </div>
@@ -162,53 +141,58 @@ function FriendsPage() {
           {/* Left sidebar */}
           <div className="space-y-5">
             {/* Pending Requests */}
-            <GlassPanel className="p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-lg">
-                  person_add
-                </span>
-                <span className="font-label text-xs uppercase tracking-wider text-on-surface-variant">
-                  Pending Requests
-                </span>
-                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary/20 text-primary text-[10px] font-label font-semibold">
-                  {pendingRequests.length}
-                </span>
-              </div>
-              <div className="space-y-2">
-                {pendingRequests.map((req) => (
-                  <div
-                    key={req.id}
-                    className="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-surface-container/50"
-                  >
-                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10">
-                      <span className="material-symbols-outlined text-primary text-sm">
-                        person
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-label font-medium text-on-surface truncate">
-                        {req.name}
-                      </p>
-                      <p className="text-[10px] text-on-surface-variant font-body">
-                        {shortenPeerId(req.peerId)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button className="flex items-center justify-center w-7 h-7 rounded-lg bg-secondary/10 text-secondary hover:bg-secondary/20 transition-colors">
-                        <span className="material-symbols-outlined text-sm">
-                          check
+            {pendingRequests.length > 0 && (
+              <GlassPanel className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-lg">
+                    person_add
+                  </span>
+                  <span className="font-label text-xs uppercase tracking-wider text-on-surface-variant">
+                    Pending Requests
+                  </span>
+                  <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary/20 text-primary text-[10px] font-label font-semibold">
+                    {pendingRequests.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {pendingRequests.map((req) => (
+                    <div
+                      key={req.peerId}
+                      className="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-surface-container/50"
+                    >
+                      <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10">
+                        <span className="material-symbols-outlined text-primary text-sm">
+                          person
                         </span>
-                      </button>
-                      <button className="flex items-center justify-center w-7 h-7 rounded-lg bg-error/10 text-error hover:bg-error/20 transition-colors">
-                        <span className="material-symbols-outlined text-sm">
-                          close
-                        </span>
-                      </button>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-label font-medium text-on-surface truncate">
+                          {req.displayName ?? req.aliasName ?? shortenPeerId(req.peerId)}
+                        </p>
+                        <p className="text-[10px] text-on-surface-variant font-body">
+                          {shortenPeerId(req.peerId)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => void acceptRequest(req.peerId)}
+                          className="flex items-center justify-center w-7 h-7 rounded-lg bg-secondary/10 text-secondary hover:bg-secondary/20 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-sm">
+                            check
+                          </span>
+                        </button>
+                        <button className="flex items-center justify-center w-7 h-7 rounded-lg bg-error/10 text-error hover:bg-error/20 transition-colors">
+                          <span className="material-symbols-outlined text-sm">
+                            close
+                          </span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </GlassPanel>
+                  ))}
+                </div>
+              </GlassPanel>
+            )}
 
             {/* Node Status */}
             <GlassPanel className="p-4 space-y-3">
@@ -221,12 +205,8 @@ function FriendsPage() {
                 </span>
               </div>
               <div className="flex items-center gap-3">
-                <NodeChip
-                  status={nodeStatus?.isOnline ? "active" : "inactive"}
-                  label={nodeStatus?.isOnline ? "Online" : "Offline"}
-                />
                 <span className="text-xs text-on-surface-variant font-body">
-                  {nodeStatus?.connectedPeers ?? 0} peers connected
+                  {nodeStatus?.isOnline ? "Online" : "Offline"} &middot; {nodeStatus?.connectedPeers ?? 0} peers
                 </span>
               </div>
             </GlassPanel>
@@ -238,9 +218,11 @@ function FriendsPage() {
             {onlineFriends.length > 0 && (
               <FriendSection
                 label="Online"
-                count={onlineFriends.length}
+                status="online"
                 friends={onlineFriends}
-                onMessage={(peerId) => navigate(`/dm/${peerId}`)}
+                trustMap={trustMap}
+                onMessage={(peerId) => navigate(`/direct/${peerId}`)}
+                onRemove={(peerId) => void removeFriendAction(peerId)}
               />
             )}
 
@@ -248,9 +230,23 @@ function FriendsPage() {
             {awayFriends.length > 0 && (
               <FriendSection
                 label="Away"
-                count={awayFriends.length}
+                status="away"
                 friends={awayFriends}
-                onMessage={(peerId) => navigate(`/dm/${peerId}`)}
+                trustMap={trustMap}
+                onMessage={(peerId) => navigate(`/direct/${peerId}`)}
+                onRemove={(peerId) => void removeFriendAction(peerId)}
+              />
+            )}
+
+            {/* Do Not Disturb */}
+            {dndFriends.length > 0 && (
+              <FriendSection
+                label="Do Not Disturb"
+                status="dnd"
+                friends={dndFriends}
+                trustMap={trustMap}
+                onMessage={(peerId) => navigate(`/direct/${peerId}`)}
+                onRemove={(peerId) => void removeFriendAction(peerId)}
               />
             )}
 
@@ -258,9 +254,11 @@ function FriendsPage() {
             {offlineFriends.length > 0 && (
               <FriendSection
                 label="Offline"
-                count={offlineFriends.length}
+                status="offline"
                 friends={offlineFriends}
-                onMessage={(peerId) => navigate(`/dm/${peerId}`)}
+                trustMap={trustMap}
+                onMessage={(peerId) => navigate(`/direct/${peerId}`)}
+                onRemove={(peerId) => void removeFriendAction(peerId)}
               />
             )}
 
@@ -273,18 +271,16 @@ function FriendsPage() {
                 </div>
                 <div className="space-y-1">
                   <p className="font-headline font-semibold text-on-surface">
-                    {searchQuery
-                      ? "No results found"
-                      : "No friends yet"}
+                    {searchQuery ? "No results found" : "No friends yet"}
                   </p>
                   <p className="text-sm text-on-surface-variant font-body max-w-xs mx-auto">
                     {searchQuery
-                      ? "No friends matching your search. Try a different query."
-                      : "Add friends via the mesh to start chatting and join nodes together."}
+                      ? "No friends matching your search."
+                      : "Add friends via their peer ID to start chatting."}
                   </p>
                 </div>
                 {!searchQuery && (
-                  <Button variant="primary">
+                  <Button variant="primary" onClick={() => setShowAddDialog(true)}>
                     <span className="material-symbols-outlined text-lg">person_add</span>
                     Add Friend
                   </Button>
@@ -294,29 +290,72 @@ function FriendsPage() {
           </div>
         </div>
       </div>
+
+      {/* Add Friend Dialog */}
+      {showAddDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
+          <GlassPanel className="p-6 w-full max-w-md space-y-4">
+            <h2 className="font-headline font-bold text-lg text-on-surface">
+              Add Friend
+            </h2>
+            <p className="text-sm text-on-surface-variant font-body">
+              Enter the peer ID of the person you want to add.
+            </p>
+            <input
+              type="text"
+              value={addPeerId}
+              onChange={(e) => setAddPeerId(e.target.value)}
+              placeholder="12D3KooW..."
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-container text-on-surface placeholder:text-on-surface-variant/50 font-body text-sm border-none focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => { setShowAddDialog(false); setAddPeerId(""); }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!addPeerId.trim()}
+                onClick={() => {
+                  void sendRequest(addPeerId.trim());
+                  setShowAddDialog(false);
+                  setAddPeerId("");
+                }}
+              >
+                Send Request
+              </Button>
+            </div>
+          </GlassPanel>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ── Friend Section ─────────────────────────────────────── */
+/* ── Friend Section ──────────────────────────────────────── */
 
 function FriendSection({
   label,
-  count,
+  status,
   friends,
+  trustMap,
   onMessage,
+  onRemove,
 }: {
   label: string;
-  count: number;
-  friends: FriendEntry[];
+  status: PresenceStatus;
+  friends: FriendPayload[];
+  trustMap: Record<string, TrustInfo>;
   onMessage: (peerId: string) => void;
+  onRemove: (peerId: string) => void;
 }) {
   const statusColor =
-    label === "Online"
+    status === "online"
       ? "text-secondary"
-      : label === "Away"
-        ? "text-amber-400"
-        : "text-on-surface-variant/50";
+      : status === "away"
+        ? "text-[#f59e0b]"
+        : status === "dnd"
+          ? "text-error"
+          : "text-on-surface-variant/50";
 
   return (
     <div className="space-y-2">
@@ -325,15 +364,17 @@ function FriendSection({
           {label}
         </span>
         <span className="text-[10px] text-on-surface-variant font-body">
-          {count}
+          {friends.length}
         </span>
       </div>
       <div className="space-y-1.5">
         {friends.map((f) => (
           <FriendCard
-            key={f.peer.peerId}
-            entry={f}
-            onMessage={() => onMessage(f.peer.peerId)}
+            key={f.peerId}
+            friend={f}
+            trust={trustMap[f.peerId]}
+            onMessage={() => onMessage(f.peerId)}
+            onRemove={() => onRemove(f.peerId)}
           />
         ))}
       </div>
@@ -344,26 +385,31 @@ function FriendSection({
 /* ── Friend Card ────────────────────────────────────────── */
 
 function FriendCard({
-  entry,
+  friend,
+  trust,
   onMessage,
+  onRemove,
 }: {
-  entry: FriendEntry;
+  friend: FriendPayload;
+  trust?: TrustInfo;
   onMessage: () => void;
+  onRemove: () => void;
 }) {
-  const { peer, trust, status } = entry;
-  const displayName = peer.displayName ?? shortenPeerId(peer.peerId);
+  const displayName = friend.displayName ?? friend.aliasName ?? shortenPeerId(friend.peerId);
 
-  const statusDotColor =
-    status === "online"
+  const presenceDotColor =
+    friend.presenceStatus === "online"
       ? "bg-secondary"
-      : status === "away"
-        ? "bg-amber-400"
-        : "bg-on-surface-variant/40";
+      : friend.presenceStatus === "away"
+        ? "bg-[#f59e0b]"
+        : friend.presenceStatus === "dnd"
+          ? "bg-error"
+          : "bg-outline-variant";
 
   return (
     <GlassPanel className="p-3">
       <div className="flex items-center gap-3">
-        {/* Avatar + status */}
+        {/* Avatar + presence */}
         <div className="relative shrink-0">
           <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10">
             <span className="material-symbols-outlined text-primary text-lg">
@@ -371,7 +417,7 @@ function FriendCard({
             </span>
           </div>
           <span
-            className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-surface ${statusDotColor}`}
+            className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border-2 border-surface ${presenceDotColor}`}
           />
         </div>
 
@@ -382,14 +428,17 @@ function FriendCard({
               {displayName}
             </p>
             {trust && <TrustBadge level={trust.badge} size="sm" />}
+            {friend.isMutual && (
+              <span className="text-[10px] text-secondary font-label">Mutual</span>
+            )}
           </div>
           <p className="text-[10px] text-on-surface-variant font-body truncate">
-            {shortenPeerId(peer.peerId)}
+            {shortenPeerId(friend.peerId)}
           </p>
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={onMessage}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors text-xs font-label"
@@ -397,11 +446,18 @@ function FriendCard({
             <span className="material-symbols-outlined text-sm">chat</span>
             Message
           </button>
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-xs font-label">
-            <span className="material-symbols-outlined text-sm">
-              connected_tv
-            </span>
-            Join Node
+          <button
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+            title="Voice call"
+          >
+            <span className="material-symbols-outlined text-sm">call</span>
+          </button>
+          <button
+            onClick={onRemove}
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-on-surface-variant hover:text-error hover:bg-error/10 transition-colors"
+            title="Remove friend"
+          >
+            <span className="material-symbols-outlined text-sm">person_remove</span>
           </button>
         </div>
       </div>

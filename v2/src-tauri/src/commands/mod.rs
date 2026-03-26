@@ -1,5 +1,7 @@
 pub mod auth;
+pub mod conversations;
 pub mod dm;
+pub mod forums;
 pub mod friends;
 pub mod mesh;
 pub mod messaging;

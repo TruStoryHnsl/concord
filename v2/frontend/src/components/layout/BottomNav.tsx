@@ -4,14 +4,15 @@ interface NavItem {
   icon: string;
   label: string;
   href: string;
+  matchPrefixes?: string[];
 }
 
 const navItems: NavItem[] = [
-  { icon: "share_reviews", label: "Nodes", href: "/" },
+  { icon: "forum", label: "Forums", href: "/forum" },
+  { icon: "dns", label: "Servers", href: "/servers", matchPrefixes: ["/servers", "/server/"] },
+  { icon: "chat", label: "Direct", href: "/direct" },
   { icon: "group", label: "Friends", href: "/friends" },
-  { icon: "add_circle", label: "Host", href: "/host" },
-  { icon: "map", label: "Map", href: "/map" },
-  { icon: "settings_input_component", label: "Settings", href: "/settings" },
+  { icon: "tune", label: "Settings", href: "/settings" },
 ];
 
 interface BottomNavProps {
@@ -23,13 +24,17 @@ function BottomNav({ visible = true }: BottomNavProps) {
 
   // Hide bottom nav when inside a server view (ServerPage has its own header)
   const inServer = location.pathname.startsWith("/server/");
-  if (inServer || !visible) return null;
+  // Hide bottom nav when in a conversation view
+  const inConversation = location.pathname.match(/^\/direct\/[^/]+$/);
+  if (inServer || inConversation || !visible) return null;
 
   return (
     <nav className="shrink-0 bg-surface-container-low border-t border-outline-variant/30">
       <div className="flex items-center justify-around h-14 px-2">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.href;
+          const isActive = item.matchPrefixes
+            ? item.matchPrefixes.some((prefix) => location.pathname.startsWith(prefix))
+            : location.pathname === item.href || location.pathname.startsWith(item.href + "/");
 
           return (
             <Link
