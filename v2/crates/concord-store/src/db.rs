@@ -1,0 +1,174 @@
+use std::path::Path;
+
+use rusqlite::Connection;
+use thiserror::Error;
+use tracing::info;
+
+#[derive(Error, Debug)]
+pub enum StoreError {
+    #[error("sqlite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("invalid data: {0}")]
+    InvalidData(String),
+    #[error("identity error: {0}")]
+    Identity(#[from] concord_core::identity::IdentityError),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+pub type Result<T> = std::result::Result<T, StoreError>;
+
+/// SQLite-backed local storage for a Concord node.
+pub struct Database {
+    pub(crate) conn: Connection,
+}
+
+impl Database {
+    /// Open (or create) a database at the given path.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        let db = Self { conn };
+        db.initialize()?;
+        info!("database opened and initialized");
+        Ok(db)
+    }
+
+    /// Open an in-memory database (useful for testing).
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let db = Self { conn };
+        db.initialize()?;
+        Ok(db)
+    }
+
+    /// Create all required tables if they don't already exist.
+    fn initialize(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS messages (
+                id          TEXT PRIMARY KEY,
+                channel_id  TEXT NOT NULL,
+                sender_id   TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                timestamp   INTEGER NOT NULL,
+                signature   BLOB
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_channel_ts
+                ON messages(channel_id, timestamp);
+
+            CREATE TABLE IF NOT EXISTS channels (
+                id            TEXT PRIMARY KEY,
+                server_id     TEXT NOT NULL,
+                name          TEXT NOT NULL,
+                channel_type  TEXT NOT NULL DEFAULT 'text'
+            );
+
+            CREATE TABLE IF NOT EXISTS servers (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                owner_id    TEXT NOT NULL,
+                visibility  TEXT NOT NULL DEFAULT 'private'
+            );
+
+            CREATE TABLE IF NOT EXISTS peers (
+                peer_id       TEXT PRIMARY KEY,
+                display_name  TEXT,
+                last_seen     INTEGER,
+                trust_score   REAL NOT NULL DEFAULT 0.0,
+                addresses     TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE TABLE IF NOT EXISTS identity (
+                id            INTEGER PRIMARY KEY CHECK (id = 1),
+                display_name  TEXT NOT NULL,
+                signing_key   BLOB NOT NULL,
+                created_at    INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS invites (
+                code        TEXT PRIMARY KEY,
+                server_id   TEXT NOT NULL,
+                created_by  TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                max_uses    INTEGER,
+                use_count   INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS members (
+                server_id   TEXT NOT NULL,
+                peer_id     TEXT NOT NULL,
+                role        TEXT NOT NULL DEFAULT 'member',
+                joined_at   INTEGER NOT NULL,
+                PRIMARY KEY (server_id, peer_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS attestations (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                attester_id     TEXT NOT NULL,
+                subject_id      TEXT NOT NULL,
+                since_timestamp INTEGER NOT NULL,
+                signature       BLOB NOT NULL,
+                received_at     INTEGER NOT NULL,
+                UNIQUE(attester_id, subject_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS totp_secrets (
+                peer_id     TEXT PRIMARY KEY,
+                secret      BLOB NOT NULL,
+                enabled     INTEGER NOT NULL DEFAULT 0,
+                created_at  INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS dm_sessions (
+                peer_id         TEXT PRIMARY KEY,
+                shared_secret   BLOB NOT NULL,
+                send_chain_key  BLOB NOT NULL,
+                recv_chain_key  BLOB NOT NULL,
+                send_count      INTEGER NOT NULL DEFAULT 0,
+                recv_count      INTEGER NOT NULL DEFAULT 0,
+                updated_at      INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS direct_messages (
+                id                  TEXT PRIMARY KEY,
+                peer_id             TEXT NOT NULL,
+                sender_id           TEXT NOT NULL,
+                content_encrypted   BLOB NOT NULL,
+                nonce               BLOB NOT NULL,
+                timestamp           INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_direct_messages_peer_ts
+                ON direct_messages(peer_id, timestamp);
+
+            CREATE INDEX IF NOT EXISTS idx_attestations_subject
+                ON attestations(subject_id);
+            ",
+        )?;
+        info!("database schema initialized");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_and_initialize() {
+        let db = Database::open_in_memory().unwrap();
+        // Tables should exist — verify by querying sqlite_master
+        let count: i32 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 11);
+    }
+}

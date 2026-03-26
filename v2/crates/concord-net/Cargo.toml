@@ -1,0 +1,19 @@
+[package]
+name = "concord-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libp2p = { version = "0.54", features = ["tokio", "mdns", "kad", "gossipsub", "quic", "noise", "yamux", "relay", "dcutr", "identify", "macros"] }
+tokio = { workspace = true }
+futures = "0.3"
+concord-core = { path = "../concord-core" }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }

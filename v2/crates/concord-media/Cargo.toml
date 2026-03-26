@@ -1,0 +1,17 @@
+[package]
+name = "concord-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+str0m = "0.7"
+concord-core = { path = "../concord-core" }
+concord-net = { path = "../concord-net" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+anyhow = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }

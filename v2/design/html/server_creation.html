@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CONCORD | New Node Setup</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "tertiary-container": "#98ffd9",
+              "on-primary-container": "#0c0081",
+              "on-primary-fixed-variant": "#11009c",
+              "primary-fixed": "#9496ff",
+              "primary-dim": "#5e5eff",
+              "surface": "#0c0e11",
+              "on-background": "#f9f9fd",
+              "tertiary-fixed-dim": "#89f0cb",
+              "secondary-fixed": "#afefdd",
+              "error-dim": "#d7383b",
+              "on-secondary-fixed": "#00483c",
+              "on-secondary-container": "#a1e1cf",
+              "on-tertiary-container": "#00634b",
+              "surface-container-highest": "#23262a",
+              "on-secondary": "#195c4e",
+              "tertiary": "#e7fff3",
+              "outline-variant": "#46484b",
+              "surface-container": "#171a1d",
+              "primary-container": "#9496ff",
+              "tertiary-fixed": "#98ffd9",
+              "on-tertiary-fixed": "#004f3b",
+              "surface-container-lowest": "#000000",
+              "on-secondary-fixed-variant": "#266658",
+              "on-primary-fixed": "#000000",
+              "surface-variant": "#23262a",
+              "inverse-primary": "#4644ea",
+              "secondary": "#afefdd",
+              "error-container": "#9f0519",
+              "on-error-container": "#ffa8a3",
+              "inverse-surface": "#f9f9fd",
+              "secondary-dim": "#a1e1cf",
+              "surface-dim": "#0c0e11",
+              "on-surface": "#f9f9fd",
+              "secondary-container": "#0b5345",
+              "on-error": "#490006",
+              "surface-container-low": "#111417",
+              "surface-container-high": "#1d2024",
+              "on-surface-variant": "#aaabaf",
+              "inverse-on-surface": "#535559",
+              "on-tertiary-fixed-variant": "#006e54",
+              "secondary-fixed-dim": "#a1e1cf",
+              "error": "#ff716c",
+              "on-tertiary": "#006c52",
+              "outline": "#747579",
+              "on-primary": "#1300a3",
+              "tertiary-dim": "#7be2bd",
+              "surface-tint": "#a4a5ff",
+              "surface-bright": "#292c31",
+              "primary": "#a4a5ff",
+              "primary-fixed-dim": "#8486ff",
+              "background": "#0c0e11"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Manrope"],
+              "label": ["Manrope"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(35, 38, 42, 0.6);
+            backdrop-filter: blur(20px);
+        }
+        .node-pattern {
+            background-image: radial-gradient(circle at 1px 1px, rgba(164, 165, 255, 0.05) 1px, transparent 0);
+            background-size: 32px 32px;
+        }
+        .primary-glow {
+            background: linear-gradient(135deg, #a4a5ff 0%, #9496ff 100%);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface text-on-surface font-body selection:bg-primary/30 min-h-screen node-pattern">
+<!-- TopAppBar -->
+<header class="bg-[#0c0e11] flex items-center justify-between px-6 py-4 w-full sticky top-0 z-50">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#a4a5ff]" data-icon="hub">hub</span>
+<span class="font-['Space_Grotesk'] tracking-widest text-xl font-bold text-[#a4a5ff] uppercase">CONCORD</span>
+</div>
+<div class="hidden md:flex items-center gap-8">
+<nav class="flex items-center gap-6">
+<a class="text-[#aaabaf] font-label text-xs uppercase tracking-widest hover:text-[#f9f9fd] transition-colors" href="#">Network</a>
+<a class="text-[#f9f9fd] font-label text-xs uppercase tracking-widest transition-colors" href="#">Nodes</a>
+<a class="text-[#aaabaf] font-label text-xs uppercase tracking-widest hover:text-[#f9f9fd] transition-colors" href="#">Security</a>
+</nav>
+<div class="h-8 w-8 rounded-full bg-surface-container-high flex items-center justify-center border border-outline-variant/20">
+<span class="material-symbols-outlined text-sm" data-icon="person">person</span>
+</div>
+</div>
+<button class="md:hidden text-on-surface">
+<span class="material-symbols-outlined" data-icon="menu">menu</span>
+</button>
+</header>
+<main class="w-full max-w-[1400px] mx-auto px-6 py-10 pb-32">
+<!-- Progress Header -->
+<div class="mb-16">
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-6">
+<div>
+<h1 class="font-headline text-4xl md:text-5xl font-bold tracking-tight mb-2">Initialize Node</h1>
+<p class="text-on-surface-variant font-light text-lg">Configure your distributed network instance.</p>
+</div>
+<!-- Step Indicator -->
+<div class="flex items-center gap-4 bg-surface-container-low p-2 rounded-xl border border-outline-variant/10">
+<div class="flex items-center gap-2 px-4 py-2 bg-primary rounded-lg text-on-primary-fixed font-bold text-sm">
+<span class="w-5 h-5 flex items-center justify-center rounded-full bg-on-primary-fixed/20 text-[10px]">1</span>
+                        TYPE
+                    </div>
+<div class="w-8 h-[2px] bg-outline-variant/30"></div>
+<div class="flex items-center gap-2 px-4 py-2 text-on-surface-variant font-bold text-sm">
+<span class="w-5 h-5 flex items-center justify-center rounded-full bg-surface-container-high text-[10px]">2</span>
+                        RESOURCES
+                    </div>
+<div class="w-8 h-[2px] bg-outline-variant/30"></div>
+<div class="flex items-center gap-2 px-4 py-2 text-on-surface-variant font-bold text-sm">
+<span class="w-5 h-5 flex items-center justify-center rounded-full bg-surface-container-high text-[10px]">3</span>
+                        KEYS
+                    </div>
+</div>
+</div>
+</div>
+<!-- Asymmetric Bento-style Flow Layout -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<!-- Main Step Container (Step 1 Active) -->
+<section class="lg:col-span-8 space-y-8">
+<div class="flex items-center gap-3 mb-2">
+<span class="px-3 py-1 bg-primary/10 text-primary text-[10px] font-bold tracking-widest rounded-full border border-primary/20">ACTIVE STEP</span>
+<h2 class="font-headline text-2xl font-semibold">Choose Node Topology</h2>
+</div>
+<!-- Node Type Selection Grid -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Public Node -->
+<label class="group cursor-pointer relative">
+<input checked="" class="peer sr-only" name="node_type" type="radio"/>
+<div class="h-full p-8 rounded-xl bg-surface-container-low border border-outline-variant/10 transition-all duration-300 peer-checked:border-primary peer-checked:bg-surface-container-high group-hover:bg-surface-container-high">
+<div class="w-12 h-12 mb-6 rounded-lg bg-primary/10 flex items-center justify-center text-primary transition-transform duration-300 group-hover:scale-110">
+<span class="material-symbols-outlined text-3xl" data-icon="public">public</span>
+</div>
+<h3 class="font-headline text-xl font-bold mb-2">Public</h3>
+<p class="text-on-surface-variant text-sm leading-relaxed mb-6">Open discovery, global relay capabilities. Ideal for community hubs and public indexes.</p>
+<div class="flex flex-wrap gap-2">
+<span class="text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">Relay Enabled</span>
+<span class="text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">Discovery: Global</span>
+</div>
+</div>
+</label>
+<!-- Private Node -->
+<label class="group cursor-pointer relative">
+<input class="peer sr-only" name="node_type" type="radio"/>
+<div class="h-full p-8 rounded-xl bg-surface-container-low border border-outline-variant/10 transition-all duration-300 peer-checked:border-primary peer-checked:bg-surface-container-high group-hover:bg-surface-container-high">
+<div class="w-12 h-12 mb-6 rounded-lg bg-secondary/10 flex items-center justify-center text-secondary transition-transform duration-300 group-hover:scale-110">
+<span class="material-symbols-outlined text-3xl" data-icon="lock">lock</span>
+</div>
+<h3 class="font-headline text-xl font-bold mb-2">Private</h3>
+<p class="text-on-surface-variant text-sm leading-relaxed mb-6">Invisible to global discovery. Only authorized keys can establish connection handshakes.</p>
+<div class="flex flex-wrap gap-2">
+<span class="text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">Zero-Trust</span>
+<span class="text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">Discovery: Local</span>
+</div>
+</div>
+</label>
+<!-- Federated Node -->
+<label class="group cursor-pointer relative">
+<input class="peer sr-only" name="node_type" type="radio"/>
+<div class="h-full p-8 rounded-xl bg-surface-container-low border border-outline-variant/10 transition-all duration-300 peer-checked:border-primary peer-checked:bg-surface-container-high group-hover:bg-surface-container-high">
+<div class="w-12 h-12 mb-6 rounded-lg bg-tertiary-dim/10 flex items-center justify-center text-tertiary-dim transition-transform duration-300 group-hover:scale-110">
+<span class="material-symbols-outlined text-3xl" data-icon="lan">lan</span>
+</div>
+<h3 class="font-headline text-xl font-bold mb-2">Federated</h3>
+<p class="text-on-surface-variant text-sm leading-relaxed mb-6">Connect specific node clusters. Balanced discovery with whitelisted peer peering.</p>
+<div class="flex flex-wrap gap-2">
+<span class="text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">Mesh Link</span>
+<span class="text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">Discovery: Hybrid</span>
+</div>
+</div>
+</label>
+</div>
+<!-- Footer Navigation inside Canvas -->
+<div class="flex items-center justify-between pt-8 border-t border-outline-variant/10">
+<button class="px-8 py-3 rounded-lg font-bold text-on-surface-variant hover:text-on-surface transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="arrow_back">arrow_back</span>
+                        Cancel
+                    </button>
+<button class="primary-glow px-10 py-3 rounded-xl font-bold text-on-primary-fixed shadow-lg hover:brightness-110 transition-all flex items-center gap-3">
+                        Allocate Resources
+                        <span class="material-symbols-outlined text-sm" data-icon="arrow_forward">arrow_forward</span>
+</button>
+</div>
+</section>
+<!-- Sidebar Info/Summary -->
+<aside class="lg:col-span-4 space-y-6">
+<!-- Summary Card -->
+<div class="glass-panel p-8 rounded-2xl border border-outline-variant/20">
+<h4 class="font-headline text-lg font-bold mb-6 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" data-icon="fact_check">fact_check</span>
+                        Configuration Preview
+                    </h4>
+<div class="space-y-6">
+<div class="flex justify-between items-start">
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-widest text-on-surface-variant">Network Identity</p>
+<p class="text-on-surface font-medium">CONCORD-NODE-7712</p>
+</div>
+<span class="material-symbols-outlined text-secondary text-sm" data-icon="check_circle">check_circle</span>
+</div>
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-widest text-on-surface-variant">Selected Protocol</p>
+<div class="flex items-center gap-2 text-on-surface">
+<span class="material-symbols-outlined text-lg" data-icon="dns">dns</span>
+<p class="font-medium">UDP/P2P Encrypted</p>
+</div>
+</div>
+<div class="space-y-1">
+<p class="text-[10px] uppercase tracking-widest text-on-surface-variant">Location Affinity</p>
+<div class="flex items-center gap-2 text-on-surface">
+<span class="material-symbols-outlined text-lg" data-icon="location_on">location_on</span>
+<p class="font-medium">Auto-Optimize (Frankfurt)</p>
+</div>
+</div>
+<div class="pt-6 border-t border-outline-variant/10 flex items-center justify-between">
+<p class="text-sm text-on-surface-variant">Estimated Latency</p>
+<p class="text-secondary font-bold">~14ms</p>
+</div>
+</div>
+</div>
+<!-- Graphic/Visual Element -->
+<div class="relative h-64 rounded-2xl overflow-hidden group">
+<img alt="Cybersecurity node network background" class="w-full h-full object-cover grayscale opacity-40 group-hover:grayscale-0 transition-all duration-700" data-alt="abstract close-up of a high-tech computer server motherboard with blue and purple LED lights in a dark room" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB-cUGLeXTO7GkwF7VVEboFBrjABah9MnS_A8foT4MHnSI2ZIMicLek5fuabnJBLVpG-thMN6DroY5tp1BX-7qAc7N5OgWqxihTuVFqq0G-PZ886F6im_1y5pr-4zZZKH3i69XNBkllRSzGCYdZnq_ghf71I9U978l9UAmq8lL4wB5-6IaBQndtbdGnq3UEznOPLn1XxUmZLoP1ni77hvdSBhmCiG3VaI9wTkp5a_x3a7jWjLUwURiWcbavU0gBFRcrfulW8jaskNk"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface to-transparent"></div>
+<div class="absolute bottom-6 left-6 right-6">
+<p class="text-xs text-on-surface-variant italic leading-relaxed">"Decentralization is not just a feature, it's the architecture of freedom."</p>
+</div>
+</div>
+</aside>
+</div>
+<!-- Future Steps Preview (Non-interactive) -->
+<div class="mt-20 grid grid-cols-1 md:grid-cols-2 gap-8 opacity-40 pointer-events-none">
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant/5">
+<div class="flex items-center gap-4 mb-4">
+<span class="w-8 h-8 flex items-center justify-center rounded-lg bg-surface-container-high text-on-surface-variant font-bold">2</span>
+<h3 class="font-headline font-bold text-lg">Resource Allocation</h3>
+</div>
+<div class="space-y-3">
+<div class="h-2 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full w-1/3 bg-outline-variant"></div>
+</div>
+<div class="h-2 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full w-1/2 bg-outline-variant"></div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-low p-6 rounded-xl border border-outline-variant/5">
+<div class="flex items-center gap-4 mb-4">
+<span class="w-8 h-8 flex items-center justify-center rounded-lg bg-surface-container-high text-on-surface-variant font-bold">3</span>
+<h3 class="font-headline font-bold text-lg">Security &amp; Keys</h3>
+</div>
+<div class="flex gap-3">
+<div class="w-full h-10 bg-surface-container-high rounded-lg"></div>
+<div class="w-20 h-10 bg-surface-container-high rounded-lg"></div>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-[#0c0e11]/60 backdrop-blur-xl md:hidden">
+<a class="flex flex-col items-center justify-center text-[#aaabaf] opacity-70 px-4 py-2 hover:text-[#f9f9fd] transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="monitoring">monitoring</span>
+<span class="font-['Manrope'] text-[11px] font-semibold uppercase tracking-wider mt-1">Dashboard</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#afefdd] bg-[#1d2024] rounded-xl px-4 py-2 hover:text-[#f9f9fd] transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="add_box">add_box</span>
+<span class="font-['Manrope'] text-[11px] font-semibold uppercase tracking-wider mt-1">New Node</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#aaabaf] opacity-70 px-4 py-2 hover:text-[#f9f9fd] transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-['Manrope'] text-[11px] font-semibold uppercase tracking-wider mt-1">Settings</span>
+</a>
+</nav>
+<!-- Desktop Floating Helper -->
+<div class="fixed bottom-8 right-8 hidden md:block">
+<button class="bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant/20 p-4 rounded-full shadow-2xl transition-all group active:scale-90">
+<span class="material-symbols-outlined text-primary group-hover:rotate-12 transition-transform" data-icon="contact_support">contact_support</span>
+</button>
+</div>
+</body></html>

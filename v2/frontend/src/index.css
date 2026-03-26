@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: "Manrope", sans-serif;
+    background-color: #0c0e11;
+    color: #f9f9fd;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer utilities {
+  .font-space-grotesk {
+    font-family: "Space Grotesk", sans-serif;
+  }
+}
+
+@layer components {
+  .mesh-background {
+    position: relative;
+  }
+
+  .mesh-background::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(
+      circle,
+      rgba(164, 165, 255, 0.05) 1px,
+      transparent 1px
+    );
+    background-size: 24px 24px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .glass-panel {
+    background: rgba(35, 38, 42, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(70, 72, 75, 0.3);
+  }
+
+  .primary-glow {
+    background: linear-gradient(135deg, #a4a5ff, #9496ff);
+  }
+
+  .node-pulse {
+    animation: nodePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes nodePulse {
+    0%,
+    100% {
+      box-shadow: 0 0 4px rgba(164, 165, 255, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 16px rgba(164, 165, 255, 0.6),
+        0 0 32px rgba(164, 165, 255, 0.2);
+    }
+  }
+
+  .map-gradient {
+    background: radial-gradient(circle at center, transparent 0%, #0c0e11 90%);
+  }
+
+  .node-dot-pulse {
+    animation: nodeDotPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes nodeDotPulse {
+    0% {
+      transform: scale(0.95);
+      box-shadow: 0 0 0 0 rgba(164, 165, 255, 0.7);
+    }
+    70% {
+      transform: scale(1);
+      box-shadow: 0 0 0 15px rgba(164, 165, 255, 0);
+    }
+    100% {
+      transform: scale(0.95);
+      box-shadow: 0 0 0 0 rgba(164, 165, 255, 0);
+    }
+  }
+}
+
+/* Material Symbols base settings */
+.material-symbols-outlined {
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}

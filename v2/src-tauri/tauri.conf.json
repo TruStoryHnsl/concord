@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicco-io/tauri-v2/main/crates/tauri-config-schema/schema.json",
+  "productName": "Concord",
+  "version": "0.1.0",
+  "identifier": "com.concord.app",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "cd ../frontend && npm run dev",
+    "beforeBuildCommand": "cd ../frontend && npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Concord",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 120,
+        "minHeight": 120,
+        "decorations": false,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ]
+  }
+}

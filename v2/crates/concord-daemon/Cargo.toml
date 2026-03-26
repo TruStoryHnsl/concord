@@ -1,0 +1,17 @@
+[package]
+name = "concord-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+concord-core = { path = "../concord-core" }
+concord-net = { path = "../concord-net" }
+concord-store = { path = "../concord-store" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }

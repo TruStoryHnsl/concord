@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Host a New Session | Concord</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary-fixed": "#98ffd9",
+                        "surface-container-high": "#1d2024",
+                        "on-primary-fixed-variant": "#11009c",
+                        "on-primary-container": "#0c0081",
+                        "surface-container-highest": "#23262a",
+                        "tertiary-container": "#98ffd9",
+                        "outline-variant": "#46484b",
+                        "surface-variant": "#23262a",
+                        "on-secondary": "#195c4e",
+                        "secondary": "#afefdd",
+                        "on-secondary-fixed-variant": "#266658",
+                        "on-error-container": "#ffa8a3",
+                        "surface": "#0c0e11",
+                        "on-surface": "#f9f9fd",
+                        "secondary-fixed-dim": "#a1e1cf",
+                        "tertiary": "#e7fff3",
+                        "surface-container-low": "#111417",
+                        "on-primary-fixed": "#000000",
+                        "surface-bright": "#292c31",
+                        "on-error": "#490006",
+                        "error": "#ff716c",
+                        "error-dim": "#d7383b",
+                        "error-container": "#9f0519",
+                        "tertiary-dim": "#7be2bd",
+                        "background": "#0c0e11",
+                        "on-secondary-container": "#a1e1cf",
+                        "outline": "#747579",
+                        "surface-container-lowest": "#000000",
+                        "on-tertiary": "#006c52",
+                        "inverse-primary": "#4644ea",
+                        "primary-dim": "#5e5eff",
+                        "surface-tint": "#a4a5ff",
+                        "on-background": "#f9f9fd",
+                        "inverse-on-surface": "#535559",
+                        "primary": "#a4a5ff",
+                        "on-tertiary-fixed": "#004f3b",
+                        "on-primary": "#1300a3",
+                        "tertiary-fixed-dim": "#89f0cb",
+                        "inverse-surface": "#f9f9fd",
+                        "secondary-fixed": "#afefdd",
+                        "secondary-container": "#0b5345",
+                        "on-secondary-fixed": "#00483c",
+                        "on-tertiary-container": "#00634b",
+                        "surface-container": "#171a1d",
+                        "surface-dim": "#0c0e11",
+                        "secondary-dim": "#a1e1cf",
+                        "on-tertiary-fixed-variant": "#006e54",
+                        "on-surface-variant": "#aaabaf",
+                        "primary-container": "#9496ff",
+                        "primary-fixed": "#9496ff",
+                        "primary-fixed-dim": "#8486ff"
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Manrope"],
+                        "label": ["Manrope"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-panel {
+            background: rgba(35, 38, 42, 0.6);
+            backdrop-filter: blur(20px);
+        }
+        .node-pattern {
+            background-image: radial-gradient(circle, rgba(164, 165, 255, 0.05) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-surface text-on-surface font-body min-h-screen selection:bg-primary selection:text-on-primary">
+<!-- Top Navigation Anchor -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-6 py-4 bg-[#111417] dark:bg-slate-900 shadow-none">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#a4a5ff] dark:text-indigo-300" data-icon="hub">hub</span>
+<h1 class="font-headline font-bold tracking-tight text-lg text-xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">Concord</h1>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-slate-400 dark:text-slate-500 hover:bg-slate-800/50 transition-colors duration-200 p-2 rounded-full" data-icon="sensors">sensors</button>
+</div>
+</header>
+<main class="pt-24 pb-32 px-6 max-w-lg mx-auto node-pattern">
+<!-- Page Title & Intro -->
+<section class="mb-10">
+<h2 class="font-headline text-3xl font-bold tracking-tight mb-2">Host a New Session</h2>
+<p class="text-on-surface-variant text-sm leading-relaxed">Initialize a decentralized neural link. Choose your protocol and node persistence.</p>
+</section>
+<!-- Session Type Selection -->
+<section class="space-y-4 mb-10">
+<label class="font-label text-xs uppercase tracking-widest font-semibold text-primary mb-2 block">Choose Session Type</label>
+<button class="w-full flex items-center justify-between p-5 rounded-xl bg-surface-container-low border border-transparent hover:border-primary/20 transition-all group">
+<div class="flex items-center gap-4">
+<div class="p-3 bg-surface-container-high rounded-lg text-primary group-hover:bg-primary group-hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="chat">chat</span>
+</div>
+<div class="text-left">
+<p class="font-semibold text-on-surface">Text Only</p>
+<p class="text-xs text-on-surface-variant">Low latency, minimal bandwidth</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline-variant" data-icon="radio_button_unchecked">radio_button_unchecked</span>
+</button>
+<button class="w-full flex items-center justify-between p-5 rounded-xl bg-surface-container-high border border-primary/40 transition-all group">
+<div class="flex items-center gap-4">
+<div class="p-3 bg-primary rounded-lg text-on-primary shadow-[0_0_15px_rgba(164,165,255,0.3)]">
+<span class="material-symbols-outlined" data-icon="keyboard_voice">keyboard_voice</span>
+</div>
+<div class="text-left">
+<p class="font-semibold text-on-surface">Voice &amp; Text</p>
+<p class="text-xs text-on-surface-variant">Encrypted audio stream active</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-primary" data-icon="radio_button_checked">radio_button_checked</span>
+</button>
+<button class="w-full flex items-center justify-between p-5 rounded-xl bg-surface-container-low border border-transparent hover:border-primary/20 transition-all group">
+<div class="flex items-center gap-4">
+<div class="p-3 bg-surface-container-high rounded-lg text-primary group-hover:bg-primary group-hover:text-on-primary transition-colors">
+<span class="material-symbols-outlined" data-icon="video_call">video_call</span>
+</div>
+<div class="text-left">
+<p class="font-semibold text-on-surface">Video, Voice &amp; Text</p>
+<p class="text-xs text-on-surface-variant">High-fidelity p2p relay</p>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline-variant" data-icon="radio_button_unchecked">radio_button_unchecked</span>
+</button>
+</section>
+<!-- Node Configuration -->
+<section class="mb-10">
+<label class="font-label text-xs uppercase tracking-widest font-semibold text-primary mb-4 block">Persistence Strategy</label>
+<div class="grid grid-cols-2 gap-3 p-1.5 bg-surface-container-low rounded-xl">
+<button class="py-3 px-4 rounded-lg bg-surface-container-highest text-on-surface font-semibold text-sm transition-all shadow-sm">
+                    Temporary Node
+                </button>
+<button class="py-3 px-4 rounded-lg text-on-surface-variant font-medium text-sm hover:text-on-surface transition-all">
+                    Persistent Node
+                </button>
+</div>
+<p class="mt-3 text-xs text-on-surface-variant px-2 italic">Temporary nodes auto-delete all traces once the last member disconnects.</p>
+</section>
+<!-- Dynamic Invitation -->
+<section class="mb-12">
+<div class="p-6 rounded-2xl bg-surface-container-high relative overflow-hidden">
+<div class="relative z-10">
+<label class="font-label text-[10px] uppercase tracking-widest font-bold text-secondary mb-3 block">Shareable Node ID</label>
+<div class="flex items-center justify-between bg-surface-container-lowest/50 rounded-lg p-3 border border-outline-variant/10">
+<code class="text-primary font-mono text-sm tracking-wider">knode-tx-992-delta</code>
+<button class="material-symbols-outlined text-on-surface-variant hover:text-primary transition-colors" data-icon="content_copy">content_copy</button>
+</div>
+<div class="mt-4 flex -space-x-2">
+<img class="w-8 h-8 rounded-full border-2 border-surface-container-high object-cover" data-alt="portrait of a young man with a neutral expression and soft lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDgphzSMZ_01dDCB0gEB-E1w6C92CYkHh5F9iJRz8Zg2qFQ9TXesdQu_gEQIG2ONC3hHiXXJbx0fPxmDefDc2w3YFKzzsVWMkxTrIXme4RfrDMPz9SQneJwqifZF5gow3PcYSblR0OLc-R-jJ7zDVkgxIiubTaULLIgHULS6TEFOUg9penOlm6eWgvghPduVdLSUgdzrVT3HUJnYzRCwwMD50BbdyFQdAkO4AXpn851LtkLsthZIsqNVmFucx64hEJEhMFPCcDyQ58"/>
+<img class="w-8 h-8 rounded-full border-2 border-surface-container-high object-cover" data-alt="portrait of a smiling woman with a warm backlight and soft focus background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB-JFk0X4f4ILuLKCn_uL4y4qgEZiv4dX4Eg-bM_SIUzCaU_KBp3NwUuVHgx3Fb3y3D-sGOEHLW5XSyoguJ2TCo71_sab3uZmsWlDPkTT1ScW3V5097ih_pV6pVJtnqHXMcXLs_1zMfKMbSINiKAcx2XIWeiZv3RKgJQto1lC6Rl9hSANr3czcl6_cccHLRKGySaWaYCn3u-dygma1Og4DNiMgcoNYRzuveyZcnqrWpTv9yDUVXb_GK6jNr7ymbHJmljG8jfhLMD7k"/>
+<div class="w-8 h-8 rounded-full border-2 border-surface-container-high bg-secondary-container flex items-center justify-center text-[10px] text-secondary font-bold">+12</div>
+</div>
+</div>
+<!-- Background Decoration -->
+<div class="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
+</div>
+</section>
+<!-- CTA Action -->
+<button class="w-full py-5 rounded-xl bg-gradient-to-r from-primary to-primary-container text-on-primary font-headline font-bold text-lg shadow-[0_12px_24px_-8px_rgba(164,165,255,0.4)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3">
+<span>Go Live</span>
+<span class="material-symbols-outlined" data-icon="rocket_launch">rocket_launch</span>
+</button>
+</main>
+<!-- Navigation Shell (Bottom NavBar for Mobile) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-8 pt-4 bg-[#0c0e11]/60 dark:bg-slate-950/60 backdrop-blur-xl rounded-t-3xl shadow-[0_-8px_32px_rgba(0,0,0,0.3)] md:hidden">
+<div class="flex flex-col items-center justify-center text-slate-500 p-3 hover:text-white transition-all duration-300 active:scale-90 transition-transform duration-150">
+<span class="material-symbols-outlined" data-icon="grid_view">grid_view</span>
+</div>
+<div class="flex flex-col items-center justify-center bg-indigo-500/20 text-[#a4a5ff] rounded-2xl p-3 active:scale-90 transition-transform duration-150">
+<span class="material-symbols-outlined" data-icon="add_circle">add_circle</span>
+</div>
+<div class="flex flex-col items-center justify-center text-slate-500 p-3 hover:text-white transition-all duration-300 active:scale-90 transition-transform duration-150">
+<span class="material-symbols-outlined" data-icon="person_settings">settings</span>
+</div>
+</nav>
+<!-- Background Atmospheric Elements -->
+<div class="fixed top-1/4 -left-20 w-64 h-64 bg-primary/10 rounded-full blur-[120px] pointer-events-none"></div>
+<div class="fixed bottom-1/4 -right-20 w-96 h-96 bg-secondary/5 rounded-full blur-[150px] pointer-events-none"></div>
+</body></html>

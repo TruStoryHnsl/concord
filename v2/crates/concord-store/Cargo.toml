@@ -1,0 +1,13 @@
+[package]
+name = "concord-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+concord-core = { path = "../concord-core" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = { workspace = true }

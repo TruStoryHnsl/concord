@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Manrope:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "tertiary-fixed": "#98ffd9",
+              "surface-container-high": "#1d2024",
+              "on-primary-fixed-variant": "#11009c",
+              "on-primary-container": "#0c0081",
+              "surface-container-highest": "#23262a",
+              "tertiary-container": "#98ffd9",
+              "outline-variant": "#46484b",
+              "surface-variant": "#23262a",
+              "on-secondary": "#195c4e",
+              "secondary": "#afefdd",
+              "on-secondary-fixed-variant": "#266658",
+              "on-error-container": "#ffa8a3",
+              "surface": "#0c0e11",
+              "on-surface": "#f9f9fd",
+              "secondary-fixed-dim": "#a1e1cf",
+              "tertiary": "#e7fff3",
+              "surface-container-low": "#111417",
+              "on-primary-fixed": "#000000",
+              "surface-bright": "#292c31",
+              "on-error": "#490006",
+              "error": "#ff716c",
+              "error-dim": "#d7383b",
+              "error-container": "#9f0519",
+              "tertiary-dim": "#7be2bd",
+              "background": "#0c0e11",
+              "on-secondary-container": "#a1e1cf",
+              "outline": "#747579",
+              "surface-container-lowest": "#000000",
+              "on-tertiary": "#006c52",
+              "inverse-primary": "#4644ea",
+              "primary-dim": "#5e5eff",
+              "surface-tint": "#a4a5ff",
+              "on-background": "#f9f9fd",
+              "inverse-on-surface": "#535559",
+              "primary": "#a4a5ff",
+              "on-tertiary-fixed": "#004f3b",
+              "on-primary": "#1300a3",
+              "tertiary-fixed-dim": "#89f0cb",
+              "inverse-surface": "#f9f9fd",
+              "secondary-fixed": "#afefdd",
+              "secondary-container": "#0b5345",
+              "on-secondary-fixed": "#00483c",
+              "on-tertiary-container": "#00634b",
+              "surface-container": "#171a1d",
+              "surface-dim": "#0c0e11",
+              "secondary-dim": "#a1e1cf",
+              "on-tertiary-fixed-variant": "#006e54",
+              "on-surface-variant": "#aaabaf",
+              "primary-container": "#9496ff",
+              "primary-fixed": "#9496ff",
+              "primary-fixed-dim": "#8486ff"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Manrope"],
+              "label": ["Manrope"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        body { font-family: 'Manrope', sans-serif; background-color: #0c0e11; }
+        .font-space-grotesk { font-family: 'Space Grotesk', sans-serif; }
+        .mesh-background {
+            background-image: radial-gradient(circle at 2px 2px, rgba(164, 165, 255, 0.05) 1px, transparent 0);
+            background-size: 24px 24px;
+        }
+        .glass-panel {
+            background: rgba(35, 38, 42, 0.6);
+            backdrop-filter: blur(20px);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-surface text-on-surface selection:bg-primary selection:text-on-primary min-h-screen">
+<!-- TopAppBar (from COMPONENTS_15) -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-6 py-4 bg-[#111417]">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-[#a4a5ff]" data-icon="hub">hub</span>
+<h1 class="text-xl font-black tracking-widest text-[#a4a5ff] uppercase font-['Space_Grotesk']">CONCORD</h1>
+</div>
+<div class="flex items-center gap-4">
+<button class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center overflow-hidden hover:bg-[#1d2024] transition-colors active:scale-95 duration-150">
+<img alt="User Profile Avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAnE_KclUAtP8S607yS8U9yL6-2Vz_yGg5Rk060QY_M0rPZzN2Q_nN6Wq7VlY"/>
+</button>
+</div>
+</header>
+<main class="pt-24 pb-32 px-6 mesh-background">
+<!-- Online Friends Status Bar -->
+<section class="mb-8">
+<div class="flex items-center gap-4 overflow-x-auto no-scrollbar pb-2">
+<div class="flex -space-x-3 shrink-0">
+<div class="w-10 h-10 rounded-full border-2 border-surface ring-2 ring-secondary overflow-hidden">
+<img alt="Friend 1" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBCUEmRMOgj26a2X4Sq_J23ngm9kQvDD9NJQmgH8x9TU3lKR2t3NNXqU2fpOk8WFz9bCYrARut6_ycy8NqBxfVgaSSmoY5kYssJXJSFAtxFtUSG9ruLTTuRfm_xmS3hM02b2DsvERiWOLN3GllGqKsDCKd4wBANybdnI-AOlMCEOzpnhAEvRhp0ORGJc2RQkuP5nQN7d4IaAB_MfdthpM4mdxx9kKQDPpQAVyeASGZFnZeokXX0zr7jx-XfnxGNb-zvS2OnycpV5_I"/>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-surface ring-2 ring-secondary overflow-hidden">
+<img alt="Friend 2" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA6i9jpICl72DgY6SBUNuP-IT3eoNtLhCIE-nuTMChmf0WUgs791rm_4VQD9K5BnmJ1FVtDG7zwMWitNFhFcGATrphux5pJ8bfouYlrlQoc_s54BIS3JFq5uQ27nS2h7750_Ch1o_zHsN89JkSf3nIh0M9aVFPnU3BjdIL2mjIhASk6iUK2tY1LL8N09O2KY95O_QyDJwl0G2e3JAxfJRM3MEm40-cCwNAzYdciLX9c2BlMMKXRdcnTPmyaabSqZ_jSrZ2qRGq7euI"/>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-surface ring-2 ring-secondary overflow-hidden">
+<img alt="Friend 3" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCcsy8d2exZY4hIT8gLjGbBWHdWWjikXrr0VssHvbSoHebAoK3i8RyWn2isC7YCv8rVOtJAyklOM2Y1gvKhVPLnSkG9kIq566YFPnFnJ2FI6pvqAjE3MbZFxBrfdcb3smrIzxwkC_cBI4u01IOFfCw_nKxutow_2QDRzeHXh7z550T-lsQR4gRRFvgCoUkOGpb6Gu4Mmma7ht-kfplc-uK9WosihItTL4FOL9oh5VWnq0c9H9CyUDEJUCUlLMdAUvyej-Cw-0AfBaU"/>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-surface ring-2 ring-secondary overflow-hidden relative">
+<img alt="Friend 4" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCCdE6P4Vqs-RuV1nftAX8HPA835AeZ6W46F8utGCvd8SzhvK3g0juO8buCfbBwndMiTY-TMGPCREMDvKohruMSMqfy7NYy-pQoBFuwmytiYqb5R5kppkg--nMoGWQJh6RLbgUJkp4zKDkqz9KMtIeRtyrIHOUfFd-83k_yMyf3CjGMzEGrtp3ZdvfFDwWCoA-JqoqlVrP2yz-w9Pc4LPY1a8oym7S33LPUrBfUE5uejYB8k5uft-073xvvlhxIJ2GgM22LUCJO-VQ"/>
+</div>
+<div class="w-10 h-10 rounded-full border-2 border-surface ring-2 ring-secondary-dim bg-surface-container-high flex items-center justify-center">
+<span class="text-[10px] font-bold text-on-surface">+8</span>
+</div>
+</div>
+<div class="h-8 w-px bg-outline-variant shrink-0"></div>
+<div class="flex items-center gap-2 px-3 py-1.5 bg-secondary-container/30 border border-secondary/20 rounded-full shrink-0">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+<span class="text-xs font-bold text-secondary">12 Online</span>
+</div>
+</div>
+</section>
+<!-- Local Host Status Card -->
+<section class="mb-10">
+<div class="bg-surface-container-low p-6 rounded-xl relative overflow-hidden group">
+<div class="absolute -top-24 -right-24 w-48 h-48 bg-primary/10 blur-[64px] rounded-full group-hover:bg-primary/20 transition-all duration-500"></div>
+<div class="flex flex-col gap-4 relative z-10">
+<div class="flex justify-between items-start">
+<div>
+<span class="text-on-surface-variant font-label text-[10px] uppercase tracking-widest font-bold mb-1 block">Local Host Status</span>
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-secondary animate-pulse"></div>
+<h2 class="text-2xl font-headline font-bold text-on-surface">Node Active</h2>
+</div>
+<p class="text-on-surface-variant text-sm mt-1">Hosting on <span class="text-primary font-mono">concord-node-7x92</span></p>
+</div>
+<div class="flex items-center">
+<div class="w-12 h-6 bg-secondary-container rounded-full relative cursor-pointer flex items-center px-1">
+<div class="w-4 h-4 bg-secondary rounded-full ml-auto"></div>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-3 pt-2">
+<div class="bg-surface-container-high p-3 rounded-lg">
+<span class="text-on-surface-variant font-label text-[9px] uppercase tracking-widest block mb-1">Uptime</span>
+<span class="text-on-surface font-headline font-semibold">14d 02h 44m</span>
+</div>
+<div class="bg-surface-container-high p-3 rounded-lg">
+<span class="text-on-surface-variant font-label text-[9px] uppercase tracking-widest block mb-1">Connections</span>
+<span class="text-on-surface font-headline font-semibold">12 Peer Nodes</span>
+</div>
+</div>
+<button class="w-full mt-2 py-3 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-lg flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-[0_4px_16px_rgba(164,165,255,0.2)]">
+<span class="material-symbols-outlined text-sm" data-icon="refresh">refresh</span>
+                    Spin up node
+                </button>
+</div>
+</div>
+</section>
+<!-- Nearby Peers & Friends Section -->
+<section class="mb-10">
+<div class="flex justify-between items-center mb-4">
+<h3 class="text-on-surface font-headline text-lg font-bold tracking-tight">Nearby Peers &amp; Friends</h3>
+<span class="text-[10px] font-bold text-secondary uppercase tracking-widest bg-secondary/10 px-2 py-1 rounded">Active Now</span>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div class="bg-surface-container p-3 rounded-xl border border-outline-variant/30 flex items-center gap-3">
+<div class="relative">
+<img alt="Peer 1" class="w-10 h-10 rounded-lg object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDTm9LTONZA4eIkfyEXW-7cWPDgUtG_oC9sk03uX3jCLLwxYlp9er2OsqjoCVdpTab7PGlCcbaaMWvL9em_o5d1NJekvTqL8MQ3f06hg8E0KFodwjQxhexKjv7krsbf__RHDkvmaVpCGhpPKTeALeU-DcBD3AHqsOKSIKhoQ4lRd74ZsVmvhAgKAkr4vr90yyMZl1VHkHqc296ACMG0j1C7g0BBOdxaeJE67YigwaPryRQuR2lLjEACXYhXRr1T2aLizhR14OqpSl0"/>
+<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-secondary rounded-full border-2 border-surface-container"></div>
+</div>
+<div class="min-w-0">
+<p class="text-sm font-bold truncate">Alice_m</p>
+<p class="text-[10px] text-on-surface-variant">2 hops away</p>
+</div>
+</div>
+<div class="bg-surface-container p-3 rounded-xl border border-outline-variant/30 flex items-center gap-3">
+<div class="relative">
+<img alt="Peer 2" class="w-10 h-10 rounded-lg object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAc14lyDVW8dQFsMgrvIrhUe4W-kCZWH5NW8_G__9seSH0cveWu4ZotOKAcTbuZddGZ9MM05T6Fp7mWBDfHEbP2VTkg1AM6WC-CT-jViDcYQhzHZkFVvC5eo5xT1IjvcRvQn5GEE4WY-Z_1Kz97b5pkKhrOyrCvDexatmxH-_Ws51cQo2ScNz22sKUXgdL9cndqqDmQt_ll2gFPf1Csv5DgKF__r3VSC9qZt1QkkyhxQ8Si0vJbw-1j17VVbVRk5yO1TaOVC_v67nU"/>
+<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-secondary/50 rounded-full border-2 border-surface-container"></div>
+</div>
+<div class="min-w-0">
+<p class="text-sm font-bold truncate">Cipher_X</p>
+<p class="text-[10px] text-on-surface-variant">12m ago</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Your Servers Header -->
+<div class="flex justify-between items-end mb-6">
+<h3 class="text-on-surface font-headline text-xl font-bold tracking-tight">Your Servers</h3>
+<button class="text-primary text-sm font-semibold hover:underline">Explore All</button>
+</div>
+<!-- Servers Grid/List -->
+<div class="space-y-4">
+<!-- Server Card 1 -->
+<div class="bg-surface-container-low p-4 rounded-xl flex items-center gap-4 transition-all hover:bg-surface-container-high cursor-pointer group">
+<div class="relative w-16 h-16 shrink-0">
+<img alt="Cyberpunk grid graphic" class="w-full h-full object-cover rounded-xl" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCzi_kTKPLZNpeQIih-4IfjuGc9tX_llBYmiAWz4TiUAgcIybN6lHKRr4_w0FpCJqNjdTfRNBQKu39iR7S9IHXb9GD-xsCRSQ2VK10aVc5v4ZSXfoX9j5XbuXT5qfgm19Jtt3dAButRBadOyxoMW8FYFeaOFVw1B3mUoFxPutfWLp3owxmOV9phe1yWf79rOW263IlGbpwI2T-RCYw8QAC3ZGQ-JOP3nQ2-WVwpzk_o6xjzvhOTn-cplV_dbB9rJyJWv1TJk5cMP8Q"/>
+<div class="absolute -top-1 -right-1 bg-error px-1.5 py-0.5 rounded-full border-2 border-surface-container-low">
+<span class="text-[9px] text-on-error font-bold font-label uppercase">Live</span>
+</div>
+</div>
+<div class="flex-1 min-w-0">
+<h4 class="text-on-surface font-headline font-bold truncate">Neural Nexus</h4>
+<p class="text-on-surface-variant text-sm truncate">Decentralized AI research node</p>
+<div class="flex items-center gap-2 mt-2">
+<span class="material-symbols-outlined text-secondary text-base" data-icon="mic" data-weight="fill" style="font-variation-settings: 'FILL' 1;">mic</span>
+<span class="text-[10px] text-on-secondary-container font-bold bg-secondary-container px-2 py-0.5 rounded-full uppercase tracking-tight">4 in voice</span>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Server Card 2 -->
+<div class="bg-surface-container-low p-4 rounded-xl flex items-center gap-4 transition-all hover:bg-surface-container-high cursor-pointer group">
+<div class="relative w-16 h-16 shrink-0">
+<img alt="Digital planet" class="w-full h-full object-cover rounded-xl" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDqgrw9QCo_Opbtle9fbedzR4Ohs_AHFP6X9D-vJ8cz6ANd8p3Rq16YyYmo0vS-7t0GbmKo2JSKeFF09kZ8Md2IcsRA2A53axMHDz36Sgu2A912_wyoWOQQeYgCyXqOvqyBMZZ0MM1D8Kb82IdVJN-nFgwMr0tzn4BawwT1UoS9JrGVSPnUTMrmjkvqf2FJeMv3xxIpXxtBiKHgH0WeinMuIlLRnQFpxsiaApF6nLJ_PgZ2qTxDBosandEqgyxp-BwrJ1ny8PfgKz4"/>
+</div>
+<div class="flex-1 min-w-0">
+<h4 class="text-on-surface font-headline font-bold truncate">The Ether Vault</h4>
+<p class="text-on-surface-variant text-sm truncate">Secure p2p asset exchange</p>
+<div class="flex items-center gap-2 mt-2">
+<span class="text-[10px] text-on-surface-variant font-bold bg-surface-container-highest px-2 py-0.5 rounded-full uppercase tracking-tight">128 Members</span>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Server Card 3 -->
+<div class="bg-surface-container-low p-4 rounded-xl flex items-center gap-4 transition-all hover:bg-surface-container-high cursor-pointer group border border-primary/20">
+<div class="relative w-16 h-16 shrink-0">
+<img alt="Microchip macro" class="w-full h-full object-cover rounded-xl" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAmMLSy_2GdcafuOsfTcVLSsXPNtyzupBlYXA3vYTZ-Jki1YZ9mTN5pVI8B838iYEipZYRpIRq1kYyRyeVT9v8sNFGtB80D_vEm5wxL4HQJu3TQZ8AxLVxfaOx5ok49-QhQr5Cz0wNBO3anu0N_Y_RB8jRPUcXuiwFvlUBIoqlHj21rhoTWkN1NEFItbbfyVBqolhdH3PVOWdtzvlQqpVHWhwNyAUVSAkrlZKwBC9hN-i5UkxYITjCmCIJTfA0FmSZ8t1cHgQqbBsE"/>
+<div class="absolute -top-1 -right-1 bg-primary px-1.5 py-0.5 rounded-full border-2 border-surface-container-low">
+<span class="text-[9px] text-on-primary font-bold font-label uppercase">New</span>
+</div>
+</div>
+<div class="flex-1 min-w-0">
+<h4 class="text-on-surface font-headline font-bold truncate">Hard-Coded</h4>
+<p class="text-on-surface-variant text-sm truncate">Rust and Go development hub</p>
+<div class="flex items-center gap-2 mt-2">
+<span class="material-symbols-outlined text-primary text-base" data-icon="videocam" data-weight="fill" style="font-variation-settings: 'FILL' 1;">videocam</span>
+<span class="text-[10px] text-on-primary-container font-bold bg-primary-container/20 px-2 py-0.5 rounded-full uppercase tracking-tight">Workshop live</span>
+</div>
+</div>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</span>
+</div>
+<!-- Server Card 4 -->
+<div class="bg-surface-container-low p-4 rounded-xl flex items-center gap-4 transition-all hover:bg-surface-container-high cursor-pointer group">
+<div class="relative w-16 h-16 shrink-0">
+<div class="w-full h-full bg-surface-container-highest rounded-xl flex items-center justify-center border-2 border-dashed border-outline-variant">
+<span class="material-symbols-outlined text-outline" data-icon="add">add</span>
+</div>
+</div>
+<div class="flex-1 min-w-0">
+<h4 class="text-on-surface-variant font-headline font-bold truncate">Join New Server</h4>
+<p class="text-on-surface-variant/60 text-sm truncate">Enter a node address or invite</p>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar (from COMPONENTS_15) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-[#0c0e11]/60 backdrop-blur-xl rounded-t-2xl shadow-[0_-8px_32px_rgba(0,0,0,0.4)]">
+<!-- Active Tab (Nodes) -->
+<button class="flex flex-col items-center justify-center bg-[#1d2024] text-[#afefdd] rounded-xl px-4 py-2 scale-110 transition-transform duration-300">
+<span class="material-symbols-outlined" data-icon="share_reviews">share_reviews</span>
+<span class="font-['Manrope'] text-[10px] font-bold uppercase tracking-widest mt-1">Nodes</span>
+</button>
+<!-- Friends -->
+<button class="flex flex-col items-center justify-center text-[#aaabaf] opacity-70 hover:text-[#a4a5ff] transition-all duration-300 active:scale-90">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-['Manrope'] text-[10px] font-bold uppercase tracking-widest mt-1">Friends</span>
+</button>
+<!-- Vault -->
+<button class="flex flex-col items-center justify-center text-[#aaabaf] opacity-70 hover:text-[#a4a5ff] transition-all duration-300 active:scale-90">
+<span class="material-symbols-outlined" data-icon="security">security</span>
+<span class="font-['Manrope'] text-[10px] font-bold uppercase tracking-widest mt-1">Vault</span>
+</button>
+<!-- Settings -->
+<button class="flex flex-col items-center justify-center text-[#aaabaf] opacity-70 hover:text-[#a4a5ff] transition-all duration-300 active:scale-90">
+<span class="material-symbols-outlined" data-icon="settings_input_component">settings_input_component</span>
+<span class="font-['Manrope'] text-[10px] font-bold uppercase tracking-widest mt-1">Settings</span>
+</button>
+</nav>
+</body></html>
