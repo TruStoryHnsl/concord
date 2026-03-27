@@ -87,6 +87,10 @@ pub enum NodeCommand {
         server_id: String,
         signal: ServerSignal,
     },
+    /// Send a sync message (request or response) to the mesh.
+    SendSyncMessage {
+        message: concord_core::types::SyncMessage,
+    },
     /// Shut down the node.
     Shutdown,
 }
@@ -271,6 +275,15 @@ impl NodeHandle {
                 peer_id: peer_id.to_string(),
                 signal,
             })
+            .await
+            .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
+        Ok(())
+    }
+
+    /// Send a sync message (request or response) to the mesh sync topic.
+    pub async fn send_sync_message(&self, message: concord_core::types::SyncMessage) -> Result<()> {
+        self.command_tx
+            .send(NodeCommand::SendSyncMessage { message })
             .await
             .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
         Ok(())
@@ -624,6 +637,13 @@ impl Node {
                         self.emit(NetworkEvent::FriendSignalReceived { signal });
                     } else {
                         warn!(%topic, "failed to decode friend signal from gossipsub message");
+                    }
+                } else if topic == "concord/mesh/sync" {
+                    // Sync protocol messages
+                    if let Ok(sync_msg) = concord_core::wire::decode::<concord_core::types::SyncMessage>(&message.data) {
+                        self.emit(NetworkEvent::SyncMessageReceived { message: sync_msg });
+                    } else {
+                        warn!("failed to decode sync message");
                     }
                 } else if topic.contains("/key-exchange") {
                     // Server key exchange signals
@@ -1199,6 +1219,27 @@ impl Node {
                     }
                     Err(e) => {
                         error!(%e, "failed to encode friend signal");
+                    }
+                }
+            }
+
+            NodeCommand::SendSyncMessage { message } => {
+                let topic_str = "concord/mesh/sync";
+                match concord_core::wire::encode(&message) {
+                    Ok(data) => {
+                        let topic = gossipsub::IdentTopic::new(topic_str);
+                        let _ = self.swarm.behaviour_mut().gossipsub.subscribe(&topic);
+                        match self.swarm.behaviour_mut().gossipsub.publish(topic, data) {
+                            Ok(_) => {
+                                debug!("published sync message");
+                            }
+                            Err(e) => {
+                                warn!(%e, "failed to publish sync message");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(%e, "failed to encode sync message");
                     }
                 }
             }

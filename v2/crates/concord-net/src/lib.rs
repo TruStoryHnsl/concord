@@ -17,3 +17,4 @@ pub use channels::channel_to_topic;
 pub use events::NetworkEvent;
 pub use node::{Node, NodeHandle, NodeCommand};
 pub use tunnel::{ConnectionType, TunnelInfo, TunnelTracker};
+pub use sync::SyncManager;

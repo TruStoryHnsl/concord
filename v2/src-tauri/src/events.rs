@@ -48,3 +48,6 @@ pub const FRIEND_ACCEPTED: &str = "concord://friend-accepted";
 
 /// Emitted when a friend's presence status changes.
 pub const PRESENCE_UPDATED: &str = "concord://presence-updated";
+
+/// Emitted when message sync completes with a peer.
+pub const SYNC_COMPLETED: &str = "concord://sync-completed";

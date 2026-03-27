@@ -96,4 +96,15 @@ pub enum NetworkEvent {
         server_id: String,
         signal: ServerSignal,
     },
+
+    /// A sync message was received from a peer.
+    SyncMessageReceived {
+        message: concord_core::types::SyncMessage,
+    },
+
+    /// Sync completed — messages were received and stored.
+    SyncCompleted {
+        peer_id: String,
+        messages_received: usize,
+    },
 }

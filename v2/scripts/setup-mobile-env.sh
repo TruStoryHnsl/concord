@@ -8,7 +8,7 @@
 
 # Android SDK
 export ANDROID_HOME="$HOME/Library/Android/sdk"
-export NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
+export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 
 # Java (use system default)

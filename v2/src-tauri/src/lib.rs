@@ -34,6 +34,7 @@ pub struct WebhostState {
 /// Default GossipSub topic for the mesh.
 const DEFAULT_TOPIC: &str = "concord/mesh/general";
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter("concord_app=debug,concord_net=debug,concord_store=info,tauri=info")
@@ -398,6 +399,26 @@ fn spawn_event_forwarder(
                                 );
                             }
                             let _ = app_handle.emit(events::PEER_DISCOVERED, &event);
+
+                            // Auto-trigger sync with newly discovered peer after a short delay
+                            let sync_db = Arc::clone(&db);
+                            let sync_node = node.clone();
+                            let my_peer_id = peer_id.clone();
+                            // Build the clock synchronously, then send async
+                            let clock = sync_db.lock().ok().and_then(|db| db.get_vector_clock().ok());
+                            if let Some(clock) = clock {
+                                if !clock.is_empty() {
+                                    tauri::async_runtime::spawn(async move {
+                                        // Wait 2 seconds for GossipSub mesh to form
+                                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                        let req = concord_core::types::SyncMessage::SyncRequest {
+                                            peer_id: my_peer_id,
+                                            vector_clock: clock,
+                                        };
+                                        let _ = sync_node.send_sync_message(req).await;
+                                    });
+                                }
+                            }
                         }
                         NetworkEvent::PeerDeparted { peer_id: _ } => {
                             let _ = app_handle.emit(events::PEER_DEPARTED, &event);
@@ -677,6 +698,86 @@ fn spawn_event_forwarder(
                                 }),
                             );
                         }
+                        NetworkEvent::SyncMessageReceived { message: sync_msg } => {
+                            use concord_core::types::SyncMessage;
+                            match sync_msg {
+                                SyncMessage::SyncRequest { peer_id: requester_id, vector_clock: remote_clock } => {
+                                    // A peer wants to sync — compute what they're missing and send it
+                                    if let Ok(db) = db.lock() {
+                                        if let Ok(our_clock) = db.get_vector_clock() {
+                                            let sync_mgr = concord_net::SyncManager::new();
+                                            let missing = sync_mgr.compute_missing_for_peer(
+                                                &our_clock,
+                                                &remote_clock,
+                                                |channel_id, after_ts, limit| {
+                                                    db.get_messages_after(channel_id, after_ts, limit)
+                                                        .unwrap_or_default()
+                                                },
+                                            );
+                                            if !missing.is_empty() {
+                                                info!(
+                                                    requester = %requester_id,
+                                                    count = missing.len(),
+                                                    "sync: sending missing messages to peer"
+                                                );
+                                                let response = SyncMessage::SyncResponse {
+                                                    peer_id: peer_id.clone(),
+                                                    messages: missing,
+                                                };
+                                                let node_sync = node.clone();
+                                                tauri::async_runtime::spawn(async move {
+                                                    let _ = node_sync.send_sync_message(response).await;
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                SyncMessage::SyncResponse { peer_id: responder_id, messages } => {
+                                    // We received missing messages from a sync peer
+                                    let stored_count = if let Ok(db) = db.lock() {
+                                        let mut count = 0;
+                                        for msg in messages.iter() {
+                                            if let Ok(()) = db.insert_message(msg) {
+                                                count += 1;
+                                                // Emit each message to the frontend
+                                                let _ = app_handle.emit(
+                                                    events::NEW_MESSAGE,
+                                                    serde_json::json!({
+                                                        "id": msg.id,
+                                                        "channelId": msg.channel_id,
+                                                        "senderId": msg.sender_id,
+                                                        "content": msg.content,
+                                                        "timestamp": msg.timestamp.timestamp_millis(),
+                                                    }),
+                                                );
+                                            }
+                                        }
+                                        count
+                                    } else {
+                                        0
+                                    };
+                                    if stored_count > 0 {
+                                        info!(
+                                            from = %responder_id,
+                                            stored = stored_count,
+                                            "sync: received and stored missing messages"
+                                        );
+                                        let _ = app_handle.emit(
+                                            events::SYNC_COMPLETED,
+                                            serde_json::json!({
+                                                "peerId": responder_id,
+                                                "messagesReceived": stored_count,
+                                            }),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        NetworkEvent::SyncCompleted { .. } => {
+                            // Handled above via SyncMessageReceived
+                        }
+
                         NetworkEvent::ServerSignalReceived { server_id, signal } => {
                             use concord_core::types::ServerSignal;
                             match signal {
