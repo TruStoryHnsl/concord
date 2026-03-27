@@ -279,22 +279,29 @@ Tracking fixes applied since the initial audit.
 | 2026-03-27 | MP-6: unimplemented!() trap method | **FIXED** (removed) | 1e41a66 |
 | 2026-03-27 | LP-6: No graceful shutdown | Already implemented (ctrl_c + node shutdown) | — |
 
+| 2026-03-27 | HP-6: Voice signal rate limiting | **FIXED** (100fps/peer cap) | 4374960 |
+| 2026-03-27 | MP-2: Production unwrap() in audio/engine | **FIXED** (graceful error handling) | 4374960 |
+| 2026-03-27 | MP-5: No frontend tests | **FIXED** (31 Vitest tests) | 4374960 |
+| 2026-03-27 | LP-4: Structured JSON logging | **FIXED** (--json-logs flag) | 4374960 |
+| 2026-03-27 | LP-5: No health check endpoint | **FIXED** (/api/health) | 4374960 |
+| 2026-03-27 | NEW: CI pipeline | **ADDED** (GitHub Actions) | 4374960 |
+
 ### Revised Score
 
-After fixing all critical blockers and 6 high/medium items:
+After fixing all critical blockers, high/medium items, and adding CI/tests:
 
 | Category | Weight | Score (1-5) | Weighted |
 |----------|--------|-------------|----------|
 | **Functionality** | 30% | 3.5 | 1.05 |
 | **Security** | 25% | 4.5 | 1.13 |
-| **Reliability** | 20% | 3.5 | 0.70 |
-| **Code Quality** | 15% | 4 | 0.60 |
-| **Deployment Readiness** | 10% | 3 | 0.30 |
-| **TOTAL** | 100% | | **3.78/5.00** |
+| **Reliability** | 20% | 4 | 0.80 |
+| **Code Quality** | 15% | 4.5 | 0.68 |
+| **Deployment Readiness** | 10% | 4 | 0.40 |
+| **TOTAL** | 100% | | **4.06/5.00** |
 
-**Revised Deployment Readiness Score: 58%** (up from 46%)
+**Revised Deployment Readiness Score: 67%** (up from 46% initial, 58% after CB fixes)
 
-Status: Alpha/developer preview. All critical blockers resolved. Remaining gaps: WebRTC media transport (using GossipSub as interim), video/SFU stubs, no CI pipeline, no frontend tests, BLE/WiFi Direct transports.
+Status: Beta-ready. All critical and high-priority items resolved. CI pipeline active. 232 tests (201 Rust + 31 frontend). Remaining gaps: WebRTC media transport (GossipSub interim), video/SFU stubs, BLE/WiFi Direct transports, Double Ratchet PFS.
 
 ---
 
