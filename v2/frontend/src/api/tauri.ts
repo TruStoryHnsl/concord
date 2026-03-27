@@ -465,6 +465,28 @@ export interface NodeStatus {
   peerId: string;
 }
 
+export type VerificationState = "verified" | "stale" | "speculative";
+
+export interface MeshNode {
+  peerId: string;
+  displayName?: string;
+  addresses: string[];
+  verificationState: VerificationState;
+  remainingTtl: number;
+  lastConfirmedAt: number | null;
+  receivedComputeWeight: number;
+  connectionType: "local" | "direct" | "relayed" | null;
+  rttMs: number | null;
+  lastSeen: number;
+}
+
+export interface ComputePriorityEntry {
+  peerId: string;
+  priority: number;
+  displayName?: string;
+  share: number;
+}
+
 export interface Identity {
   peerId: string;
   displayName: string;
@@ -531,6 +553,18 @@ export async function getNodeStatus(): Promise<NodeStatus> {
 
 export async function subscribeChannel(topic: string): Promise<void> {
   return safeInvoke<void>("subscribe_channel", { topic });
+}
+
+export async function getMeshNodes(): Promise<MeshNode[]> {
+  return safeInvoke<MeshNode[]>("get_mesh_nodes");
+}
+
+export async function setComputePriorities(entries: ComputePriorityEntry[]): Promise<void> {
+  return safeInvoke<void>("set_compute_priorities", { entries });
+}
+
+export async function getComputePriorities(): Promise<ComputePriorityEntry[]> {
+  return safeInvoke<ComputePriorityEntry[]>("get_compute_priorities");
 }
 
 /* ── Server Management ──────────────────────────────────────── */

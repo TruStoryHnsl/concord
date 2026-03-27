@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { useMeshStore } from "@/stores/mesh";
-import { getNearbyPeers, getTunnels } from "@/api/tauri";
-import type { TunnelInfo, PeerInfo } from "@/api/tauri";
+import { getNearbyPeers, getTunnels, getMeshNodes } from "@/api/tauri";
+import type { TunnelInfo, PeerInfo, MeshNode, VerificationState } from "@/api/tauri";
 import { shortenPeerId, formatRelativeTime } from "@/utils/format";
 import GlassPanel from "@/components/ui/GlassPanel";
 import Skeleton from "@/components/ui/Skeleton";
@@ -17,6 +17,8 @@ interface NodePosition {
   rttMs: number | null;
   remoteAddress: string;
   establishedAt: number;
+  verificationState: VerificationState;
+  receivedComputeWeight: number;
 }
 
 function getLineColor(connectionType: string): string {
@@ -98,7 +100,13 @@ function calculateNodePositions(
   tunnels: TunnelInfo[],
   width: number,
   height: number,
+  meshNodes?: MeshNode[],
 ): NodePosition[] {
+  // Build a lookup for enriched data
+  const meshMap = new Map<string, MeshNode>();
+  for (const mn of meshNodes ?? []) {
+    meshMap.set(mn.peerId, mn);
+  }
   const cx = width / 2;
   const cy = height / 2;
   const maxRadius = Math.min(cx, cy) * 0.85;
@@ -172,6 +180,7 @@ function calculateNodePositions(
       // Add slight variance based on peerId to avoid perfect circle
       const charCode = node.peer.peerId.charCodeAt(10) ?? 0;
       const variance = 1 + ((charCode % 20) - 10) / 100;
+      const mn = meshMap.get(node.peer.peerId);
       positions.push({
         x: cx + Math.cos(angle) * radius * variance,
         y: cy + Math.sin(angle) * radius * variance,
@@ -181,6 +190,8 @@ function calculateNodePositions(
         rttMs: node.tunnel?.rttMs ?? null,
         remoteAddress: node.tunnel?.remoteAddress ?? node.peer.addresses[0] ?? "",
         establishedAt: node.tunnel?.establishedAt ?? 0,
+        verificationState: mn?.verificationState ?? "speculative",
+        receivedComputeWeight: mn?.receivedComputeWeight ?? 0,
       });
     }
   };
@@ -245,6 +256,30 @@ function PeerTooltip({ node, onClose }: PeerTooltipProps) {
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-xs text-on-surface-variant">schedule</span>
               <span>{formatRelativeTime(node.establishedAt)}</span>
+            </div>
+          )}
+          {/* Verification state */}
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-xs text-on-surface-variant">
+              {node.verificationState === "verified" ? "verified"
+                : node.verificationState === "stale" ? "history"
+                : "help_outline"}
+            </span>
+            <span className={
+              node.verificationState === "verified" ? "text-secondary"
+              : node.verificationState === "stale" ? "text-on-surface-variant"
+              : "text-outline-variant"
+            }>
+              {node.verificationState === "verified" ? "Verified"
+                : node.verificationState === "stale" ? "Stale"
+                : "Speculative"}
+            </span>
+          </div>
+          {/* Compute weight */}
+          {node.receivedComputeWeight > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-xs text-on-surface-variant">bolt</span>
+              <span>{(node.receivedComputeWeight * 100).toFixed(1)}% compute weight</span>
             </div>
           )}
         </div>
@@ -319,8 +354,10 @@ function SignalBars({ strength }: { strength: number }) {
 function NodeMapPage() {
   const nearbyPeers = useMeshStore((s) => s.nearbyPeers);
   const tunnels = useMeshStore((s) => s.tunnels);
+  const meshNodes = useMeshStore((s) => s.meshNodes);
   const setNearbyPeers = useMeshStore((s) => s.setNearbyPeers);
   const setTunnels = useMeshStore((s) => s.setTunnels);
+  const setMeshNodes = useMeshStore((s) => s.setMeshNodes);
 
   const mapRef = useRef<HTMLDivElement>(null);
   const [mapSize, setMapSize] = useState({ width: 800, height: 600 });
@@ -331,18 +368,20 @@ function NodeMapPage() {
   // Fetch data on mount + poll every 5s
   const fetchData = useCallback(async () => {
     try {
-      const [peers, tunnelData] = await Promise.all([
+      const [peers, tunnelData, nodes] = await Promise.all([
         getNearbyPeers(),
         getTunnels(),
+        getMeshNodes(),
       ]);
       setNearbyPeers(peers);
       setTunnels(tunnelData);
+      setMeshNodes(nodes);
     } catch (err) {
       console.warn("Failed to fetch mesh data:", err);
     } finally {
       setInitialLoading(false);
     }
-  }, [setNearbyPeers, setTunnels]);
+  }, [setNearbyPeers, setTunnels, setMeshNodes]);
 
   useEffect(() => {
     void fetchData();
@@ -370,8 +409,8 @@ function NodeMapPage() {
 
   // Calculate positions
   const nodePositions = useMemo(
-    () => calculateNodePositions(nearbyPeers, tunnels, mapSize.width, mapSize.height),
-    [nearbyPeers, tunnels, mapSize.width, mapSize.height],
+    () => calculateNodePositions(nearbyPeers, tunnels, mapSize.width, mapSize.height, meshNodes),
+    [nearbyPeers, tunnels, mapSize.width, mapSize.height, meshNodes],
   );
 
   const cx = mapSize.width / 2;
@@ -487,19 +526,30 @@ function NodeMapPage() {
 
         {/* Peer nodes */}
         {nodePositions.map((node) => {
-          const dotSize =
+          const baseDotSize =
             node.connectionType === "direct" ? 10 : node.connectionType === "local" ? 8 : 6;
+          // Scale dot by compute weight: heavier nodes are larger
+          const dotSize = Math.round(baseDotSize * (1 + node.receivedComputeWeight * 0.5));
           const half = dotSize / 2;
+          // Verification state drives opacity
+          const opacity = node.verificationState === "verified" ? 0.95
+            : node.verificationState === "stale" ? 0.55 : 0.3;
+          // Ring indicator for verification
+          const ringClass = node.verificationState === "verified"
+            ? "ring-1 ring-offset-1 ring-offset-surface ring-secondary/60"
+            : node.verificationState === "stale"
+            ? "ring-1 ring-offset-1 ring-offset-surface ring-outline-variant/40"
+            : "";
           return (
             <button
               key={`dot-${node.peerId}`}
-              className={`absolute rounded-full ${getDotColor(node.connectionType)} ${getDotGlow(node.connectionType)} cursor-pointer hover:scale-150 transition-transform duration-200`}
+              className={`absolute rounded-full ${getDotColor(node.connectionType)} ${getDotGlow(node.connectionType)} ${ringClass} cursor-pointer hover:scale-150 transition-transform duration-200`}
               style={{
                 left: node.x - half,
                 top: node.y - half,
                 width: dotSize,
                 height: dotSize,
-                opacity: node.connectionType === "relayed" ? 0.7 : 0.9,
+                opacity,
               }}
               onClick={() =>
                 setSelectedNode(
@@ -575,6 +625,21 @@ function NodeMapPage() {
                 <span className="text-xs font-semibold tracking-wide text-on-surface">
                   Your Node
                 </span>
+              </div>
+              {/* Verification states */}
+              <div className="mt-3 pt-3 border-t border-outline-variant/10 flex flex-col gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-secondary ring-1 ring-offset-1 ring-offset-surface ring-secondary/60" />
+                  <span className="text-xs font-semibold tracking-wide text-on-surface-variant">Verified</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-secondary opacity-55 ring-1 ring-offset-1 ring-offset-surface ring-outline-variant/40" />
+                  <span className="text-xs font-semibold tracking-wide text-on-surface-variant">Stale</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-secondary opacity-30" />
+                  <span className="text-xs font-semibold tracking-wide text-on-surface-variant">Speculative</span>
+                </div>
               </div>
             </div>
           </div>

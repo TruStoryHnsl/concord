@@ -1,10 +1,12 @@
 import { create } from "zustand";
-import type { PeerInfo, NodeStatus, TunnelInfo } from "@/api/tauri";
+import type { PeerInfo, NodeStatus, TunnelInfo, MeshNode, VerificationState, ComputePriorityEntry } from "@/api/tauri";
 
 interface MeshState {
   nearbyPeers: PeerInfo[];
   nodeStatus: NodeStatus | null;
   tunnels: TunnelInfo[];
+  meshNodes: MeshNode[];
+  computePriorities: ComputePriorityEntry[];
   setNearbyPeers: (peers: PeerInfo[]) => void;
   setNodeStatus: (status: NodeStatus) => void;
   addPeer: (peer: PeerInfo) => void;
@@ -13,12 +15,17 @@ interface MeshState {
   setTunnels: (tunnels: TunnelInfo[]) => void;
   addTunnel: (tunnel: TunnelInfo) => void;
   removeTunnel: (peerId: string) => void;
+  setMeshNodes: (nodes: MeshNode[]) => void;
+  updateNodeVerification: (peerId: string, state: VerificationState) => void;
+  setComputePriorities: (entries: ComputePriorityEntry[]) => void;
 }
 
 export const useMeshStore = create<MeshState>((set) => ({
   nearbyPeers: [],
   nodeStatus: null,
   tunnels: [],
+  meshNodes: [],
+  computePriorities: [],
 
   setNearbyPeers: (peers) => set({ nearbyPeers: peers }),
   setNodeStatus: (status) => set({ nodeStatus: status }),
@@ -68,4 +75,15 @@ export const useMeshStore = create<MeshState>((set) => ({
     set((state) => ({
       tunnels: state.tunnels.filter((t) => t.peerId !== peerId),
     })),
+
+  setMeshNodes: (nodes) => set({ meshNodes: nodes }),
+
+  updateNodeVerification: (peerId, state) =>
+    set((s) => ({
+      meshNodes: s.meshNodes.map((n) =>
+        n.peerId === peerId ? { ...n, verificationState: state } : n,
+      ),
+    })),
+
+  setComputePriorities: (entries) => set({ computePriorities: entries }),
 }));
