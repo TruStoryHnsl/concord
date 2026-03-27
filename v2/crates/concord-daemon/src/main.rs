@@ -29,6 +29,9 @@ enum Commands {
         /// Path to configuration file.
         #[arg(short, long, default_value = "concord-server.toml")]
         config: String,
+        /// Emit logs as structured JSON (for machine consumption / log aggregators).
+        #[arg(long)]
+        json_logs: bool,
     },
     /// Initialize a new Concord server with default config.
     Init {
@@ -45,8 +48,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Start { config: config_path } => {
-            run_start(&config_path).await?;
+        Commands::Start { config: config_path, json_logs } => {
+            run_start(&config_path, json_logs).await?;
         }
         Commands::Init { dir } => {
             run_init(&dir)?;
@@ -60,17 +63,24 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Start the Concord daemon: load config, init networking, serve.
-async fn run_start(config_path: &str) -> anyhow::Result<()> {
+async fn run_start(config_path: &str, json_logs: bool) -> anyhow::Result<()> {
     // Load configuration
     let daemon_config = DaemonConfig::load(config_path)?;
 
-    // Initialize tracing with the configured filter
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&daemon_config.logging.filter)),
-        )
-        .init();
+    // Initialize tracing with the configured filter, optionally as JSON
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&daemon_config.logging.filter));
+
+    if json_logs || daemon_config.logging.json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .init();
+    }
 
     let display_name = daemon_config.resolved_display_name();
     tracing::info!(

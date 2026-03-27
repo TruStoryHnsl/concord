@@ -51,3 +51,9 @@ pub const PRESENCE_UPDATED: &str = "concord://presence-updated";
 
 /// Emitted when message sync completes with a peer.
 pub const SYNC_COMPLETED: &str = "concord://sync-completed";
+
+/// Emitted when a peer's verification state changes.
+pub const PEER_VERIFIED: &str = "concord://peer-verified";
+
+/// Emitted when a compute allocation is received from the mesh.
+pub const COMPUTE_ALLOCATION_UPDATED: &str = "concord://compute-allocation-updated";

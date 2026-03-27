@@ -269,6 +269,34 @@ impl Database {
                 secret_key BLOB NOT NULL,
                 created_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS peer_verification (
+                peer_id             TEXT PRIMARY KEY,
+                state               TEXT NOT NULL DEFAULT 'speculative',
+                remaining_ttl       INTEGER NOT NULL DEFAULT 0,
+                last_confirmed_at   INTEGER,
+                confirmed_addresses TEXT NOT NULL DEFAULT '[]',
+                updated_at          INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS compute_allocations (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_peer       TEXT NOT NULL,
+                to_peer         TEXT NOT NULL,
+                priority        INTEGER NOT NULL,
+                share           REAL NOT NULL,
+                announced_at    INTEGER NOT NULL,
+                UNIQUE(from_peer, to_peer)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_compute_allocations_to_peer
+                ON compute_allocations(to_peer);
+
+            CREATE TABLE IF NOT EXISTS local_compute_priorities (
+                peer_id     TEXT PRIMARY KEY,
+                priority    INTEGER NOT NULL,
+                updated_at  INTEGER NOT NULL
+            );
             ",
         )?;
         info!("database schema initialized");

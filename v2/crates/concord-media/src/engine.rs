@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::Instant;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -9,6 +12,9 @@ use concord_net::NodeHandle;
 use crate::audio::{AudioCapture, AudioPlayback};
 use crate::session::VoiceSession;
 use crate::signaling::SignalingManager;
+
+/// Maximum audio frames per peer per second (2x normal 50fps Opus rate).
+const MAX_FRAMES_PER_SECOND: u32 = 100;
 
 /// Commands sent from VoiceEngineHandle to VoiceEngine.
 pub enum VoiceCommand {
@@ -205,6 +211,8 @@ pub struct VoiceEngine {
     audio_playback: Option<AudioPlayback>,
     /// Handle to the spawned task that forwards captured audio frames to the network.
     audio_forward_task: Option<tokio::task::JoinHandle<()>>,
+    /// Per-peer frame rate tracker: peer_id -> (frame_count, window_start).
+    frame_rate_tracker: HashMap<String, (u32, Instant)>,
 }
 
 impl VoiceEngine {
@@ -231,6 +239,7 @@ impl VoiceEngine {
             audio_capture: None,
             audio_playback: None,
             audio_forward_task: None,
+            frame_rate_tracker: HashMap::new(),
         };
 
         (engine, handle, event_rx)
@@ -477,9 +486,10 @@ impl VoiceEngine {
             warn!(%e, "failed to unsubscribe from voice topic");
         }
 
-        // Clear signaling state for all participants
+        // Clear signaling state and rate tracking for all participants
         for peer_id in session.participants.keys() {
             self.signaling.clear_peer(peer_id);
+            self.frame_rate_tracker.remove(peer_id);
         }
 
         let channel_id = session.channel_id.clone();
@@ -625,6 +635,7 @@ impl VoiceEngine {
                 info!(%peer_id, %channel_id, "participant left voice channel");
                 session.remove_participant(&peer_id);
                 self.signaling.clear_peer(&peer_id);
+                self.frame_rate_tracker.remove(&peer_id);
 
                 self.emit(VoiceEvent::ParticipantLeft {
                     peer_id,
@@ -664,7 +675,10 @@ impl VoiceEngine {
 
                 // Create answer
                 let answer_sdp = self.signaling.handle_offer(&from_peer, &sdp);
-                let session = self.session.as_ref().unwrap();
+                let session = match self.session.as_ref() {
+                    Some(s) => s,
+                    None => return,
+                };
                 let answer_signal = VoiceSignal::Answer {
                     from_peer: self.local_peer_id.clone(),
                     to_peer: from_peer,
@@ -748,6 +762,29 @@ impl VoiceEngine {
                 // Ignore our own audio frames
                 if peer_id == self.local_peer_id {
                     return;
+                }
+
+                // Rate-limit incoming audio frames per peer
+                let now = Instant::now();
+                let entry = self
+                    .frame_rate_tracker
+                    .entry(peer_id.clone())
+                    .or_insert((0, now));
+
+                if now.duration_since(entry.1).as_secs() >= 1 {
+                    // Reset the window
+                    entry.0 = 1;
+                    entry.1 = now;
+                } else {
+                    entry.0 += 1;
+                    if entry.0 > MAX_FRAMES_PER_SECOND {
+                        warn!(
+                            %peer_id,
+                            frames = entry.0,
+                            "dropping audio frame: peer exceeds {MAX_FRAMES_PER_SECOND} frames/sec"
+                        );
+                        return;
+                    }
                 }
 
                 // Only play audio if we're in a session and not deafened

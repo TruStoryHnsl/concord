@@ -304,3 +304,83 @@ pub enum ServerSignal {
         encrypted_key: crate::crypto::EncryptedEnvelope,
     },
 }
+
+// ─── Verification & Compute Types ───────────────────────────────────
+
+/// Verification state of a mesh node from this node's local perspective.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VerificationState {
+    /// Recently probed and confirmed responsive. TTL > 0.
+    Verified,
+    /// Previously verified but TTL expired.
+    Stale,
+    /// Only known from gossip/mDNS; never probed.
+    Speculative,
+}
+
+/// Verification tag stored per peer. Freshness measured in heartbeat ticks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationTag {
+    pub peer_id: String,
+    pub state: VerificationState,
+    /// Remaining TTL in heartbeat ticks. Resets on confirmed probe response.
+    pub remaining_ttl: u8,
+    /// Unix millis when last confirmed.
+    pub last_confirmed_at: Option<u64>,
+    /// Peer's addresses at time of last confirmation.
+    pub confirmed_addresses: Vec<String>,
+}
+
+/// Default heartbeat ticks a Verified tag stays fresh.
+pub const DEFAULT_VERIFICATION_TTL: u8 = 5;
+
+/// GossipSub message for probing peers to confirm liveness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NodeProbeMessage {
+    /// "Are you there? Send me your current info."
+    Probe {
+        from_peer: String,
+        sent_at: u64,
+    },
+    /// "Yes, here's my current info."
+    ProbeResponse {
+        from_peer: String,
+        to_peer: String,
+        sent_at: u64,
+        node_info: NodeInfo,
+    },
+}
+
+/// A node's processing power allocation across followed nodes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComputeAllocationMessage {
+    pub from_peer: String,
+    pub allocations: Vec<ComputeEntry>,
+    pub timestamp: u64,
+    pub signature: Vec<u8>,
+}
+
+/// A single allocation entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComputeEntry {
+    pub peer_id: String,
+    /// Priority rank, 1 = highest.
+    pub priority: u8,
+    /// Computed share [0.0, 1.0] via triangular distribution.
+    pub share: f64,
+}
+
+/// Enriched node record for the frontend mesh map.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshNodeRecord {
+    pub peer_id: String,
+    pub display_name: Option<String>,
+    pub addresses: Vec<String>,
+    pub verification_state: VerificationState,
+    pub remaining_ttl: u8,
+    pub last_confirmed_at: Option<u64>,
+    pub received_compute_weight: f64,
+    pub connection_type: Option<String>,
+    pub rtt_ms: Option<u32>,
+    pub last_seen: i64,
+}

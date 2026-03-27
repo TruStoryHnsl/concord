@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use concord_core::trust::TrustAttestation;
-use concord_core::types::{AliasAnnouncement, DmSignal, ForumPost, FriendSignal, Message, PresenceStatus, ServerSignal, VoiceSignal};
+use concord_core::types::{AliasAnnouncement, ComputeAllocationMessage, DmSignal, ForumPost, FriendSignal, Message, NodeProbeMessage, PresenceStatus, ServerSignal, VoiceSignal};
 
 /// Events emitted by the network layer to the application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,5 +106,15 @@ pub enum NetworkEvent {
     SyncCompleted {
         peer_id: String,
         messages_received: usize,
+    },
+
+    /// A node probe message was received (Probe or ProbeResponse).
+    NodeProbeReceived {
+        message: NodeProbeMessage,
+    },
+
+    /// A compute allocation announcement was received from a peer.
+    ComputeAllocationReceived {
+        allocation: ComputeAllocationMessage,
     },
 }

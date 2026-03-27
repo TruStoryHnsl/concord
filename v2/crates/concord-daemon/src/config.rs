@@ -96,6 +96,9 @@ pub struct LoggingSection {
     /// tracing env-filter string (e.g. "info,concord_net=debug").
     #[serde(default = "default_log_filter")]
     pub filter: String,
+    /// Emit logs as structured JSON (suitable for machine consumption).
+    #[serde(default)]
+    pub json: bool,
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -184,6 +187,7 @@ impl Default for LoggingSection {
     fn default() -> Self {
         Self {
             filter: "info,concord_net=info".into(),
+            json: false,
         }
     }
 }

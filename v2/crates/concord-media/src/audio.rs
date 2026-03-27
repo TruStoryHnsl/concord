@@ -88,12 +88,15 @@ impl AudioCapture {
             .build_input_stream(
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    // Check mute
-                    if *mute_flag.lock().unwrap() {
+                    // Check mute — skip frame if lock is poisoned
+                    if mute_flag.lock().ok().map(|m| *m).unwrap_or(false) {
                         return;
                     }
 
-                    let mut buffer = buf.lock().unwrap();
+                    let mut buffer = match buf.lock().ok() {
+                        Some(b) => b,
+                        None => return, // poisoned lock — skip frame
+                    };
                     buffer.extend_from_slice(data);
 
                     // Process complete Opus frames
@@ -109,11 +112,17 @@ impl AudioCapture {
 
                         // Encode with Opus
                         let mut output = vec![0u8; 4000]; // max Opus frame
-                        let enc = enc.lock().unwrap();
+                        let enc = match enc.lock().ok() {
+                            Some(e) => e,
+                            None => return, // poisoned lock — skip frame
+                        };
                         match enc.encode(&pcm, &mut output) {
                             Ok(len) => {
                                 output.truncate(len);
-                                let mut seq_num = seq.lock().unwrap();
+                                let mut seq_num = match seq.lock().ok() {
+                                    Some(s) => s,
+                                    None => return,
+                                };
                                 *seq_num = seq_num.wrapping_add(1);
                                 let frame = AudioFrame {
                                     data: output,
@@ -212,7 +221,14 @@ impl AudioPlayback {
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut buffer = buf.lock().unwrap();
+                    let mut buffer = match buf.lock().ok() {
+                        Some(b) => b,
+                        None => {
+                            // Poisoned lock — output silence
+                            data.fill(0.0);
+                            return;
+                        }
+                    };
                     for sample in data.iter_mut() {
                         *sample = buffer.pop_front().unwrap_or(0.0);
                     }
@@ -255,11 +271,14 @@ impl AudioPlayback {
 
     /// Decode and queue an incoming Opus audio frame for playback.
     pub fn queue_frame(&self, opus_data: &[u8]) -> Result<(), AudioError> {
-        let mut decoder = self.decoder.lock().unwrap();
+        let mut decoder = self
+            .decoder
+            .lock()
+            .map_err(|_| AudioError::OpusDecodeError("decoder lock poisoned".into()))?;
         let mut pcm = vec![0i16; OPUS_FRAME_SIZE];
         let packet = audiopus::packet::Packet::try_from(opus_data)
             .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
-        let mut signals = audiopus::MutSignals::try_from(&mut pcm[..])
+        let signals = audiopus::MutSignals::try_from(&mut pcm[..])
             .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
         let decoded_samples = decoder
             .decode(Some(packet), signals, false)
@@ -271,7 +290,10 @@ impl AudioPlayback {
             .map(|&s| s as f32 / 32767.0)
             .collect();
 
-        let mut buffer = self.playback_buffer.lock().unwrap();
+        let mut buffer = self
+            .playback_buffer
+            .lock()
+            .map_err(|_| AudioError::OpusDecodeError("playback buffer lock poisoned".into()))?;
         buffer.extend(float_samples);
 
         // Prevent buffer from growing unboundedly (keep ~200ms max)

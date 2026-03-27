@@ -4,6 +4,7 @@
 // and a WebSocket endpoint for real-time communication bridged to the mesh.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -48,6 +49,7 @@ pub struct WebhostAppState {
     pub node_handle: NodeHandle,
     pub event_sender: broadcast::Sender<NetworkEvent>,
     pub server_id: String,
+    pub start_time: Instant,
 }
 
 // ── Server ─────────────────────────────────────────────────────────
@@ -90,6 +92,7 @@ impl WebhostServer {
             node_handle: self.node_handle.clone(),
             event_sender: self.event_sender.clone(),
             server_id: self.config.server_id.clone(),
+            start_time: Instant::now(),
         };
 
         let router = build_router(app_state, self.db.clone());
@@ -169,6 +172,8 @@ impl Drop for WebhostHandle {
 
 fn build_router(state: WebhostAppState, db: Option<Arc<std::sync::Mutex<Database>>>) -> Router {
     let mut router = Router::new()
+        // Health check endpoint (no auth required)
+        .route("/api/health", get(health_handler))
         // Guest auth: POST /api/auth { pin, displayName } -> { token, guestId }
         .route("/api/auth", post(auth_handler))
         // REST endpoints (require session token in Authorization header)
@@ -247,6 +252,33 @@ async fn status_handler(State(state): State<WebhostAppState>) -> impl IntoRespon
     axum::Json(StatusResponse {
         server_id: state.server_id.clone(),
         active_guests,
+    })
+}
+
+/// Health check response.
+#[derive(Debug, Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    uptime: u64,
+    peers: usize,
+    version: &'static str,
+}
+
+/// GET /api/health — health check (no auth required).
+async fn health_handler(State(state): State<WebhostAppState>) -> impl IntoResponse {
+    let uptime = state.start_time.elapsed().as_secs();
+    let peers = state
+        .node_handle
+        .peers()
+        .await
+        .map(|p| p.len())
+        .unwrap_or(0);
+
+    axum::Json(HealthResponse {
+        status: "ok",
+        uptime,
+        peers,
+        version: env!("CARGO_PKG_VERSION"),
     })
 }
 

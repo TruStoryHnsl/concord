@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "v2 -> target"
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopus-dev
+      - name: Check
+        run: cargo clippy --workspace -- -D warnings
+        working-directory: v2
+      - name: Test
+        run: cargo test --workspace
+        working-directory: v2
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: v2/frontend
+      - name: Type check
+        run: npx tsc --noEmit
+        working-directory: v2/frontend
+      - name: Test
+        run: npm test
+        working-directory: v2/frontend
