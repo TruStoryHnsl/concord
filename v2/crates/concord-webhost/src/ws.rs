@@ -6,6 +6,7 @@
 //   2. Read from mesh events (broadcast::Receiver) -> send to WS
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -171,9 +172,14 @@ async fn handle_connection(
 
     debug!(guest_id = %guest_id, "WS connection authenticated, starting bridge");
 
-    // Two concurrent tasks: inbound (WS -> mesh) and outbound (mesh -> WS).
+    // Three concurrent tasks: inbound, outbound, and keep-alive ping.
     let node_clone = node.clone();
     let guest_id_clone = guest_id.clone();
+
+    // Shared sender behind a mutex so both outbound and keep-alive can write.
+    let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
+    let ping_sender = Arc::clone(&ws_sender);
+    let event_sender = Arc::clone(&ws_sender);
 
     tokio::select! {
         // Inbound: read from WebSocket, dispatch to mesh.
@@ -183,19 +189,15 @@ async fn handle_connection(
                     WsMessage::Text(text) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
                             Ok(ClientMessage::SendMessage { channel_id, content }) => {
-                                // Build a Concord message and publish it.
                                 let message = concord_core::types::Message {
                                     id: uuid_v4(),
                                     channel_id: channel_id.clone(),
                                     sender_id: guest_id_clone.clone(),
                                     content: content.clone(),
                                     timestamp: chrono::Utc::now(),
-                                    signature: Vec::new(), // guests don't sign
+                                    signature: Vec::new(),
                                     alias_id: None,
                                     alias_name: None,
-                                    // Guest messages are published plaintext for now;
-                                    // full guest encryption requires channel key exchange
-                                    // during PIN auth (future enhancement).
                                     encrypted_content: None,
                                     nonce: None,
                                 };
@@ -218,7 +220,12 @@ async fn handle_connection(
                                 }
                             }
                             Ok(ClientMessage::Ping) => {
-                                // Handled inline — nothing extra needed.
+                                // Respond with pong to keep connection alive.
+                                let pong = ServerMessage::Pong;
+                                if let Ok(json) = serde_json::to_string(&pong) {
+                                    let mut sender = ping_sender.lock().await;
+                                    let _ = sender.send(WsMessage::Text(json.into())).await;
+                                }
                             }
                             Ok(ClientMessage::Authenticate { .. }) => {
                                 // Already authenticated — ignore.
@@ -265,7 +272,8 @@ async fn handle_connection(
                         if let Some(msg) = server_msg {
                             match serde_json::to_string(&msg) {
                                 Ok(json) => {
-                                    if ws_sender.send(WsMessage::Text(json.into())).await.is_err() {
+                                    let mut sender = event_sender.lock().await;
+                                    if sender.send(WsMessage::Text(json.into())).await.is_err() {
                                         break;
                                     }
                                 }
@@ -285,6 +293,19 @@ async fn handle_connection(
             }
         } => {
             debug!(guest_id = %guest_id, "WS outbound loop ended");
+        },
+        // Keep-alive: send WebSocket ping every 30 seconds.
+        _ = async {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let mut sender = ws_sender.lock().await;
+                if sender.send(WsMessage::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+            }
+        } => {
+            debug!(guest_id = %guest_id, "WS keep-alive loop ended");
         },
     }
 

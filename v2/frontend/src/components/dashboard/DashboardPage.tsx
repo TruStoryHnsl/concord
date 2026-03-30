@@ -12,7 +12,11 @@ import { useConversationsStore } from "@/stores/conversations";
 import {
   getNodeStatus,
   getNearbyPeers,
+  getDashboard,
+  syncMeshFriends,
+  getWireGuardStatus,
 } from "@/api/tauri";
+import type { DashboardData, WireGuardStatus } from "@/api/tauri";
 import { shortenPeerId, formatRelativeTime } from "@/utils/format";
 
 function DashboardPage() {
@@ -31,6 +35,8 @@ function DashboardPage() {
   const conversations = useConversationsStore((s) => s.conversations);
   const loadConversations = useConversationsStore((s) => s.loadConversations);
   const [loading, setLoading] = useState(true);
+  const [dashData, setDashData] = useState<DashboardData | null>(null);
+  const [wgStatus, setWgStatus] = useState<WireGuardStatus | null>(null);
 
   useEffect(() => {
     // Clear any active server when returning to dashboard
@@ -38,12 +44,14 @@ function DashboardPage() {
 
     async function init() {
       try {
-        const [status, peers] = await Promise.all([
+        const [status, peers, dash] = await Promise.all([
           getNodeStatus(),
           getNearbyPeers(),
+          getDashboard(),
         ]);
         setNodeStatus(status);
         setNearbyPeers(peers);
+        setDashData(dash);
       } catch (err) {
         console.warn("Dashboard init failed (backend not ready?):", err);
       } finally {
@@ -56,6 +64,11 @@ function DashboardPage() {
     void loadPosts("global");
     void loadFriends();
     void loadConversations();
+    // Sync friend list with mesh networking for enhanced peer sync behavior
+    void syncMeshFriends().catch(() => {});
+    // Detect WireGuard / orrtellite mesh status
+    void getWireGuardStatus().then(setWgStatus).catch(() => {});
+
   }, [setNodeStatus, setNearbyPeers, loadServers, loadPosts, loadFriends, loadConversations]);
 
   const isOnline = nodeStatus?.isOnline ?? false;
@@ -126,7 +139,7 @@ function DashboardPage() {
           )}
         </GlassPanel>
 
-        {/* Quick Stats */}
+        {/* Quick Stats — Mesh-Aware */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <GlassPanel className="rounded-xl p-3 space-y-0.5">
             <div className="flex items-center gap-1.5 text-on-surface-variant">
@@ -134,39 +147,39 @@ function DashboardPage() {
                 sensors
               </span>
               <span className="font-label text-[10px] uppercase tracking-wider">
-                Nearby
+                Connected
               </span>
             </div>
             <p className="font-headline text-xl font-bold text-on-surface">
-              {nearbyPeers.length}
+              {dashData?.connectedPeers ?? nearbyPeers.length}
             </p>
           </GlassPanel>
 
           <GlassPanel className="rounded-xl p-3 space-y-0.5">
             <div className="flex items-center gap-1.5 text-on-surface-variant">
               <span className="material-symbols-outlined text-primary text-base">
-                forum
+                location_city
               </span>
               <span className="font-label text-[10px] uppercase tracking-wider">
-                Forum Posts
+                Places
               </span>
             </div>
             <p className="font-headline text-xl font-bold text-on-surface">
-              {localPosts.length + globalPosts.length}
+              {dashData?.knownPlaces ?? 0}
             </p>
           </GlassPanel>
 
           <GlassPanel className="rounded-xl p-3 space-y-0.5">
             <div className="flex items-center gap-1.5 text-on-surface-variant">
               <span className="material-symbols-outlined text-secondary text-base">
-                dns
+                map
               </span>
               <span className="font-label text-[10px] uppercase tracking-wider">
-                Servers
+                Mesh Map
               </span>
             </div>
             <p className="font-headline text-xl font-bold text-on-surface">
-              {servers.length}
+              {dashData?.meshMapSize ?? 0}
             </p>
           </GlassPanel>
 
@@ -184,6 +197,59 @@ function DashboardPage() {
             </p>
           </GlassPanel>
         </div>
+
+        {/* Active Calls Banner */}
+        {(dashData?.activeCalls ?? 0) > 0 && (
+          <GlassPanel className="rounded-xl p-3 border-l-2 border-l-secondary">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-secondary text-base animate-pulse">
+                call
+              </span>
+              <span className="font-headline font-semibold text-sm text-on-surface">
+                {dashData!.activeCalls} active call{dashData!.activeCalls !== 1 ? "s" : ""} on the mesh
+              </span>
+            </div>
+          </GlassPanel>
+        )}
+
+        {/* Portal URL */}
+        {dashData?.portalUrl && (
+          <GlassPanel className="rounded-xl p-3 flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-base">language</span>
+            <span className="text-xs text-on-surface-variant">Web portal:</span>
+            <span className="text-xs font-mono text-on-surface">{dashData.portalUrl}</span>
+          </GlassPanel>
+        )}
+
+        {/* WireGuard / Tunnel Status */}
+        {wgStatus && (
+          <GlassPanel className={`rounded-xl p-3 flex items-center gap-3 border ${
+            wgStatus.isActive ? "border-secondary/20" : "border-outline-variant/10"
+          }`}>
+            <span className={`material-symbols-outlined text-base ${
+              wgStatus.isActive ? "text-secondary" : "text-outline-variant"
+            }`}>
+              {wgStatus.isActive ? "vpn_lock" : "vpn_lock"}
+            </span>
+            <div className="flex-1 min-w-0">
+              <span className={`text-xs font-label font-semibold ${
+                wgStatus.isActive ? "text-secondary" : "text-on-surface-variant"
+              }`}>
+                {wgStatus.isActive ? "WireGuard Mesh Active" : "No WireGuard Mesh"}
+              </span>
+              {wgStatus.isActive && wgStatus.meshHostname && (
+                <span className="text-[10px] text-on-surface-variant ml-2 font-mono">
+                  {wgStatus.meshHostname}
+                </span>
+              )}
+            </div>
+            {wgStatus.isActive && (
+              <span className="text-[10px] font-label text-on-surface-variant">
+                {wgStatus.onlinePeers}/{wgStatus.peerCount} peers
+              </span>
+            )}
+          </GlassPanel>
+        )}
 
         {/* Nearby Peer Avatars */}
         {nearbyPeers.length > 0 && (
@@ -214,12 +280,57 @@ function DashboardPage() {
           </div>
         )}
 
-        {/* Quick Action Cards */}
+        {/* Quick Action Cards — Mobile First */}
         <div className="space-y-2">
           <span className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant">
             Quick Actions
           </span>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {/* 1-tap reconnect to last channel */}
+            {dashData?.lastChannel && (
+              <Link to={`/server/${dashData.lastChannel.serverId}`} className="block col-span-2 md:col-span-1">
+                <GlassPanel className="rounded-xl p-3 hover:bg-surface-container-high/30 transition-colors group border border-secondary/20">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-secondary/15 group-hover:bg-secondary/25 transition-colors shrink-0">
+                      <span className="material-symbols-outlined text-secondary text-lg">
+                        play_arrow
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-headline font-semibold text-sm text-on-surface truncate">
+                        Reconnect
+                      </p>
+                      <p className="text-[10px] text-on-surface-variant font-body truncate">
+                        #{dashData.lastChannel.channelName} in {dashData.lastChannel.serverName}
+                      </p>
+                    </div>
+                  </div>
+                </GlassPanel>
+              </Link>
+            )}
+
+            {/* Host exchange */}
+            <Link to="/host" className="block">
+              <GlassPanel className="rounded-xl p-3 hover:bg-surface-container-high/30 transition-colors group">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors shrink-0">
+                    <span className="material-symbols-outlined text-primary text-lg">
+                      videocam
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-headline font-semibold text-sm text-on-surface">
+                      Host Exchange
+                    </p>
+                    <p className="text-[10px] text-on-surface-variant font-body">
+                      Voice, video, or text
+                    </p>
+                  </div>
+                </div>
+              </GlassPanel>
+            </Link>
+
+            {/* Post to forum */}
             <Link to="/forum" className="block">
               <GlassPanel className="rounded-xl p-3 hover:bg-surface-container-high/30 transition-colors group">
                 <div className="flex items-center gap-3">
@@ -239,25 +350,50 @@ function DashboardPage() {
                 </div>
               </GlassPanel>
             </Link>
-            <Link to="/host" className="block">
+
+            {/* Profile customization */}
+            <Link to="/profile" className="block">
               <GlassPanel className="rounded-xl p-3 hover:bg-surface-container-high/30 transition-colors group">
                 <div className="flex items-center gap-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-secondary/10 group-hover:bg-secondary/20 transition-colors shrink-0">
                     <span className="material-symbols-outlined text-secondary text-lg">
-                      dns
+                      person
                     </span>
                   </div>
                   <div>
                     <p className="font-headline font-semibold text-sm text-on-surface">
-                      Host Server
+                      Profile
                     </p>
                     <p className="text-[10px] text-on-surface-variant font-body">
-                      Create a new server
+                      Customize identity
                     </p>
                   </div>
                 </div>
               </GlassPanel>
             </Link>
+
+            {/* Node settings */}
+            <Link to="/settings" className="block">
+              <GlassPanel className="rounded-xl p-3 hover:bg-surface-container-high/30 transition-colors group">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-secondary/10 group-hover:bg-secondary/20 transition-colors shrink-0">
+                    <span className="material-symbols-outlined text-secondary text-lg">
+                      settings
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-headline font-semibold text-sm text-on-surface">
+                      Node Settings
+                    </p>
+                    <p className="text-[10px] text-on-surface-variant font-body">
+                      Configure your node
+                    </p>
+                  </div>
+                </div>
+              </GlassPanel>
+            </Link>
+
+            {/* New conversation */}
             <Link to="/direct" className="block">
               <GlassPanel className="rounded-xl p-3 hover:bg-surface-container-high/30 transition-colors group">
                 <div className="flex items-center gap-3">
@@ -268,10 +404,10 @@ function DashboardPage() {
                   </div>
                   <div>
                     <p className="font-headline font-semibold text-sm text-on-surface">
-                      New Conversation
+                      New Chat
                     </p>
                     <p className="text-[10px] text-on-surface-variant font-body">
-                      Start a direct message
+                      Direct message
                     </p>
                   </div>
                 </div>

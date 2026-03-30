@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/register", tags=["registration"])
 
-# Rate limit: 3 registrations per IP per 15 minutes
+# Rate limit: 5 registrations per IP per 15 minutes
 _reg_rate_limits: dict[str, deque[float]] = defaultdict(deque)
-_REG_RATE_LIMIT = 3
+_REG_RATE_LIMIT = 5
 _REG_RATE_WINDOW = 900  # 15 minutes
 
 
@@ -59,8 +59,12 @@ async def register_user(
     If an invite_token is provided, also joins the user to that server.
     If no invite_token, just creates the Matrix account.
     """
-    # Rate limit by IP
-    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    # Rate limit by real client IP (prefer Cf-Connecting-Ip from Cloudflare)
+    client_ip = (
+        request.headers.get("Cf-Connecting-Ip")
+        or request.headers.get("X-Real-Ip")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    )
     if not client_ip and request.client:
         client_ip = request.client.host
     if client_ip and not _check_registration_rate_limit(client_ip):

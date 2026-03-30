@@ -4,10 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["native-audio"]
+native-audio = ["dep:cpal", "dep:audiopus"]
+
 [dependencies]
 str0m = "0.7"
-cpal = "0.17"
-audiopus = "0.3.0-rc.0"
+cpal = { version = "0.17", optional = true }
+audiopus = { version = "0.3.0-rc.0", optional = true }
 concord-core = { path = "../concord-core" }
 concord-net = { path = "../concord-net" }
 tokio = { workspace = true }

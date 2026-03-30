@@ -69,8 +69,9 @@ function InvitePanel({ serverId, existingCode, onClose }: InvitePanelProps) {
   }, [webhostInfo]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/60 backdrop-blur-sm">
-      <GlassPanel className="w-full max-w-md p-6 space-y-5">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-background/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full sm:max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <GlassPanel className="p-6 space-y-5 rounded-t-2xl sm:rounded-2xl">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -254,6 +255,7 @@ function InvitePanel({ serverId, existingCode, onClose }: InvitePanelProps) {
           )}
         </div>
       </GlassPanel>
+      </div>
     </div>
   );
 }

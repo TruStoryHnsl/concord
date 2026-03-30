@@ -27,12 +27,12 @@ export function VoiceConnectionBar() {
   const serverName = servers.find((s) => s.id === serverId)?.name ?? "Server";
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 bg-emerald-900/90 border-t border-emerald-700/50 backdrop-blur-sm flex-shrink-0">
-      <div className="flex items-center gap-2 text-sm text-emerald-200">
-        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-        <span>
-          Connected to <strong>#{channelName}</strong> in{" "}
-          <strong>{serverName}</strong>
+    <div className="flex items-center justify-between px-3 md:px-4 py-2 md:py-2 bg-emerald-900/90 border-t border-emerald-700/50 backdrop-blur-sm flex-shrink-0 safe-bottom">
+      <div className="flex items-center gap-2 text-sm text-emerald-200 min-w-0">
+        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+        <span className="truncate">
+          <strong>#{channelName}</strong>
+          <span className="hidden sm:inline"> in <strong>{serverName}</strong></span>
         </span>
       </div>
 
@@ -90,49 +90,45 @@ function VoiceBarControls({
   if (connectionState !== ConnectionState.Connected) return null;
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1.5">
       {/* Mute */}
       <button
         onClick={toggleMic}
-        className={`btn-press px-2.5 py-1 text-xs rounded transition-colors ${
+        className={`btn-press min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 py-2 md:px-2.5 md:py-1 text-xs rounded-lg md:rounded transition-colors flex items-center justify-center ${
           isMicEnabled
             ? "bg-emerald-800 hover:bg-emerald-700 text-emerald-200"
             : "bg-red-600/30 text-red-300 hover:bg-red-600/50"
         }`}
         title={isMicEnabled ? "Mute" : "Unmute"}
       >
-        {isMicEnabled ? "Mic On" : "Mic Off"}
-      </button>
-
-      {/* Deafen */}
-      <button
-        onClick={toggleDeafen}
-        className={`btn-press px-2.5 py-1 text-xs rounded transition-colors ${
-          deafened
-            ? "bg-red-600/30 text-red-300 hover:bg-red-600/50"
-            : "bg-emerald-800 hover:bg-emerald-700 text-emerald-200"
-        }`}
-        title={deafened ? "Undeafen" : "Deafen"}
-      >
-        {deafened ? "Deafened" : "Deafen"}
+        <svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {isMicEnabled ? (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z M3 3l18 18" />
+          )}
+        </svg>
+        <span className="hidden md:inline">{isMicEnabled ? "Mic On" : "Mic Off"}</span>
       </button>
 
       {/* Return to channel */}
       <button
         onClick={onReturn}
-        className="btn-press px-2.5 py-1 text-xs bg-emerald-800 hover:bg-emerald-700 text-emerald-200 rounded transition-colors"
+        className="btn-press min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 py-2 md:px-2.5 md:py-1 text-xs bg-emerald-800 hover:bg-emerald-700 text-emerald-200 rounded-lg md:rounded transition-colors flex items-center justify-center"
         title="Return to voice channel"
       >
-        Return
+        <svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z" /></svg>
+        <span className="hidden md:inline">Return</span>
       </button>
 
       {/* Leave */}
       <button
         onClick={onLeave}
-        className="btn-press px-2.5 py-1 text-xs bg-red-600/30 text-red-300 hover:bg-red-600/50 rounded transition-colors"
+        className="btn-press min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 py-2 md:px-2.5 md:py-1 text-xs bg-red-600/30 text-red-300 hover:bg-red-600/50 rounded-lg md:rounded transition-colors flex items-center justify-center"
         title="Disconnect from voice"
       >
-        Leave
+        <svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+        <span className="hidden md:inline">Leave</span>
       </button>
     </div>
   );

@@ -160,6 +160,16 @@
   }
 }
 
+/* Fade-in for speech bubbles */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
 /* Material Symbols base settings */
 .material-symbols-outlined {
   font-variation-settings:

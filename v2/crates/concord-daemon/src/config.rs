@@ -65,6 +65,10 @@ pub struct ServerSection {
     /// Maximum number of members. None = unlimited.
     #[serde(default)]
     pub max_members: Option<u32>,
+    /// Place addresses (hex) to auto-join on startup.
+    /// The daemon will subscribe to these places' topics and sync their data.
+    #[serde(default)]
+    pub auto_join_places: Vec<String>,
 }
 
 /// A channel definition for auto-creation.
@@ -169,6 +173,7 @@ impl Default for ServerSection {
             visibility: "public".into(),
             default_channels: default_channels(),
             max_members: None,
+            auto_join_places: Vec::new(),
         }
     }
 }
@@ -248,6 +253,7 @@ impl DaemonConfig {
             bootstrap_peers: self.node.bootstrap_peers.clone(),
             enable_relay_server: self.node.enable_relay_server,
             enable_relay_client: self.node.enable_relay_client,
+            identity_keypair: None, // Set by caller with the persistent keypair
         }
     }
 

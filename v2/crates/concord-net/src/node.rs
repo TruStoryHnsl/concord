@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
 use libp2p::{gossipsub, kad, swarm::SwarmEvent, Multiaddr, PeerId, Swarm};
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -11,6 +12,7 @@ use concord_core::types::{AliasAnnouncement, DmSignal, ForumPost, FriendSignal, 
 use crate::behaviour::{ConcordBehaviour, ConcordBehaviourEvent};
 use crate::discovery::{DiscoveryState, PeerInfo};
 use crate::events::NetworkEvent;
+use crate::mesh::{MeshMapAction, MeshMapManager, TOPIC_CALLS, TOPIC_MAP_SYNC};
 use crate::swarm::build_swarm;
 use crate::tunnel::TunnelTracker;
 
@@ -21,6 +23,7 @@ pub enum NodeCommand {
     Publish {
         topic: String,
         data: Vec<u8>,
+        reply: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     },
     /// Subscribe to a GossipSub topic.
     Subscribe {
@@ -91,6 +94,11 @@ pub enum NodeCommand {
     SendSyncMessage {
         message: concord_core::types::SyncMessage,
     },
+    /// Update the set of known friend peer IDs for mesh sync behavior.
+    /// Friends get eager sync (shorter cooldown) and confidence upgrades on received data.
+    UpdateFriends {
+        friend_ids: std::collections::HashSet<String>,
+    },
     /// Shut down the node.
     Shutdown,
 }
@@ -109,16 +117,18 @@ impl NodeHandle {
         &self.peer_id
     }
 
-    /// Publish data to a GossipSub topic.
+    /// Publish data to a GossipSub topic. Returns error if publish fails.
     pub async fn publish(&self, topic: &str, data: Vec<u8>) -> Result<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.command_tx
             .send(NodeCommand::Publish {
                 topic: topic.to_string(),
                 data,
+                reply: Some(tx),
             })
             .await
             .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
-        Ok(())
+        rx.await.map_err(|_| anyhow::anyhow!("publish reply channel dropped"))?
     }
 
     /// Subscribe to a GossipSub topic.
@@ -301,6 +311,15 @@ impl NodeHandle {
         Ok(())
     }
 
+    /// Update the mesh sync friend list. Friends get eager sync and confidence upgrades.
+    pub async fn update_mesh_friends(&self, friend_ids: std::collections::HashSet<String>) -> Result<()> {
+        self.command_tx
+            .send(NodeCommand::UpdateFriends { friend_ids })
+            .await
+            .map_err(|_| anyhow::anyhow!("node event loop has shut down"))?;
+        Ok(())
+    }
+
     /// Shut down the node.
     pub async fn shutdown(&self) -> Result<()> {
         let _ = self.command_tx.send(NodeCommand::Shutdown).await;
@@ -316,6 +335,7 @@ pub struct Node {
     swarm: Swarm<ConcordBehaviour>,
     discovery: DiscoveryState,
     tunnel_tracker: TunnelTracker,
+    mesh_map: MeshMapManager,
     command_rx: mpsc::Receiver<NodeCommand>,
     event_tx: broadcast::Sender<NetworkEvent>,
     peer_id: String,
@@ -337,7 +357,7 @@ impl Node {
         broadcast::Sender<NetworkEvent>,
         broadcast::Receiver<NetworkEvent>,
     )> {
-        let mut swarm = build_swarm(config)?;
+        let (mut swarm, concord_peer_id) = build_swarm(config)?;
 
         // Listen on all interfaces. Port 0 = OS picks a random available port.
         let listen_port = if config.listen_port == 0 {
@@ -352,8 +372,13 @@ impl Node {
 
         swarm.listen_on(listen_addr)?;
 
-        let peer_id = swarm.local_peer_id().to_string();
-        info!(%peer_id, "concord node created");
+        let libp2p_peer_id = swarm.local_peer_id().to_string();
+        info!(
+            concord_peer_id = %concord_peer_id,
+            libp2p_peer_id = %libp2p_peer_id,
+            "concord node created (unified identity)"
+        );
+        let peer_id = concord_peer_id;
 
         // Add bootstrap peers to Kademlia
         for addr_str in &config.bootstrap_peers {
@@ -388,6 +413,23 @@ impl Node {
             }
         }
 
+        // Subscribe to mesh map sync topics
+        {
+            let sync_topic = gossipsub::IdentTopic::new(TOPIC_MAP_SYNC);
+            if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&sync_topic) {
+                warn!(%e, "failed to subscribe to mesh map sync topic");
+            } else {
+                info!(topic = TOPIC_MAP_SYNC, "subscribed to mesh map sync topic");
+            }
+
+            let calls_topic = gossipsub::IdentTopic::new(TOPIC_CALLS);
+            if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&calls_topic) {
+                warn!(%e, "failed to subscribe to mesh calls topic");
+            } else {
+                info!(topic = TOPIC_CALLS, "subscribed to mesh calls topic");
+            }
+        }
+
         let (command_tx, command_rx) = mpsc::channel(256);
         let (event_tx, event_rx) = broadcast::channel(256);
 
@@ -396,10 +438,13 @@ impl Node {
             peer_id: peer_id.clone(),
         };
 
+        let mesh_map = MeshMapManager::new(peer_id.clone());
+
         let node = Self {
             swarm,
             discovery: DiscoveryState::new(),
             tunnel_tracker: TunnelTracker::new(),
+            mesh_map,
             command_rx,
             event_tx,
             peer_id,
@@ -420,6 +465,10 @@ impl Node {
     pub async fn run(mut self) {
         info!(peer_id = %self.peer_id, "node event loop starting");
 
+        // Periodic tick for mesh map maintenance (confidence degradation + sync)
+        let mut mesh_tick = tokio::time::interval(Duration::from_secs(60));
+        mesh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 // Process swarm events
@@ -436,10 +485,42 @@ impl Node {
                         Some(cmd) => self.handle_command(cmd),
                     }
                 }
+                // Periodic mesh map maintenance tick
+                _ = mesh_tick.tick() => {
+                    self.handle_mesh_tick();
+                }
             }
         }
 
         info!(peer_id = %self.peer_id, "node event loop stopped");
+    }
+
+    /// Handle a periodic mesh map maintenance tick.
+    /// Broadcasts our map digest to trigger sync with peers.
+    fn handle_mesh_tick(&mut self) {
+        // Build actions from the mesh map manager (digest broadcast)
+        let actions = self.mesh_map.tick(&[]);
+        for action in actions {
+            self.process_mesh_action(action);
+        }
+    }
+
+    /// Process a MeshMapAction by publishing to the appropriate GossipSub topic.
+    fn process_mesh_action(&mut self, action: MeshMapAction) {
+        let (topic_str, data) = match action {
+            MeshMapAction::PublishSync(data) => (TOPIC_MAP_SYNC, data),
+            MeshMapAction::PublishCall(data) => (TOPIC_CALLS, data),
+        };
+        let topic = gossipsub::IdentTopic::new(topic_str);
+        match self.swarm.behaviour_mut().gossipsub.publish(topic, data) {
+            Ok(msg_id) => {
+                debug!(topic = topic_str, %msg_id, "published mesh map message");
+            }
+            Err(e) => {
+                // InsufficientPeers is expected when no peers are connected
+                debug!(topic = topic_str, %e, "failed to publish mesh map message");
+            }
+        }
     }
 
     fn handle_swarm_event(&mut self, event: SwarmEvent<ConcordBehaviourEvent>) {
@@ -530,6 +611,33 @@ impl Node {
                     data: message.data.clone(),
                 };
                 self.emit(event);
+
+                // ─── Mesh Map Sync Protocol ─────────────────────────
+                if topic == TOPIC_MAP_SYNC {
+                    let (actions, entries_to_merge) =
+                        self.mesh_map.handle_sync_message(&message.data, &[], &[]);
+                    for action in actions {
+                        self.process_mesh_action(action);
+                    }
+                    if !entries_to_merge.is_empty() {
+                        let event = NetworkEvent::MeshMapDeltaReceived {
+                            entries: entries_to_merge,
+                        };
+                        self.emit(event);
+                    }
+                } else if topic == TOPIC_CALLS {
+                    if let Some(result) = self.mesh_map.handle_call_signal(&message.data) {
+                        let event = match result {
+                            crate::mesh::CallSignalResult::Upsert(entry) => {
+                                NetworkEvent::CallLedgerUpdate { entry }
+                            }
+                            crate::mesh::CallSignalResult::Tombstone(address, at) => {
+                                NetworkEvent::CallLedgerTombstone { address, at }
+                            }
+                        };
+                        self.emit(event);
+                    }
+                }
 
                 // Check if this is a voice signaling topic
                 if topic.ends_with("/voice-signal") {
@@ -876,9 +984,9 @@ impl Node {
 
     fn handle_command(&mut self, cmd: NodeCommand) {
         match cmd {
-            NodeCommand::Publish { topic, data } => {
+            NodeCommand::Publish { topic, data, reply } => {
                 let ident_topic = gossipsub::IdentTopic::new(&topic);
-                match self
+                let result = match self
                     .swarm
                     .behaviour_mut()
                     .gossipsub
@@ -886,10 +994,15 @@ impl Node {
                 {
                     Ok(msg_id) => {
                         debug!(%topic, %msg_id, "published message");
+                        Ok(())
                     }
                     Err(e) => {
                         error!(%topic, %e, "failed to publish message");
+                        Err(anyhow::anyhow!("gossipsub publish failed: {e}"))
                     }
+                };
+                if let Some(tx) = reply {
+                    let _ = tx.send(result);
                 }
             }
 
@@ -1271,6 +1384,11 @@ impl Node {
                         error!(%e, "failed to encode server signal");
                     }
                 }
+            }
+
+            NodeCommand::UpdateFriends { friend_ids } => {
+                info!(count = friend_ids.len(), "updating mesh sync friend list");
+                self.mesh_map.update_friends(friend_ids);
             }
 
             NodeCommand::Shutdown => {

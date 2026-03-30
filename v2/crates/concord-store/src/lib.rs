@@ -15,6 +15,7 @@ pub mod conversation_store;
 pub mod settings_store;
 pub mod server_keys_store;
 pub mod mesh_store;
+pub mod mesh_map_store;
 
 pub use db::{Database, StoreError};
 pub use invites::{InviteRecord, MemberRecord};

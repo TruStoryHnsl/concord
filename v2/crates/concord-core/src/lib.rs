@@ -5,6 +5,9 @@ pub mod trust;
 pub mod crypto;
 pub mod totp;
 pub mod config;
+pub mod mesh_map;
+pub mod governance;
+pub mod cluster;
 
 pub use identity::Keypair;
 pub use types::*;

@@ -12,3 +12,4 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = { workspace = true }
+rmp-serde = "1"

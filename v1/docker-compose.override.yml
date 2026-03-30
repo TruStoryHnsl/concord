@@ -1,0 +1,5 @@
+# Auto-generated: HTTPS port mapping for domain mode
+services:
+  web:
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:8443:8443"

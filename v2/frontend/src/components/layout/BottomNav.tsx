@@ -8,10 +8,10 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { icon: "forum", label: "Forums", href: "/forum" },
+  { icon: "hub", label: "Home", href: "/", matchPrefixes: ["/"] },
   { icon: "dns", label: "Servers", href: "/servers", matchPrefixes: ["/servers", "/server/"] },
   { icon: "chat", label: "Direct", href: "/direct" },
-  { icon: "group", label: "Friends", href: "/friends" },
+  { icon: "forum", label: "Forums", href: "/forum" },
   { icon: "tune", label: "Settings", href: "/settings" },
 ];
 
@@ -30,17 +30,19 @@ function BottomNav({ visible = true }: BottomNavProps) {
 
   return (
     <nav className="shrink-0 bg-surface-container-low border-t border-outline-variant/30">
-      <div className="flex items-center justify-around h-14 px-2">
+      <div className="flex items-center justify-around h-16 px-2">
         {navItems.map((item) => {
-          const isActive = item.matchPrefixes
-            ? item.matchPrefixes.some((prefix) => location.pathname.startsWith(prefix))
-            : location.pathname === item.href || location.pathname.startsWith(item.href + "/");
+          const isActive = item.href === "/"
+            ? location.pathname === "/"
+            : item.matchPrefixes
+              ? item.matchPrefixes.some((prefix) => location.pathname.startsWith(prefix))
+              : location.pathname === item.href || location.pathname.startsWith(item.href + "/");
 
           return (
             <Link
               key={item.href}
               to={item.href}
-              className={`relative flex flex-col items-center justify-center gap-0.5 w-14 py-1.5 rounded-xl transition-all duration-200 ${
+              className={`relative flex flex-col items-center justify-center gap-0.5 min-w-[3rem] px-3 py-2 rounded-xl transition-all duration-200 ${
                 isActive
                   ? "text-secondary"
                   : "text-on-surface-variant"

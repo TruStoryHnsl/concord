@@ -133,9 +133,12 @@ export const useServersStore = create<ServersState>((set, get) => ({
   selectChannel: async (id) => {
     set({ activeChannelId: id, messages: [], loadingMessages: true });
     try {
+      // Build the full GossipSub topic: concord/{serverId}/{channelId}
+      const serverId = get().activeServerId;
+      const topic = serverId ? `concord/${serverId}/${id}` : id;
       const [msgs] = await Promise.all([
         getMessages(id, 50),
-        subscribeChannel(id),
+        subscribeChannel(topic),
       ]);
       set({ messages: msgs, loadingMessages: false });
     } catch (err) {
@@ -150,13 +153,17 @@ export const useServersStore = create<ServersState>((set, get) => ({
 
   addMessage: (message) =>
     set((state) => {
-      // Only add if it belongs to the active channel
-      if (state.activeChannelId && message.channelId !== state.activeChannelId) {
-        // Not the active channel — could show notification in the future
-        return state;
-      }
       // Avoid duplicates by id
       if (state.messages.some((m) => m.id === message.id)) {
+        return state;
+      }
+      // Only filter out messages from OTHER channels if we have an active channel.
+      // Always allow messages that match the active channel or when no channel is selected.
+      if (
+        state.activeChannelId &&
+        message.channelId &&
+        message.channelId !== state.activeChannelId
+      ) {
         return state;
       }
       return { messages: [...state.messages, message] };

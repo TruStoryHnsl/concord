@@ -146,7 +146,7 @@ pub fn run() {
 
             let db = Arc::new(Mutex::new(db));
 
-            // 3. Create the NodeConfig.
+            // 3. Create the NodeConfig with the persistent identity keypair.
             let config = NodeConfig {
                 display_name: display_name.clone(),
                 node_type: NodeType::User,
@@ -157,6 +157,7 @@ pub fn run() {
                 bootstrap_peers: Vec::new(),
                 enable_relay_server: false,
                 enable_relay_client: true,
+                identity_keypair: Some(keypair.to_bytes()),
             };
 
             // 4. Create the Node asynchronously. We use block_on here because
@@ -369,6 +370,19 @@ pub fn run() {
             commands::mesh::get_mesh_nodes,
             commands::mesh::set_compute_priorities,
             commands::mesh::get_compute_priorities,
+            commands::mesh::get_mesh_map_entries,
+            commands::mesh::get_engagement_profile,
+            commands::mesh::get_active_calls,
+            commands::mesh::mint_place,
+            commands::mesh::get_places,
+            commands::mesh::block_peer,
+            commands::mesh::unblock_peer,
+            commands::mesh::get_blocked_peers,
+            commands::mesh::get_mesh_map_for_viewer,
+            commands::mesh::get_perspective_view,
+            commands::mesh::sync_mesh_friends,
+            commands::mesh::get_wireguard_status,
+            commands::mesh::get_dashboard,
             commands::servers::create_server,
             commands::servers::get_servers,
             commands::servers::get_server,

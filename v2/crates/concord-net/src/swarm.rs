@@ -14,15 +14,48 @@ use crate::behaviour::ConcordBehaviour;
 
 /// Build and configure a libp2p Swarm with the Concord behaviour stack.
 ///
-/// Uses QUIC transport for encrypted, multiplexed connections.
-/// Includes relay client transport for NAT traversal via relays.
-/// Configures mDNS for LAN discovery, GossipSub for pub/sub, Identify for
-/// peer metadata exchange, Kademlia for DHT discovery, Relay for NAT
-/// traversal, and DCUtR for hole-punching.
-pub fn build_swarm(config: &NodeConfig) -> Result<Swarm<ConcordBehaviour>> {
-    let _ = config; // config is used for logging below
+/// Returns `(Swarm, concord_peer_id)` where `concord_peer_id` is the hex-encoded
+/// Ed25519 public key. When `config.identity_keypair` is provided, the swarm uses
+/// that key (unifying network and application identity). Otherwise, generates a
+/// random identity (backward compat / testing).
+pub fn build_swarm(config: &NodeConfig) -> Result<(Swarm<ConcordBehaviour>, String)> {
+    // Build the libp2p identity keypair from our Concord identity (if provided)
+    let (libp2p_keypair, concord_peer_id) = match config.identity_keypair {
+        Some(secret_bytes) => {
+            // Convert Concord Ed25519 secret key → libp2p identity keypair
+            let mut bytes = secret_bytes;
+            let ed25519_secret = libp2p::identity::ed25519::SecretKey::try_from_bytes(&mut bytes)
+                .map_err(|e| anyhow::anyhow!("invalid Ed25519 secret key: {e}"))?;
+            let ed25519_kp = libp2p::identity::ed25519::Keypair::from(ed25519_secret);
 
-    let swarm = SwarmBuilder::with_new_identity()
+            // Derive the Concord peer_id (hex-encoded public key bytes)
+            let pub_bytes = ed25519_kp.public().to_bytes();
+            let concord_id: String = pub_bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+            let libp2p_kp = libp2p::identity::Keypair::from(ed25519_kp);
+            info!(concord_peer_id = %concord_id, "using persistent identity for swarm");
+            (libp2p_kp, concord_id)
+        }
+        None => {
+            // No persistent identity — generate random (testing / backward compat)
+            let libp2p_kp = libp2p::identity::Keypair::generate_ed25519();
+            // Derive a concord-style peer_id from the random key
+            let concord_id = match libp2p_kp.clone().try_into_ed25519() {
+                Ok(ed25519_kp) => {
+                    let pub_bytes = ed25519_kp.public().to_bytes();
+                    pub_bytes.iter().map(|b| format!("{b:02x}")).collect()
+                }
+                Err(_) => {
+                    // Fallback: use libp2p PeerId string if somehow not Ed25519
+                    PeerId::from(libp2p_kp.public()).to_string()
+                }
+            };
+            info!(concord_peer_id = %concord_id, "using ephemeral identity for swarm");
+            (libp2p_kp, concord_id)
+        }
+    };
+
+    let swarm = SwarmBuilder::with_existing_identity(libp2p_keypair)
         .with_tokio()
         .with_quic()
         .with_relay_client(noise::Config::new, yamux::Config::default)?
@@ -86,9 +119,9 @@ pub fn build_swarm(config: &NodeConfig) -> Result<Swarm<ConcordBehaviour>> {
                 dcutr,
             })
         })?
-        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(600)))
         .build();
 
     info!(port = config.listen_port, "swarm built successfully");
-    Ok(swarm)
+    Ok((swarm, concord_peer_id))
 }

@@ -47,7 +47,7 @@ function MessageInput({
   );
 
   return (
-    <div className="shrink-0 p-3 glass-panel rounded-xl mx-4 mb-3">
+    <div className="shrink-0 p-2 sm:p-3 glass-panel rounded-xl mx-2 sm:mx-4 mb-2 sm:mb-3">
       <form onSubmit={handleSend} className="flex items-center gap-2">
         <input
           type="text"
@@ -59,14 +59,16 @@ function MessageInput({
           enterKeyHint="send"
           autoComplete="off"
           autoCorrect="on"
-          className="selectable flex-1 min-w-0 px-3 py-2 rounded-xl bg-surface-container border-none text-on-surface placeholder:text-on-surface-variant/50 font-body text-sm focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors"
+          autoCapitalize="sentences"
+          spellCheck
+          className="selectable flex-1 min-w-0 px-3 py-2.5 sm:py-2 rounded-xl bg-surface-container border-none text-on-surface placeholder:text-on-surface-variant/50 font-body text-base sm:text-sm focus:outline-none focus:ring-1 focus:ring-primary/30 transition-colors"
         />
         <button
           type="submit"
           disabled={!content.trim() || sending}
-          className="flex items-center justify-center w-9 h-9 rounded-xl primary-glow text-on-primary hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          className="flex items-center justify-center w-11 h-11 sm:w-9 sm:h-9 rounded-xl primary-glow text-on-primary hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
-          <span className="material-symbols-outlined text-lg">send</span>
+          <span className="material-symbols-outlined text-xl sm:text-lg">send</span>
         </button>
       </form>
     </div>

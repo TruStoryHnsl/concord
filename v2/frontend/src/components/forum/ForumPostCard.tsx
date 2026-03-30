@@ -1,11 +1,13 @@
-import type { ForumPost } from "@/api/tauri";
+import type { ForumPost, TrustLevel } from "@/api/tauri";
 import { formatRelativeTime } from "@/utils/format";
+import TrustBadge from "@/components/ui/TrustBadge";
 
 interface ForumPostCardProps {
   post: ForumPost;
+  trustLevel?: TrustLevel;
 }
 
-function ForumPostCard({ post }: ForumPostCardProps) {
+function ForumPostCard({ post, trustLevel }: ForumPostCardProps) {
   const initials = post.aliasName
     ? post.aliasName.slice(0, 2).toUpperCase()
     : post.authorId.slice(0, 2).toUpperCase();
@@ -35,6 +37,7 @@ function ForumPostCard({ post }: ForumPostCardProps) {
             <span className="font-label font-semibold text-sm text-on-surface truncate">
               {post.aliasName ?? `Peer ${post.authorId.slice(0, 8)}`}
             </span>
+            {trustLevel && <TrustBadge level={trustLevel} size="sm" showLabel={false} />}
           </div>
 
           {/* Post text */}

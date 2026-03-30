@@ -22,6 +22,12 @@ pub struct NodeConfig {
     /// Whether this node should use relay clients for NAT traversal.
     #[serde(default = "default_true")]
     pub enable_relay_client: bool,
+    /// Ed25519 secret key bytes (32 bytes) for the node's persistent identity.
+    /// When provided, the libp2p swarm uses this key instead of generating a random one,
+    /// unifying the network identity with the application identity.
+    /// When None, a random identity is generated (backward compat / testing).
+    #[serde(skip)]
+    pub identity_keypair: Option<[u8; 32]>,
 }
 
 fn default_true() -> bool {
@@ -40,6 +46,7 @@ impl Default for NodeConfig {
             bootstrap_peers: Vec::new(),
             enable_relay_server: false,
             enable_relay_client: true,
+            identity_keypair: None,
         }
     }
 }

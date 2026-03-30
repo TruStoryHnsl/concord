@@ -3,6 +3,8 @@ import GlassPanel from "@/components/ui/GlassPanel";
 import Skeleton from "@/components/ui/Skeleton";
 import ForumPostCard from "./ForumPostCard";
 import { useForumStore } from "@/stores/forum";
+import { getPeerTrust } from "@/api/tauri";
+import type { TrustLevel } from "@/api/tauri";
 
 type ForumTab = "local" | "global";
 
@@ -25,6 +27,27 @@ function ForumPage() {
   }, [activeTab, loadPosts]);
 
   const posts = activeTab === "local" ? localPosts : globalPosts;
+  const [authorTrust, setAuthorTrust] = useState<Record<string, TrustLevel>>({});
+
+  // Fetch trust for unique post authors
+  useEffect(() => {
+    const authorIds = [...new Set(posts.map((p) => p.authorId))];
+    const missing = authorIds.filter((id) => !(id in authorTrust));
+    if (missing.length === 0) return;
+    Promise.all(
+      missing.map((id) =>
+        getPeerTrust(id).then((t) => [id, t.badge] as const).catch(() => null),
+      ),
+    ).then((results) => {
+      const updates: Record<string, TrustLevel> = {};
+      for (const r of results) {
+        if (r) updates[r[0]] = r[1];
+      }
+      if (Object.keys(updates).length > 0) {
+        setAuthorTrust((prev) => ({ ...prev, ...updates }));
+      }
+    });
+  }, [posts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePost = useCallback(
     async (e?: FormEvent) => {
@@ -171,7 +194,7 @@ function ForumPage() {
         ) : (
           <div className="space-y-3">
             {posts.map((post) => (
-              <ForumPostCard key={post.id} post={post} />
+              <ForumPostCard key={post.id} post={post} trustLevel={authorTrust[post.authorId]} />
             ))}
           </div>
         )}

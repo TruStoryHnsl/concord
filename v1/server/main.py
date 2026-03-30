@@ -324,12 +324,18 @@ async def _seed_default_server():
 
 app = FastAPI(title="Concord API", lifespan=lifespan)
 
-_default_origins = "http://localhost:5173,http://localhost:8080"
+_default_origins = (
+    "https://concorrd.com,"
+    "https://www.concorrd.com,"
+    "http://localhost:5173,"
+    "http://localhost:8080"
+)
 allowed_origins = os.getenv("CORS_ORIGINS", _default_origins).split(",")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in allowed_origins],
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )

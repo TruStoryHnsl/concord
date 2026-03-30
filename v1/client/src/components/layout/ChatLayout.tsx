@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef, Component, type ReactNode } from "react";
 import {
   useMatrixSync,
   useRoomMessages,
@@ -27,6 +27,20 @@ import { ServerSettingsPanel } from "../settings/ServerSettingsModal";
 import { BugReportModal } from "../BugReportModal";
 import { StatsModal } from "../StatsModal";
 
+/** Lightweight error boundary that silently recovers instead of hiding content. */
+class SilentBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { ok: boolean }> {
+  state = { ok: true };
+  static getDerivedStateFromError() { return { ok: false }; }
+  componentDidCatch(err: Error) {
+    console.warn("SilentBoundary caught:", err.message);
+    // Auto-recover after a tick so transient hook mismatches resolve
+    setTimeout(() => this.setState({ ok: true }), 100);
+  }
+  render() {
+    return this.state.ok ? this.props.children : (this.props.fallback ?? null);
+  }
+}
+
 export function ChatLayout() {
   const syncing = useMatrixSync();
   const client = useAuthStore((s) => s.client);
@@ -53,6 +67,8 @@ export function ChatLayout() {
   const [showBugReport, setShowBugReport] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Resizable channel sidebar
   const SIDEBAR_MIN = 160;
@@ -148,14 +164,34 @@ export function ChatLayout() {
 
   return (
     <div className="h-full flex overflow-hidden bg-zinc-900 text-white">
-      <ServerSidebar />
-      <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
-        <ChannelSidebar />
+      {/* Mobile sidebar backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 drawer-backdrop md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebars — drawer on mobile, static on desktop */}
+      <div className={`
+        fixed inset-y-0 left-0 z-50 flex
+        ${mobileSidebarOpen ? "drawer-open" : "drawer-closed"}
+        md:relative md:!transform-none md:!transition-none
+      `}>
+        <SilentBoundary>
+          <ServerSidebar />
+        </SilentBoundary>
+        <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
+          <SilentBoundary>
+            <ChannelSidebar />
+          </SilentBoundary>
+        </div>
       </div>
-      {/* Resize handle */}
+
+      {/* Resize handle — desktop only */}
       <div
         onMouseDown={handleResizeStart}
-        className="w-1 cursor-col-resize hover:bg-indigo-500/50 active:bg-indigo-500/70 transition-colors flex-shrink-0"
+        className="hidden md:block w-1 cursor-col-resize hover:bg-indigo-500/50 active:bg-indigo-500/70 transition-colors flex-shrink-0"
       />
 
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
@@ -190,10 +226,19 @@ export function ChatLayout() {
         ) : (
           <>
             {/* Channel header */}
-            <div className="h-12 border-b border-zinc-700 flex items-center px-4">
+            <div className="h-12 border-b border-zinc-700 flex items-center px-2 md:px-4">
+              {/* Mobile hamburger */}
+              <button
+                onClick={() => setMobileSidebarOpen(true)}
+                className="md:hidden w-10 h-10 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors mr-1 shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
               {activeChannel ? (
-                <div className="flex items-center gap-3">
-                  <h2 className="font-semibold">
+                <div className="flex items-center gap-3 min-w-0">
+                  <h2 className="font-semibold truncate">
                     {isVoiceChannel ? "🔊" : "#"} {activeChannel.name}
                   </h2>
                   {memberCount > 0 && (

@@ -320,6 +320,56 @@ const MOCK_RESPONSES: Record<string, (args?: Record<string, unknown>) => unknown
   }),
   stop_webhost: () => undefined,
   get_webhost_status: () => null,
+  get_mesh_map_for_viewer: () => [
+    { peerId: "a1b2c3", displayName: "HomeServer", confidence: "SelfVerified", isServerClass: true, prominence: 0.85, lat: 37.8, lon: -122.4, portalUrl: "a1b2c3d4.concorrd.com", routeCount: 5, engagementScore: 3, trustRating: 0.9 },
+    { peerId: "d4e5f6", displayName: "MobileNode", confidence: "ClusterVerified", isServerClass: false, prominence: 0.45, lat: 37.8, lon: -122.5, portalUrl: "d4e5f6a7.concorrd.com", routeCount: 2, engagementScore: -1, trustRating: 0.6 },
+    { peerId: "g7h8i9", displayName: "RelayAlpha", confidence: "TunnelVerified", isServerClass: true, prominence: 0.72, lat: 40.7, lon: -74.0, portalUrl: "g7h8i9j0.concorrd.com", routeCount: 8, engagementScore: 5, trustRating: 0.85 },
+    { peerId: "j0k1l2", displayName: null, confidence: "Speculative", isServerClass: false, prominence: 0.15, lat: null, lon: null, portalUrl: null, routeCount: 0, engagementScore: null, trustRating: null },
+  ],
+  get_perspective_view: () => ({
+    center: { peerId: MOCK_PEER_ID, displayName: "Node-preview", relation: "self", isKnown: true, distance: 0, prominence: 0.6, confidence: "SelfVerified", isServerClass: false, lat: 37.8, lon: -122.4, portalUrl: "a1b2c3d4.concorrd.com", rttMs: null, trustRating: 0.85, engagementScore: 3, nodeType: "Standard", routeCount: 0 },
+    nodes: [
+      { peerId: "12D3KooWPeer1AAAAxxxxxxxxxxxxxx", displayName: "Alice", relation: "friend", isKnown: true, distance: 0.2, prominence: 0.7, confidence: "SelfVerified", isServerClass: false, lat: 37.8, lon: -122.5, portalUrl: "e5f6a7b8.concorrd.com", rttMs: 2, trustRating: 0.62, engagementScore: 1, nodeType: "Standard", routeCount: 3 },
+      { peerId: "12D3KooWPeer2BBBBxxxxxxxxxxxxxx", displayName: "Bob", relation: "local", isKnown: true, distance: 0.3, prominence: 0.45, confidence: "ClusterVerified", isServerClass: false, lat: 37.8, lon: -122.3, portalUrl: "c9d0e1f2.concorrd.com", rttMs: 5, trustRating: 0.35, engagementScore: -1, nodeType: "Standard", routeCount: 1 },
+      { peerId: "12D3KooWPeer3CCCCxxxxxxxxxxxxxx", displayName: "RelayAlpha", relation: "tunnel", isKnown: true, distance: 0.5, prominence: 0.72, confidence: "TunnelVerified", isServerClass: true, lat: 40.7, lon: -74.0, portalUrl: "g7h8i9j0.concorrd.com", rttMs: 85, trustRating: 0.85, engagementScore: 5, nodeType: "Backbone", routeCount: 8 },
+      { peerId: "12D3KooWPeer4DDDDxxxxxxxxxxxxxx", displayName: "MobileNode", relation: "tunnel", isKnown: true, distance: 0.5, prominence: 0.38, confidence: "ClusterVerified", isServerClass: false, lat: null, lon: null, portalUrl: "d4e5f6a7.concorrd.com", rttMs: 42, trustRating: 0.6, engagementScore: -1, nodeType: "Standard", routeCount: 2 },
+      { peerId: "12D3KooWPeer5EEEExxxxxxxxxxxxxx", displayName: null, relation: "mesh", isKnown: true, distance: 0.7, prominence: 0.25, confidence: "ClusterVerified", isServerClass: false, lat: null, lon: null, portalUrl: null, rttMs: null, trustRating: 0.3, engagementScore: null, nodeType: "Standard", routeCount: 1 },
+      { peerId: "12D3KooWPeer6FFFFxxxxxxxxxxxxxx", displayName: "GhostNode", relation: "speculative", isKnown: false, distance: 0.85, prominence: 0.1, confidence: "Speculative", isServerClass: false, lat: null, lon: null, portalUrl: null, rttMs: null, trustRating: null, engagementScore: null, nodeType: "Standard", routeCount: 0 },
+    ],
+    places: [
+      { address: "aabbcc", placeId: "place-a1b2", name: "Home Base", ownerId: MOCK_PEER_ID, governance: "Private", encryptionMode: "Unencrypted", visibility: "public", memberCount: 5, hostingNodes: [MOCK_PEER_ID], mintedAt: Date.now() - 86400000 },
+    ],
+  }),
+  get_dashboard: () => ({
+    peerId: MOCK_PEER_ID,
+    displayName: "Node-preview",
+    connectedPeers: 7,
+    knownPlaces: 3,
+    activeCalls: 1,
+    lastChannel: { serverId: "srv-1", channelId: "ch-general", serverName: "Home Base", channelName: "general" },
+    meshMapSize: 42,
+    portalUrl: "a1b2c3d4.concorrd.com",
+  }),
+  get_wireguard_status: () => ({
+    isActive: true,
+    meshIp: "100.64.0.5",
+    meshHostname: "orrion.orrtellite",
+    peerCount: 3,
+    onlinePeers: 2,
+    peers: [
+      { hostname: "orrgate.orrtellite", ip: "100.64.0.1", online: true },
+      { hostname: "orrpheus.orrtellite", ip: "100.64.0.2", online: true },
+      { hostname: "orrigins.orrtellite", ip: "100.64.0.3", online: false },
+    ],
+  }),
+  get_places: () => [
+    { address: "aabbcc", placeId: "place-a1b2", name: "Home Base", ownerId: MOCK_PEER_ID, governance: "Private", encryptionMode: "Unencrypted", visibility: "public", memberCount: 5, hostingNodes: [MOCK_PEER_ID], mintedAt: Date.now() - 86400000 },
+  ],
+  mint_place: () => ({ address: "newplace", placeId: "place-new", name: "New Place", ownerId: MOCK_PEER_ID, governance: "Private", encryptionMode: "Unencrypted", visibility: "public", memberCount: 1, hostingNodes: [MOCK_PEER_ID], mintedAt: Date.now() }),
+  sync_mesh_friends: () => 3,
+  block_peer: () => undefined,
+  unblock_peer: () => undefined,
+  get_blocked_peers: () => [],
 };
 
 /* ── Alias Types ─────────────────────────────────────────────── */
@@ -888,6 +938,175 @@ export async function deleteWebhook(webhookId: string): Promise<void> {
 
 export async function getSystemHealth(): Promise<SystemHealth> {
   return safeInvoke<SystemHealth>("get_system_health");
+}
+
+/* ── Mesh Map Viewer Commands ─────────────────────────────────── */
+
+export interface MapViewerNode {
+  peerId: string;
+  displayName: string | null;
+  confidence: string;
+  isServerClass: boolean;
+  prominence: number;
+  lat: number | null;
+  lon: number | null;
+  portalUrl: string | null;
+  routeCount: number;
+  engagementScore: number | null;
+  trustRating: number | null;
+}
+
+export async function getMeshMapForViewer(): Promise<MapViewerNode[]> {
+  return safeInvoke<MapViewerNode[]>("get_mesh_map_for_viewer");
+}
+
+/* ── Perspective View Types ──────────────────────────────────── */
+
+export type NodeRelation = "self" | "friend" | "local" | "tunnel" | "mesh" | "speculative" | "center";
+
+export interface PerspectiveNode {
+  peerId: string;
+  displayName: string | null;
+  relation: NodeRelation;
+  isKnown: boolean;
+  distance: number;
+  prominence: number;
+  confidence: string;
+  isServerClass: boolean;
+  lat: number | null;
+  lon: number | null;
+  portalUrl: string | null;
+  rttMs: number | null;
+  trustRating: number | null;
+  engagementScore: number | null;
+  nodeType: string;
+  routeCount: number;
+}
+
+export interface PlaceFrontend {
+  address: string;
+  placeId: string;
+  name: string;
+  ownerId: string;
+  governance: string;
+  encryptionMode: string;
+  visibility: string;
+  memberCount: number;
+  hostingNodes: string[];
+  mintedAt: number;
+}
+
+export interface PerspectiveViewPayload {
+  center: PerspectiveNode;
+  nodes: PerspectiveNode[];
+  places: PlaceFrontend[];
+}
+
+export async function getPerspectiveView(centerPeerId?: string): Promise<PerspectiveViewPayload> {
+  return safeInvoke<PerspectiveViewPayload>("get_perspective_view", { centerPeerId: centerPeerId ?? null });
+}
+
+/* ── Friend Mesh Sync ──────────────────────────────────────── */
+
+/** Sync the friend list with the mesh networking layer for enhanced sync behavior. */
+export async function syncMeshFriends(): Promise<number> {
+  return safeInvoke<number>("sync_mesh_friends");
+}
+
+/* ── WireGuard / Orrtellite Status ──────────────────────────── */
+
+export interface WireGuardPeer {
+  hostname: string;
+  ip: string;
+  online: boolean;
+}
+
+export interface WireGuardStatus {
+  isActive: boolean;
+  meshIp: string | null;
+  meshHostname: string | null;
+  peerCount: number;
+  onlinePeers: number;
+  peers: WireGuardPeer[];
+}
+
+/** Detect WireGuard/orrtellite mesh status on this machine. */
+export async function getWireGuardStatus(): Promise<WireGuardStatus> {
+  return safeInvoke<WireGuardStatus>("get_wireguard_status");
+}
+
+/* ── Dashboard Commands ──────────────────────────────────────── */
+
+export interface DashboardData {
+  peerId: string;
+  displayName: string;
+  connectedPeers: number;
+  knownPlaces: number;
+  activeCalls: number;
+  lastChannel: LastChannelInfo | null;
+  meshMapSize: number;
+  portalUrl: string;
+}
+
+export interface LastChannelInfo {
+  serverId: string;
+  channelId: string;
+  serverName: string;
+  channelName: string;
+}
+
+export async function getDashboard(): Promise<DashboardData> {
+  return safeInvoke<DashboardData>("get_dashboard");
+}
+
+/* ── Places Commands ─────────────────────────────────────────── */
+
+export interface PlaceInfo {
+  address: string;
+  placeId: string;
+  name: string;
+  ownerId: string;
+  governance: string;
+  encryptionMode: string;
+  visibility: string;
+  memberCount: number;
+  hostingNodes: string[];
+  mintedAt: number;
+}
+
+export async function mintPlace(
+  name: string,
+  visibility: string,
+  governance: string,
+): Promise<PlaceInfo> {
+  return safeInvoke<PlaceInfo>("mint_place", { name, visibility, governance });
+}
+
+export async function getPlaces(): Promise<PlaceInfo[]> {
+  return safeInvoke<PlaceInfo[]>("get_places");
+}
+
+/* ── Block Commands ──────────────────────────────────────────── */
+
+export interface BlockedPeerInfo {
+  peerId: string;
+  blockedAt: number;
+  reason: string;
+}
+
+export async function blockPeer(
+  peerId: string,
+  reason: string,
+): Promise<void> {
+  return safeInvoke<void>("block_peer", { peerId, reason });
+}
+
+export async function unblockPeer(peerId: string): Promise<void> {
+  return safeInvoke<void>("unblock_peer", { peerId });
+}
+
+export async function getBlockedPeers(): Promise<BlockedPeerInfo[]> {
+  return safeInvoke<BlockedPeerInfo[]>("get_blocked_peers");
 }
 
 /* ── Event Listener ───────────────────────────────────────────── */

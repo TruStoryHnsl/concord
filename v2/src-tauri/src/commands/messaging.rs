@@ -105,15 +105,8 @@ pub async fn send_message(
         None => format!("concord/mesh/{channel_id}"),
     };
 
-    state
-        .node
-        .publish(&topic, encoded)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    debug!(msg_id = %msg.id, %channel_id, ?server_id, "message published");
-
-    // Store locally with decrypted content (we know the plaintext).
+    // Store locally first (with decrypted content) so the message is always persisted,
+    // even if GossipSub publish fails (e.g., no peers connected yet).
     let local_msg = if msg.encrypted_content.is_some() {
         let mut m = msg.clone();
         m.content = plaintext_content;
@@ -127,6 +120,17 @@ pub async fn send_message(
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.insert_message(&local_msg).map_err(|e| e.to_string())?;
+    }
+
+    // Attempt to broadcast to peers. If no peers are subscribed (InsufficientPeers),
+    // that's OK — the message is stored locally and will sync when peers connect.
+    match state.node.publish(&topic, encoded).await {
+        Ok(()) => {
+            debug!(msg_id = %msg.id, %channel_id, ?server_id, "message published to mesh");
+        }
+        Err(e) => {
+            debug!(msg_id = %msg.id, %channel_id, %e, "message saved locally (no peers on topic)");
+        }
     }
 
     Ok(MessagePayload::from(&local_msg))

@@ -251,7 +251,7 @@ export function MessageInput({
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="p-2 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
+                className="btn-press p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-zinc-400 hover:text-white active:text-indigo-400 transition-colors flex-shrink-0 rounded-lg"
                 title="Upload file"
               >
                 <svg
@@ -282,6 +282,11 @@ export function MessageInput({
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onBlur={onStopTyping}
+            enterKeyHint="send"
+            autoCapitalize="sentences"
+            autoComplete="off"
+            autoCorrect="on"
+            spellCheck
             placeholder={
               editingMessage
                 ? "Edit your message..."
@@ -291,7 +296,7 @@ export function MessageInput({
                     ? "Add a message or press Enter to send"
                     : `Message #${roomName}`
             }
-            className="flex-1 px-2 py-3 bg-transparent text-white placeholder-zinc-500 focus:outline-none"
+            className="flex-1 px-2 py-3 bg-transparent text-white placeholder-zinc-500 focus:outline-none text-base md:text-sm"
           />
           {/* Show send button when there are staged files */}
           {hasContent && (

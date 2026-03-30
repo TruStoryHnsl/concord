@@ -32,15 +32,21 @@
         reverse_proxy conduwuit:6167
     }
 
-    # Concord API
+    # Concord API — forward proto for correct scheme detection
     handle /api/* {
-        reverse_proxy concord-api:8000
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
     }
 
     # LiveKit WebSocket signaling (strip /livekit/ prefix)
-    # Caddy handles WebSocket upgrade automatically
+    # flush_interval -1 disables response buffering (required for WebSocket/streaming)
+    # X-Forwarded-Proto ensures wss:// is used on HTTPS sites
     handle_path /livekit/* {
-        reverse_proxy livekit:7880
+        reverse_proxy livekit:7880 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+            flush_interval -1
+        }
     }
 
     # Desktop app downloads (force download, not inline)

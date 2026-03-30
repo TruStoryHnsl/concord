@@ -1,9 +1,10 @@
+import hmac
 import logging
 import os
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from livekit import api as livekit_api
 from sqlalchemy import select
@@ -39,8 +40,50 @@ class VoiceTokenResponse(BaseModel):
     ice_servers: list[IceServer] = []
 
 
-async def _fetch_turn_credentials() -> list[IceServer]:
-    """Fetch TURN relay credentials from Metered.ca free API."""
+TURN_SECRET = os.getenv("TURN_SECRET", "")
+TURN_DOMAIN = os.getenv("TURN_DOMAIN", "concorrd.com")
+# Credential TTL: how long a TURN credential is valid (seconds)
+TURN_CREDENTIAL_TTL = 86400  # 24 hours
+
+
+def _generate_turn_credentials(user_id: str) -> list[IceServer]:
+    """Generate time-limited TURN credentials using the shared secret (RFC 5389).
+
+    coturn validates these using the same shared secret. The username encodes
+    an expiry timestamp so credentials auto-expire without a database.
+    """
+    if not TURN_SECRET:
+        return []
+
+    import hashlib
+    import base64
+    import time as _time
+
+    expiry = int(_time.time()) + TURN_CREDENTIAL_TTL
+    username = f"{expiry}:{user_id}"
+    # HMAC-SHA1 of the username with the shared secret
+    mac = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1)
+    credential = base64.b64encode(mac.digest()).decode()
+
+    turn_host = os.getenv("TURN_HOST", "turn.concorrd.com")
+    return [
+        # TURNS (TLS) on port 443 — routed by sslh SNI to coturn
+        IceServer(urls=f"turns:{turn_host}:443?transport=tcp", username=username, credential=credential),
+        # TURN TLS on 5349 — direct to coturn (fallback if 443 routing fails)
+        IceServer(urls=f"turns:{turn_host}:5349?transport=tcp", username=username, credential=credential),
+        # STUN (discovery only, no relay)
+        IceServer(urls="stun:stun.l.google.com:19302"),
+    ]
+
+
+async def _fetch_turn_credentials(user_id: str = "") -> list[IceServer]:
+    """Get TURN credentials — uses local coturn if configured, falls back to Metered.ca."""
+    # Prefer local coturn with shared secret (no external dependency)
+    local_creds = _generate_turn_credentials(user_id)
+    if local_creds:
+        return local_creds
+
+    # Fallback: Metered.ca free TURN API
     if not METERED_API_KEY or not METERED_APP_NAME:
         return []
     try:
@@ -60,6 +103,7 @@ async def _fetch_turn_credentials() -> list[IceServer]:
 @router.post("/token", response_model=VoiceTokenResponse)
 async def get_voice_token(
     body: VoiceTokenRequest,
+    request: Request,
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -88,13 +132,23 @@ async def get_voice_token(
         name=display_name,
     )
 
-    # Return the client-facing LiveKit URL
-    # In production behind Nginx: ws://host/livekit/
-    # In local dev: direct to LiveKit container
-    client_url = LIVEKIT_URL
+    # Build the client-facing LiveKit URL through the reverse proxy.
+    # The browser can't reach the internal Docker hostname (ws://livekit:7880),
+    # so we route through Caddy's /livekit/ path using the request's Host header.
+    host = request.headers.get("host", "localhost:8080")
+    scheme = "ws"
+    # Detect HTTPS: check forwarded headers from any proxy in the chain
+    # (Cloudflare, NPM, Caddy all may set different headers)
+    if (request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto") == "https"
+        or request.headers.get("x-forwarded-scheme") == "https"
+        or request.headers.get("cf-visitor", "").find('"scheme":"https"') >= 0
+    ):
+        scheme = "wss"
+    client_url = f"{scheme}://{host}/livekit/"
 
     # Fetch TURN credentials for NAT traversal
-    ice_servers = await _fetch_turn_credentials()
+    ice_servers = await _fetch_turn_credentials(user_id)
 
     return VoiceTokenResponse(
         token=token, livekit_url=client_url, ice_servers=ice_servers

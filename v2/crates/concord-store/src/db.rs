@@ -44,7 +44,7 @@ impl Database {
     }
 
     /// Current schema version. Increment when adding migrations.
-    const SCHEMA_VERSION: u32 = 1;
+    const SCHEMA_VERSION: u32 = 3;
 
     /// Create all required tables and run migrations if needed.
     fn initialize(&self) -> Result<()> {
@@ -310,11 +310,73 @@ impl Database {
             // No additional SQL needed — the CREATE TABLE statements handle v1
             info!("migration 0→1: initial schema");
         }
-        // Future migrations go here:
-        // if from_version < 2 {
-        //     self.conn.execute_batch("ALTER TABLE messages ADD COLUMN reactions TEXT DEFAULT '[]';")?;
-        //     info!("migration 1→2: added reactions column");
-        // }
+        // Migration 1 → 2: mesh map tables
+        if from_version < 2 {
+            self.conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS mesh_map_entries (
+                    address         BLOB PRIMARY KEY,
+                    kind            TEXT NOT NULL,
+                    owner_id        TEXT NOT NULL,
+                    created_at      INTEGER NOT NULL,
+                    updated_at      INTEGER NOT NULL,
+                    last_verified_at INTEGER,
+                    confidence      TEXT NOT NULL DEFAULT 'speculative',
+                    ttl_ticks       INTEGER NOT NULL DEFAULT 0,
+                    locale_path     TEXT NOT NULL DEFAULT '[]',
+                    payload         BLOB NOT NULL,
+                    signature       BLOB NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_mesh_map_kind ON mesh_map_entries(kind);
+                CREATE INDEX IF NOT EXISTS idx_mesh_map_owner ON mesh_map_entries(owner_id);
+                CREATE INDEX IF NOT EXISTS idx_mesh_map_updated ON mesh_map_entries(updated_at);
+                CREATE INDEX IF NOT EXISTS idx_mesh_map_confidence ON mesh_map_entries(confidence);
+                CREATE INDEX IF NOT EXISTS idx_mesh_map_locale ON mesh_map_entries(locale_path);
+
+                CREATE TABLE IF NOT EXISTS mesh_map_tombstones (
+                    address         BLOB PRIMARY KEY,
+                    tombstoned_at   INTEGER NOT NULL,
+                    reason          TEXT NOT NULL DEFAULT 'expired'
+                );
+
+                CREATE TABLE IF NOT EXISTS mesh_routes (
+                    from_address    BLOB NOT NULL,
+                    to_address      BLOB NOT NULL,
+                    route_data      BLOB NOT NULL,
+                    cost            REAL NOT NULL,
+                    computed_at     INTEGER NOT NULL,
+                    PRIMARY KEY (from_address, to_address)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_mesh_routes_cost ON mesh_routes(cost);
+
+                CREATE TABLE IF NOT EXISTS engagement_counters (
+                    peer_id         TEXT PRIMARY KEY,
+                    messages_sent   INTEGER NOT NULL DEFAULT 0,
+                    messages_read   INTEGER NOT NULL DEFAULT 0,
+                    forum_posts_created INTEGER NOT NULL DEFAULT 0,
+                    forum_posts_read INTEGER NOT NULL DEFAULT 0,
+                    call_minutes_initiated INTEGER NOT NULL DEFAULT 0,
+                    call_minutes_participated INTEGER NOT NULL DEFAULT 0,
+                    last_active_at  INTEGER NOT NULL,
+                    engagement_score INTEGER NOT NULL DEFAULT 0
+                );
+                ",
+            )?;
+            info!("migration 1→2: mesh map tables");
+        }
+        // Migration 2 → 3: block list
+        if from_version < 3 {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS blocked_peers (
+                    peer_id     TEXT PRIMARY KEY,
+                    blocked_at  INTEGER NOT NULL,
+                    reason      TEXT NOT NULL DEFAULT ''
+                );",
+            )?;
+            info!("migration 2→3: blocked_peers table");
+        }
         Ok(())
     }
 }
@@ -330,11 +392,11 @@ mod tests {
         let count: i32 = db
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks','forum_posts','friends','conversations','settings','server_keys')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('messages','channels','servers','peers','identity','invites','members','attestations','totp_secrets','dm_sessions','direct_messages','aliases','known_aliases','webhooks','forum_posts','friends','conversations','settings','server_keys','mesh_map_entries','mesh_map_tombstones','mesh_routes','engagement_counters','blocked_peers')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 19);
+        assert_eq!(count, 24);
     }
 }

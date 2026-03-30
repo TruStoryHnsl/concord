@@ -31,17 +31,30 @@ export function useMatrixSync() {
   useEffect(() => {
     if (!client) return;
 
+    let tokenErrorCount = 0;
     const onSync = (state: SyncState, _prev: SyncState | null, data?: SyncStateData) => {
-      setSyncing(state === "SYNCING" || state === "PREPARED");
-      // If sync enters ERROR with an auth failure, the stored token is invalid.
-      // Auto-logout so the user gets the login screen instead of a blank app.
+      if (state === "SYNCING" || state === "PREPARED") {
+        setSyncing(true);
+        tokenErrorCount = 0; // Reset on successful sync
+      } else {
+        setSyncing(state !== "ERROR" && state !== "STOPPED");
+      }
+      // Auto-logout after consecutive M_UNKNOWN_TOKEN errors.
+      // A single transient error (server restart, network hiccup) should not
+      // kick the user out — the SDK will retry sync automatically.
       if (state === "ERROR") {
         const errcode = (data as Record<string, unknown>)?.error &&
           typeof (data as Record<string, unknown>).error === "object" &&
           ((data as Record<string, unknown>).error as { errcode?: string })?.errcode;
         if (errcode === "M_UNKNOWN_TOKEN") {
-          console.warn("Matrix token invalid, logging out");
-          useAuthStore.getState().logout();
+          tokenErrorCount++;
+          if (tokenErrorCount >= 3) {
+            console.warn("Session expired (M_UNKNOWN_TOKEN) after 3 attempts, logging out");
+            useToastStore.getState().addToast("Session expired — please log in again");
+            useAuthStore.getState().logout();
+          } else {
+            console.warn(`Matrix sync token error (attempt ${tokenErrorCount}/3), will retry`);
+          }
         }
       }
     };
@@ -50,6 +63,7 @@ export function useMatrixSync() {
     client.startClient({
       initialSyncLimit: 20,
       lazyLoadMembers: true,
+      pollTimeout: 30000,
     }).catch((err) => {
       console.error("Matrix startClient failed:", err);
       useToastStore.getState().addToast("Failed to connect to chat server");

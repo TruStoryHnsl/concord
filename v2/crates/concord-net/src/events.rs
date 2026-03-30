@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use concord_core::mesh_map::{MeshAddress, MeshMapEntry, MeshTimestamp};
 use concord_core::trust::TrustAttestation;
 use concord_core::types::{AliasAnnouncement, ComputeAllocationMessage, DmSignal, ForumPost, FriendSignal, Message, NodeProbeMessage, PresenceStatus, ServerSignal, VoiceSignal};
 
@@ -116,5 +117,21 @@ pub enum NetworkEvent {
     /// A compute allocation announcement was received from a peer.
     ComputeAllocationReceived {
         allocation: ComputeAllocationMessage,
+    },
+
+    /// Mesh map delta received — entries to merge into local map.
+    MeshMapDeltaReceived {
+        entries: Vec<MeshMapEntry>,
+    },
+
+    /// A call ledger entry was created or updated.
+    CallLedgerUpdate {
+        entry: MeshMapEntry,
+    },
+
+    /// A call ledger was tombstoned.
+    CallLedgerTombstone {
+        address: MeshAddress,
+        at: MeshTimestamp,
     },
 }

@@ -3,19 +3,21 @@
 //! Uses `cpal` for cross-platform audio I/O and `audiopus` for Opus encoding/decoding.
 //! Audio is captured at 48kHz mono (Opus native rate), encoded into frames,
 //! and sent to the voice engine for transmission.
+//!
+//! When the `native-audio` feature is disabled (e.g. on iOS), stub types are
+//! provided that report no audio devices available. The VoiceEngine handles
+//! this gracefully — it already treats audio as optional.
 
-use std::collections::VecDeque;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use tracing::{debug, error, info, warn};
 
 /// Opus frame size in samples at 48kHz (20ms frames).
+#[cfg(feature = "native-audio")]
 const OPUS_FRAME_SIZE: usize = 960;
 /// Sample rate for Opus encoding.
+#[cfg(feature = "native-audio")]
 const SAMPLE_RATE: u32 = 48000;
 /// Number of channels (mono).
+#[cfg(feature = "native-audio")]
 const CHANNELS: u16 = 1;
 
 /// Errors from audio operations.
@@ -43,298 +45,402 @@ pub struct AudioFrame {
     pub sequence: u32,
 }
 
-/// Manages audio capture from the microphone.
-pub struct AudioCapture {
-    stream: Option<cpal::Stream>,
-    is_muted: Arc<Mutex<bool>>,
-}
+// =============================================================================
+// Native audio implementation (desktop platforms with cpal + audiopus)
+// =============================================================================
+#[cfg(feature = "native-audio")]
+mod native {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
 
-impl AudioCapture {
-    /// Create a new audio capture that sends encoded Opus frames to the provided channel.
-    pub fn new(frame_tx: mpsc::Sender<AudioFrame>) -> Result<Self, AudioError> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or(AudioError::NoInputDevice)?;
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use tracing::{error, info, warn};
 
-        info!(device = device.description().map(|d| d.name().to_string()).unwrap_or_default(), "audio: using input device");
+    /// Manages audio capture from the microphone.
+    pub struct AudioCapture {
+        stream: Option<cpal::Stream>,
+        is_muted: Arc<Mutex<bool>>,
+    }
 
-        let config = cpal::StreamConfig {
-            channels: CHANNELS,
-            sample_rate: SAMPLE_RATE,
-            buffer_size: cpal::BufferSize::Default,
-        };
+    impl AudioCapture {
+        /// Create a new audio capture that sends encoded Opus frames to the provided channel.
+        pub fn new(frame_tx: mpsc::Sender<AudioFrame>) -> Result<Self, AudioError> {
+            let host = cpal::default_host();
+            let device = host
+                .default_input_device()
+                .ok_or(AudioError::NoInputDevice)?;
 
-        let is_muted = Arc::new(Mutex::new(false));
-        let mute_flag = Arc::clone(&is_muted);
+            info!(
+                device = device
+                    .description()
+                    .map(|d| d.name().to_string())
+                    .unwrap_or_default(),
+                "audio: using input device"
+            );
 
-        // Opus encoder — 48kHz mono, voice-optimized
-        let encoder = audiopus::coder::Encoder::new(
-            audiopus::SampleRate::Hz48000,
-            audiopus::Channels::Mono,
-            audiopus::Application::Voip,
-        )
-        .map_err(|e| AudioError::OpusEncodeError(e.to_string()))?;
+            let config = cpal::StreamConfig {
+                channels: CHANNELS,
+                sample_rate: SAMPLE_RATE,
+                buffer_size: cpal::BufferSize::Default,
+            };
 
-        let encoder = Arc::new(Mutex::new(encoder));
-        let sample_buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(OPUS_FRAME_SIZE * 2)));
-        let sequence = Arc::new(Mutex::new(0u32));
+            let is_muted = Arc::new(Mutex::new(false));
+            let mute_flag = Arc::clone(&is_muted);
 
-        let enc = Arc::clone(&encoder);
-        let buf = Arc::clone(&sample_buffer);
-        let seq = Arc::clone(&sequence);
-
-        let stream = device
-            .build_input_stream(
-                &config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    // Check mute — skip frame if lock is poisoned
-                    if mute_flag.lock().ok().map(|m| *m).unwrap_or(false) {
-                        return;
-                    }
-
-                    let mut buffer = match buf.lock().ok() {
-                        Some(b) => b,
-                        None => return, // poisoned lock — skip frame
-                    };
-                    buffer.extend_from_slice(data);
-
-                    // Process complete Opus frames
-                    while buffer.len() >= OPUS_FRAME_SIZE {
-                        let frame_samples: Vec<f32> =
-                            buffer.drain(..OPUS_FRAME_SIZE).collect();
-
-                        // Convert f32 samples to i16 for Opus
-                        let pcm: Vec<i16> = frame_samples
-                            .iter()
-                            .map(|&s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
-                            .collect();
-
-                        // Encode with Opus
-                        let mut output = vec![0u8; 4000]; // max Opus frame
-                        let enc = match enc.lock().ok() {
-                            Some(e) => e,
-                            None => return, // poisoned lock — skip frame
-                        };
-                        match enc.encode(&pcm, &mut output) {
-                            Ok(len) => {
-                                output.truncate(len);
-                                let mut seq_num = match seq.lock().ok() {
-                                    Some(s) => s,
-                                    None => return,
-                                };
-                                *seq_num = seq_num.wrapping_add(1);
-                                let frame = AudioFrame {
-                                    data: output,
-                                    timestamp: std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis() as u64,
-                                    sequence: *seq_num,
-                                };
-                                let _ = frame_tx.send(frame);
-                            }
-                            Err(e) => {
-                                warn!("opus encode error: {}", e);
-                            }
-                        }
-                    }
-                },
-                |err| {
-                    error!("audio input stream error: {}", err);
-                },
-                None,
+            // Opus encoder — 48kHz mono, voice-optimized
+            let encoder = audiopus::coder::Encoder::new(
+                audiopus::SampleRate::Hz48000,
+                audiopus::Channels::Mono,
+                audiopus::Application::Voip,
             )
-            .map_err(|e| AudioError::StreamError(e.to_string()))?;
+            .map_err(|e| AudioError::OpusEncodeError(e.to_string()))?;
 
-        Ok(Self {
-            stream: Some(stream),
-            is_muted,
-        })
-    }
+            let encoder = Arc::new(Mutex::new(encoder));
+            let sample_buffer =
+                Arc::new(Mutex::new(Vec::<f32>::with_capacity(OPUS_FRAME_SIZE * 2)));
+            let sequence = Arc::new(Mutex::new(0u32));
 
-    /// Start capturing audio.
-    pub fn start(&self) -> Result<(), AudioError> {
-        if let Some(stream) = &self.stream {
-            stream
-                .play()
-                .map_err(|e| AudioError::StreamError(e.to_string()))?;
-            info!("audio: capture started");
-        }
-        Ok(())
-    }
+            let enc = Arc::clone(&encoder);
+            let buf = Arc::clone(&sample_buffer);
+            let seq = Arc::clone(&sequence);
 
-    /// Stop capturing audio.
-    pub fn stop(&self) -> Result<(), AudioError> {
-        if let Some(stream) = &self.stream {
-            stream
-                .pause()
-                .map_err(|e| AudioError::StreamError(e.to_string()))?;
-            info!("audio: capture stopped");
-        }
-        Ok(())
-    }
-
-    /// Set the mute state.
-    pub fn set_muted(&self, muted: bool) {
-        if let Ok(mut m) = self.is_muted.lock() {
-            *m = muted;
-        }
-    }
-}
-
-/// Manages audio playback to speakers/headphones.
-pub struct AudioPlayback {
-    stream: Option<cpal::Stream>,
-    decoder: Arc<Mutex<audiopus::coder::Decoder>>,
-    /// Ring buffer for decoded PCM samples waiting to be played.
-    playback_buffer: Arc<Mutex<VecDeque<f32>>>,
-}
-
-impl AudioPlayback {
-    /// Create a new audio playback instance.
-    pub fn new() -> Result<Self, AudioError> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or(AudioError::NoOutputDevice)?;
-
-        info!(device = device.description().map(|d| d.name().to_string()).unwrap_or_default(), "audio: using output device");
-
-        let config = cpal::StreamConfig {
-            channels: CHANNELS,
-            sample_rate: SAMPLE_RATE,
-            buffer_size: cpal::BufferSize::Default,
-        };
-
-        let decoder = audiopus::coder::Decoder::new(
-            audiopus::SampleRate::Hz48000,
-            audiopus::Channels::Mono,
-        )
-        .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
-        let decoder = Arc::new(Mutex::new(decoder));
-
-        let playback_buffer = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(OPUS_FRAME_SIZE * 10)));
-        let buf = Arc::clone(&playback_buffer);
-
-        let stream = device
-            .build_output_stream(
-                &config,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut buffer = match buf.lock().ok() {
-                        Some(b) => b,
-                        None => {
-                            // Poisoned lock — output silence
-                            data.fill(0.0);
+            let stream = device
+                .build_input_stream(
+                    &config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        // Check mute — skip frame if lock is poisoned
+                        if mute_flag.lock().ok().map(|m| *m).unwrap_or(false) {
                             return;
                         }
-                    };
-                    for sample in data.iter_mut() {
-                        *sample = buffer.pop_front().unwrap_or(0.0);
-                    }
-                },
-                |err| {
-                    error!("audio output stream error: {}", err);
-                },
-                None,
+
+                        let mut buffer = match buf.lock().ok() {
+                            Some(b) => b,
+                            None => return, // poisoned lock — skip frame
+                        };
+                        buffer.extend_from_slice(data);
+
+                        // Process complete Opus frames
+                        while buffer.len() >= OPUS_FRAME_SIZE {
+                            let frame_samples: Vec<f32> =
+                                buffer.drain(..OPUS_FRAME_SIZE).collect();
+
+                            // Convert f32 samples to i16 for Opus
+                            let pcm: Vec<i16> = frame_samples
+                                .iter()
+                                .map(|&s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
+                                .collect();
+
+                            // Encode with Opus
+                            let mut output = vec![0u8; 4000]; // max Opus frame
+                            let enc = match enc.lock().ok() {
+                                Some(e) => e,
+                                None => return, // poisoned lock — skip frame
+                            };
+                            match enc.encode(&pcm, &mut output) {
+                                Ok(len) => {
+                                    output.truncate(len);
+                                    let mut seq_num = match seq.lock().ok() {
+                                        Some(s) => s,
+                                        None => return,
+                                    };
+                                    *seq_num = seq_num.wrapping_add(1);
+                                    let frame = AudioFrame {
+                                        data: output,
+                                        timestamp: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis()
+                                            as u64,
+                                        sequence: *seq_num,
+                                    };
+                                    let _ = frame_tx.send(frame);
+                                }
+                                Err(e) => {
+                                    warn!("opus encode error: {}", e);
+                                }
+                            }
+                        }
+                    },
+                    |err| {
+                        error!("audio input stream error: {}", err);
+                    },
+                    None,
+                )
+                .map_err(|e| AudioError::StreamError(e.to_string()))?;
+
+            Ok(Self {
+                stream: Some(stream),
+                is_muted,
+            })
+        }
+
+        /// Start capturing audio.
+        pub fn start(&self) -> Result<(), AudioError> {
+            if let Some(stream) = &self.stream {
+                stream
+                    .play()
+                    .map_err(|e| AudioError::StreamError(e.to_string()))?;
+                info!("audio: capture started");
+            }
+            Ok(())
+        }
+
+        /// Stop capturing audio.
+        pub fn stop(&self) -> Result<(), AudioError> {
+            if let Some(stream) = &self.stream {
+                stream
+                    .pause()
+                    .map_err(|e| AudioError::StreamError(e.to_string()))?;
+                info!("audio: capture stopped");
+            }
+            Ok(())
+        }
+
+        /// Set the mute state.
+        pub fn set_muted(&self, muted: bool) {
+            if let Ok(mut m) = self.is_muted.lock() {
+                *m = muted;
+            }
+        }
+    }
+
+    /// Manages audio playback to speakers/headphones.
+    pub struct AudioPlayback {
+        stream: Option<cpal::Stream>,
+        decoder: Arc<Mutex<audiopus::coder::Decoder>>,
+        /// Ring buffer for decoded PCM samples waiting to be played.
+        playback_buffer: Arc<Mutex<VecDeque<f32>>>,
+    }
+
+    impl AudioPlayback {
+        /// Create a new audio playback instance.
+        pub fn new() -> Result<Self, AudioError> {
+            let host = cpal::default_host();
+            let device = host
+                .default_output_device()
+                .ok_or(AudioError::NoOutputDevice)?;
+
+            info!(
+                device = device
+                    .description()
+                    .map(|d| d.name().to_string())
+                    .unwrap_or_default(),
+                "audio: using output device"
+            );
+
+            let config = cpal::StreamConfig {
+                channels: CHANNELS,
+                sample_rate: SAMPLE_RATE,
+                buffer_size: cpal::BufferSize::Default,
+            };
+
+            let decoder = audiopus::coder::Decoder::new(
+                audiopus::SampleRate::Hz48000,
+                audiopus::Channels::Mono,
             )
-            .map_err(|e| AudioError::StreamError(e.to_string()))?;
+            .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
+            let decoder = Arc::new(Mutex::new(decoder));
 
-        Ok(Self {
-            stream: Some(stream),
-            decoder,
-            playback_buffer,
-        })
-    }
+            let playback_buffer =
+                Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(OPUS_FRAME_SIZE * 10)));
+            let buf = Arc::clone(&playback_buffer);
 
-    /// Start playing audio.
-    pub fn start(&self) -> Result<(), AudioError> {
-        if let Some(stream) = &self.stream {
-            stream
-                .play()
+            let stream = device
+                .build_output_stream(
+                    &config,
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        let mut buffer = match buf.lock().ok() {
+                            Some(b) => b,
+                            None => {
+                                // Poisoned lock — output silence
+                                data.fill(0.0);
+                                return;
+                            }
+                        };
+                        for sample in data.iter_mut() {
+                            *sample = buffer.pop_front().unwrap_or(0.0);
+                        }
+                    },
+                    |err| {
+                        error!("audio output stream error: {}", err);
+                    },
+                    None,
+                )
                 .map_err(|e| AudioError::StreamError(e.to_string()))?;
-            info!("audio: playback started");
-        }
-        Ok(())
-    }
 
-    /// Stop playing audio.
-    pub fn stop(&self) -> Result<(), AudioError> {
-        if let Some(stream) = &self.stream {
-            stream
-                .pause()
-                .map_err(|e| AudioError::StreamError(e.to_string()))?;
-            info!("audio: playback stopped");
-        }
-        Ok(())
-    }
-
-    /// Decode and queue an incoming Opus audio frame for playback.
-    pub fn queue_frame(&self, opus_data: &[u8]) -> Result<(), AudioError> {
-        let mut decoder = self
-            .decoder
-            .lock()
-            .map_err(|_| AudioError::OpusDecodeError("decoder lock poisoned".into()))?;
-        let mut pcm = vec![0i16; OPUS_FRAME_SIZE];
-        let packet = audiopus::packet::Packet::try_from(opus_data)
-            .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
-        let signals = audiopus::MutSignals::try_from(&mut pcm[..])
-            .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
-        let decoded_samples = decoder
-            .decode(Some(packet), signals, false)
-            .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
-
-        // Convert i16 to f32
-        let float_samples: Vec<f32> = pcm[..decoded_samples]
-            .iter()
-            .map(|&s| s as f32 / 32767.0)
-            .collect();
-
-        let mut buffer = self
-            .playback_buffer
-            .lock()
-            .map_err(|_| AudioError::OpusDecodeError("playback buffer lock poisoned".into()))?;
-        buffer.extend(float_samples);
-
-        // Prevent buffer from growing unboundedly (keep ~200ms max)
-        let max_samples = OPUS_FRAME_SIZE * 10;
-        if buffer.len() > max_samples {
-            let excess = buffer.len() - max_samples;
-            buffer.drain(..excess);
+            Ok(Self {
+                stream: Some(stream),
+                decoder,
+                playback_buffer,
+            })
         }
 
-        Ok(())
+        /// Start playing audio.
+        pub fn start(&self) -> Result<(), AudioError> {
+            if let Some(stream) = &self.stream {
+                stream
+                    .play()
+                    .map_err(|e| AudioError::StreamError(e.to_string()))?;
+                info!("audio: playback started");
+            }
+            Ok(())
+        }
+
+        /// Stop playing audio.
+        pub fn stop(&self) -> Result<(), AudioError> {
+            if let Some(stream) = &self.stream {
+                stream
+                    .pause()
+                    .map_err(|e| AudioError::StreamError(e.to_string()))?;
+                info!("audio: playback stopped");
+            }
+            Ok(())
+        }
+
+        /// Decode and queue an incoming Opus audio frame for playback.
+        pub fn queue_frame(&self, opus_data: &[u8]) -> Result<(), AudioError> {
+            let mut decoder = self
+                .decoder
+                .lock()
+                .map_err(|_| AudioError::OpusDecodeError("decoder lock poisoned".into()))?;
+            let mut pcm = vec![0i16; OPUS_FRAME_SIZE];
+            let packet = audiopus::packet::Packet::try_from(opus_data)
+                .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
+            let signals = audiopus::MutSignals::try_from(&mut pcm[..])
+                .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
+            let decoded_samples = decoder
+                .decode(Some(packet), signals, false)
+                .map_err(|e| AudioError::OpusDecodeError(e.to_string()))?;
+
+            // Convert i16 to f32
+            let float_samples: Vec<f32> = pcm[..decoded_samples]
+                .iter()
+                .map(|&s| s as f32 / 32767.0)
+                .collect();
+
+            let mut buffer = self
+                .playback_buffer
+                .lock()
+                .map_err(|_| AudioError::OpusDecodeError("playback buffer lock poisoned".into()))?;
+            buffer.extend(float_samples);
+
+            // Prevent buffer from growing unboundedly (keep ~200ms max)
+            let max_samples = OPUS_FRAME_SIZE * 10;
+            if buffer.len() > max_samples {
+                let excess = buffer.len() - max_samples;
+                buffer.drain(..excess);
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Check if audio devices are available on this system.
+    pub fn has_audio_devices() -> (bool, bool) {
+        let host = cpal::default_host();
+        let has_input = host.default_input_device().is_some();
+        let has_output = host.default_output_device().is_some();
+        (has_input, has_output)
+    }
+
+    /// List available audio input devices.
+    pub fn list_input_devices() -> Vec<String> {
+        let host = cpal::default_host();
+        host.input_devices()
+            .map(|devices| {
+                devices
+                    .filter_map(|d| Some(d.description().ok()?.name().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// List available audio output devices.
+    pub fn list_output_devices() -> Vec<String> {
+        let host = cpal::default_host();
+        host.output_devices()
+            .map(|devices| {
+                devices
+                    .filter_map(|d| Some(d.description().ok()?.name().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
-/// Check if audio devices are available on this system.
-pub fn has_audio_devices() -> (bool, bool) {
-    let host = cpal::default_host();
-    let has_input = host.default_input_device().is_some();
-    let has_output = host.default_output_device().is_some();
-    (has_input, has_output)
+// =============================================================================
+// Stub audio implementation (mobile / platforms without cpal)
+// =============================================================================
+#[cfg(not(feature = "native-audio"))]
+mod stub {
+    use super::*;
+    use tracing::info;
+
+    /// Stub audio capture — always reports no input device.
+    pub struct AudioCapture {
+        _private: (),
+    }
+
+    impl AudioCapture {
+        pub fn new(_frame_tx: mpsc::Sender<AudioFrame>) -> Result<Self, AudioError> {
+            info!("audio: native-audio feature disabled, no capture available");
+            Err(AudioError::NoInputDevice)
+        }
+
+        pub fn start(&self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        pub fn stop(&self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        pub fn set_muted(&self, _muted: bool) {}
+    }
+
+    /// Stub audio playback — always reports no output device.
+    pub struct AudioPlayback {
+        _private: (),
+    }
+
+    impl AudioPlayback {
+        pub fn new() -> Result<Self, AudioError> {
+            info!("audio: native-audio feature disabled, no playback available");
+            Err(AudioError::NoOutputDevice)
+        }
+
+        pub fn start(&self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        pub fn stop(&self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        pub fn queue_frame(&self, _opus_data: &[u8]) -> Result<(), AudioError> {
+            Ok(())
+        }
+    }
+
+    /// No audio devices available on this platform.
+    pub fn has_audio_devices() -> (bool, bool) {
+        (false, false)
+    }
+
+    /// No audio input devices available.
+    pub fn list_input_devices() -> Vec<String> {
+        Vec::new()
+    }
+
+    /// No audio output devices available.
+    pub fn list_output_devices() -> Vec<String> {
+        Vec::new()
+    }
 }
 
-/// List available audio input devices.
-pub fn list_input_devices() -> Vec<String> {
-    let host = cpal::default_host();
-    host.input_devices()
-        .map(|devices| {
-            devices
-                .filter_map(|d| Some(d.description().ok()?.name().to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// List available audio output devices.
-pub fn list_output_devices() -> Vec<String> {
-    let host = cpal::default_host();
-    host.output_devices()
-        .map(|devices| {
-            devices
-                .filter_map(|d| Some(d.description().ok()?.name().to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
+// Re-export the active implementation
+#[cfg(feature = "native-audio")]
+pub use native::*;
+#[cfg(not(feature = "native-audio"))]
+pub use stub::*;

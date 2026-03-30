@@ -423,117 +423,48 @@ function VoiceRoomUI({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Header */}
-      <div className="p-4 border-b border-zinc-700 flex-shrink-0">
+      {/* Desktop header — hidden on mobile (controls move to bottom) */}
+      <div className="hidden md:block p-4 border-b border-zinc-700 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ConnectionIndicator state={connectionState} />
             <span className="text-zinc-500 text-sm">#{channelName}</span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={toggleMic}
-              className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${
-                isMicEnabled
-                  ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-                  : "bg-red-600/20 hover:bg-red-600/30 text-red-400"
-              }`}
-            >
+            <button onClick={toggleMic} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${isMicEnabled ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300" : "bg-red-600/20 hover:bg-red-600/30 text-red-400"}`}>
               {isMicEnabled ? "Mute" : "Unmute"}
             </button>
-            <button
-              onClick={toggleCamera}
-              disabled={cameraLoading}
-              className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
-                cameraLoading
-                  ? "bg-indigo-600/20 text-indigo-400 opacity-75 cursor-wait"
-                  : isCameraEnabled
-                    ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400"
-                    : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-              }`}
-              title={cameraLoading ? "Starting camera…" : isCameraEnabled ? "Stop Camera" : "Start Camera"}
-            >
-              {cameraLoading ? (
-                <svg className="w-4 h-4 animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {isCameraEnabled ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z M3 3l18 18" />
-                  )}
-                </svg>
-              )}
+            <button onClick={toggleCamera} disabled={cameraLoading} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${cameraLoading ? "bg-indigo-600/20 text-indigo-400 opacity-75 cursor-wait" : isCameraEnabled ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {isCameraEnabled ? (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />) : (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z M3 3l18 18" />)}
+              </svg>
               {cameraLoading ? "Starting…" : isCameraEnabled ? "Camera On" : "Camera"}
             </button>
-            <button
-              onClick={toggleScreenShare}
-              className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
-                isScreenShareEnabled
-                  ? "bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400"
-                  : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-              }`}
-              title={isScreenShareEnabled ? "Stop Sharing" : "Share Screen"}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
+            <button onClick={toggleScreenShare} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${isScreenShareEnabled ? "bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
               {isScreenShareEnabled ? "Sharing" : "Screen"}
             </button>
             {isLockOwner && activeChannel && (
-              <button
-                onClick={() => {
-                  setLockAction(channelLocked ? "unlock" : "lock");
-                  setShowLockPinDialog(true);
-                }}
-                className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  channelLocked
-                    ? "bg-amber-600/20 hover:bg-amber-600/30 text-amber-400"
-                    : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-                }`}
-                title={channelLocked ? "Unlock Channel" : "Lock Channel"}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {channelLocked ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-                  )}
-                </svg>
+              <button onClick={() => { setLockAction(channelLocked ? "unlock" : "lock"); setShowLockPinDialog(true); }} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${channelLocked ? "bg-amber-600/20 hover:bg-amber-600/30 text-amber-400" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{channelLocked ? (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />) : (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />)}</svg>
               </button>
             )}
-            <button
-              onClick={() => openSettings("audio")}
-              className="btn-press px-3 py-1.5 text-sm rounded-md transition-colors bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-              title="Audio Settings"
-            >
-              Settings
-            </button>
-            <button
-              onClick={disconnect}
-              className="btn-press px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-sm rounded-md transition-colors"
-            >
-              Leave
-            </button>
+            <button onClick={() => openSettings("audio")} className="btn-press px-3 py-1.5 text-sm rounded-md transition-colors bg-zinc-800 hover:bg-zinc-700 text-zinc-300">Settings</button>
+            <button onClick={disconnect} className="btn-press px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-sm rounded-md transition-colors">Leave</button>
           </div>
         </div>
-        {micError && (
-          <p className="text-red-400 text-xs mt-2">{micError}</p>
-        )}
-        {cameraError && (
-          <p className="text-red-400 text-xs mt-2">{cameraError}</p>
-        )}
-        {screenShareError && (
-          <p className="text-red-400 text-xs mt-2">{screenShareError}</p>
-        )}
-        {!window.isSecureContext && (
-          <p className="text-yellow-500 text-xs mt-2">
-            Not a secure context — microphone access may be blocked.
-            Use https:// or localhost.
-          </p>
+        {micError && <p className="text-red-400 text-xs mt-2">{micError}</p>}
+        {cameraError && <p className="text-red-400 text-xs mt-2">{cameraError}</p>}
+        {screenShareError && <p className="text-red-400 text-xs mt-2">{screenShareError}</p>}
+        {!window.isSecureContext && <p className="text-yellow-500 text-xs mt-2">Not a secure context — microphone access may be blocked.</p>}
+      </div>
+
+      {/* Mobile header — compact, just channel name + connection */}
+      <div className="md:hidden px-3 py-2 border-b border-zinc-700 flex-shrink-0 flex items-center gap-2">
+        <ConnectionIndicator state={connectionState} />
+        <span className="text-zinc-400 text-sm font-medium">#{channelName}</span>
+        {(micError || cameraError || screenShareError) && (
+          <span className="text-red-400 text-[10px] ml-auto truncate max-w-[50%]">{micError || cameraError || screenShareError}</span>
         )}
       </div>
 
@@ -980,6 +911,75 @@ function VoiceRoomUI({
         serverId={serverId}
         localParticipant={localParticipant}
       />
+
+      {/* Mobile voice controls — bottom toolbar with large touch targets */}
+      <div className="md:hidden flex-shrink-0 border-t border-zinc-700 bg-zinc-900/95 backdrop-blur-sm voice-controls-mobile">
+        <div className="flex items-stretch justify-around px-2 py-2 gap-1">
+          {/* Mute */}
+          <button
+            onClick={toggleMic}
+            className={`btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] transition-colors ${
+              isMicEnabled ? "bg-zinc-800 text-zinc-300" : "bg-red-600/25 text-red-400"
+            }`}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {isMicEnabled ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 15a3 3 0 003-3V5a3 3 0 00-6 0v7a3 3 0 003 3z M3 3l18 18" />
+              )}
+            </svg>
+            <span className="text-[10px] font-medium">{isMicEnabled ? "Mute" : "Unmute"}</span>
+          </button>
+
+          {/* Camera */}
+          <button
+            onClick={toggleCamera}
+            disabled={cameraLoading}
+            className={`btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] transition-colors ${
+              cameraLoading ? "bg-indigo-600/15 text-indigo-400 opacity-75" : isCameraEnabled ? "bg-indigo-600/20 text-indigo-400" : "bg-zinc-800 text-zinc-300"
+            }`}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {isCameraEnabled ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z M3 3l18 18" />
+              )}
+            </svg>
+            <span className="text-[10px] font-medium">{cameraLoading ? "Starting" : isCameraEnabled ? "Cam On" : "Camera"}</span>
+          </button>
+
+          {/* Screen (hidden on phones — no screen share on mobile) */}
+          <button
+            onClick={toggleScreenShare}
+            className={`btn-press hidden sm:flex flex-1 flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] transition-colors ${
+              isScreenShareEnabled ? "bg-emerald-600/20 text-emerald-400" : "bg-zinc-800 text-zinc-300"
+            }`}
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+            <span className="text-[10px] font-medium">{isScreenShareEnabled ? "Stop" : "Screen"}</span>
+          </button>
+
+          {/* Settings */}
+          <button
+            onClick={() => openSettings("audio")}
+            className="btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] bg-zinc-800 text-zinc-300 transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            <span className="text-[10px] font-medium">Settings</span>
+          </button>
+
+          {/* Leave — visually distinct */}
+          <button
+            onClick={disconnect}
+            className="btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] bg-red-600/25 text-red-400 transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            <span className="text-[10px] font-medium">Leave</span>
+          </button>
+        </div>
+      </div>
 
       {/* Lock/Unlock PIN dialog */}
       {showLockPinDialog && activeChannel && (

@@ -113,6 +113,8 @@ pub enum NodeType {
     User,
     Backbone,
     Guest,
+    /// Read-only scout for mesh map exploration. Cannot cluster or contribute compute.
+    Phantom,
 }
 
 /// Hardware/resource capabilities reported by a node.

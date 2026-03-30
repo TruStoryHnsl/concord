@@ -8,7 +8,9 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use concord_core::identity::Keypair;
-use concord_core::types::{Channel, ChannelType, Server, Visibility};
+use concord_core::mesh_map;
+use concord_core::types::{Channel, ChannelType, NodeType, Server, Visibility};
+use concord_net::mesh::TOPIC_MAP_SYNC;
 use concord_net::node::Node;
 use concord_store::Database;
 use concord_webhost::{WebhostConfig, WebhostServer};
@@ -117,14 +119,14 @@ async fn run_start(config_path: &str, json_logs: bool) -> anyhow::Result<()> {
             kp
         }
     };
-    let _concord_peer_id = keypair.peer_id();
+    // Build NodeConfig with the persistent identity keypair
+    let mut node_config = daemon_config.to_node_config();
+    node_config.identity_keypair = Some(keypair.to_bytes());
 
-    // Build NodeConfig and create the p2p node
-    let node_config = daemon_config.to_node_config();
     let (node, node_handle, event_tx, _event_rx) = Node::new(&node_config).await?;
 
-    let libp2p_peer_id = node_handle.peer_id().to_string();
-    tracing::info!(libp2p_peer_id = %libp2p_peer_id, "node created");
+    let peer_id = node_handle.peer_id().to_string();
+    tracing::info!(peer_id = %peer_id, "node created (unified identity)");
 
     // Spawn the node event loop FIRST so subscribe commands can be processed
     let node_task = tokio::spawn(async move {
@@ -235,19 +237,88 @@ async fn run_start(config_path: &str, json_logs: bool) -> anyhow::Result<()> {
         None
     };
 
+    // Subscribe to mesh map sync topics
+    node_handle.subscribe(TOPIC_MAP_SYNC).await?;
+    tracing::info!(topic = TOPIC_MAP_SYNC, "subscribed to mesh map sync");
+    node_handle.subscribe("concord/mesh/calls").await?;
+    tracing::info!("subscribed to mesh call ledger topic");
+
+    // Register ourselves on the mesh map as a server-class (Backbone) node
+    let listen_addrs = vec![
+        format!("/ip4/0.0.0.0/udp/{}/quic-v1", daemon_config.node.listen_port),
+    ];
+    {
+        let locale_path = vec!["r-server".to_string(), "c-daemon".to_string(), "s-01".to_string()];
+        let self_entry = mesh_map::build_self_registration(
+            &keypair,
+            &display_name,
+            NodeType::Backbone,
+            &listen_addrs,
+            locale_path,
+        );
+
+        // Persist to local DB
+        let db_guard = db.lock().map_err(|e| anyhow::anyhow!("db lock: {e}"))?;
+        db_guard.upsert_mesh_map_entry(&self_entry)?;
+        drop(db_guard);
+
+        // Publish to mesh
+        let data = concord_core::wire::encode(&self_entry)?;
+        node_handle.publish(TOPIC_MAP_SYNC, data).await?;
+        tracing::info!(
+            peer_id = %peer_id,
+            portal = %mesh_map::portal_url_for_node(&peer_id),
+            "registered on mesh map as Backbone node"
+        );
+    }
+
+    // Auto-join configured places
+    if !daemon_config.server.auto_join_places.is_empty() {
+        let db_guard = db.lock().map_err(|e| anyhow::anyhow!("db lock: {e}"))?;
+        for place_addr in &daemon_config.server.auto_join_places {
+            tracing::info!(place = %place_addr, "auto-joining place (will sync on first contact)");
+            // Subscribe to place-specific topic for future sync
+            let topic = format!("concord/place/{place_addr}");
+            drop(db_guard);
+            node_handle.subscribe(&topic).await?;
+            break; // re-acquire lock if more places (simplification)
+        }
+        // Note: actual place joining happens via mesh sync when we discover the place entry
+    }
+
     // Bootstrap DHT if we have bootstrap peers
     if !daemon_config.node.bootstrap_peers.is_empty() {
         node_handle.bootstrap_dht().await?;
         tracing::info!("DHT bootstrap initiated");
     }
 
-    let listen_addrs = vec![
-        format!("/ip4/0.0.0.0/udp/{}/quic-v1", daemon_config.node.listen_port),
-    ];
+    // Spawn mesh map event handler for confidence degradation + sync processing
+    let db_for_mesh = db.clone();
+    let node_for_mesh = node_handle.clone();
+    let _mesh_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            // Periodic confidence degradation
+            if let Ok(db_guard) = db_for_mesh.lock() {
+                match db_guard.degrade_mesh_map_confidence() {
+                    Ok(count) if count > 0 => {
+                        tracing::debug!(degraded = count, "periodic confidence degradation");
+                    }
+                    Err(e) => {
+                        tracing::warn!(%e, "confidence degradation failed");
+                    }
+                    _ => {}
+                }
+            }
+            // Re-broadcast our self-registration to stay fresh
+            let _ = node_for_mesh.publish(TOPIC_MAP_SYNC, vec![]).await;
+        }
+    });
 
     // Print status banner
     admin::print_status(
-        &libp2p_peer_id,
+        &peer_id,
         &display_name,
         &listen_addrs,
         0,

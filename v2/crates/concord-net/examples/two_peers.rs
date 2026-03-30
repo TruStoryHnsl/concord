@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         bootstrap_peers: Vec::new(),
         enable_relay_server: false,
         enable_relay_client: true,
+        identity_keypair: None,
     };
 
     let config_b = NodeConfig {
@@ -51,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
         bootstrap_peers: Vec::new(),
         enable_relay_server: false,
         enable_relay_client: true,
+        identity_keypair: None,
     };
 
     let (node_a, handle_a, _sender_a, mut events_a) = Node::new(&config_a).await?;
