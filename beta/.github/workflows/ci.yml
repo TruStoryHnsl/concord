@@ -13,17 +13,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "v2 -> target"
+          workspaces: "beta -> target"
       - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopus-dev
       - name: Check
         run: cargo clippy --workspace -- -D warnings
-        working-directory: v2
+        working-directory: beta
       - name: Test
         run: cargo test --workspace
-        working-directory: v2
+        working-directory: beta
 
   frontend:
     runs-on: ubuntu-latest
@@ -33,13 +33,13 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: v2/frontend/package-lock.json
+          cache-dependency-path: beta/frontend/package-lock.json
       - name: Install
         run: npm ci
-        working-directory: v2/frontend
+        working-directory: beta/frontend
       - name: Type check
         run: npx tsc --noEmit
-        working-directory: v2/frontend
+        working-directory: beta/frontend
       - name: Test
         run: npm test
-        working-directory: v2/frontend
+        working-directory: beta/frontend
