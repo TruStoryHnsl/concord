@@ -1,9 +1,11 @@
 import { memo, useEffect, useRef, useCallback, useState } from "react";
 import type { ChatMessage } from "../../hooks/useMatrix";
 import { Avatar } from "../ui/Avatar";
+import { FederationBadge } from "../ui/FederationBadge";
 import { MessageContent } from "./MessageContent";
 import { ReactionPills, QuickReactBar } from "./ReactionBar";
 import { useDisplayName } from "../../hooks/useDisplayName";
+import { useLocalServerName } from "../../hooks/useFederation";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -68,6 +70,7 @@ export const MessageList = memo(function MessageList({
   onReact,
   onRemoveReaction,
 }: MessageListProps) {
+  const localServer = useLocalServerName();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -244,10 +247,11 @@ export const MessageList = memo(function MessageList({
                 <div className="flex gap-2">
                   <Avatar userId={msg.sender} size="md" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2">
+                    <div className="flex items-center gap-2">
                       <span className="text-sm font-headline font-semibold text-primary">
                         <SenderName userId={msg.sender} />
                       </span>
+                      <FederationBadge userId={msg.sender} localServer={localServer} />
                       <span className="text-[10px] text-on-surface-variant font-label">
                         {formatTime(msg.timestamp)}
                       </span>

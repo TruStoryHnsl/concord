@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useServerStore } from "../../stores/server";
 import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
+import { FederationBadge } from "../ui/FederationBadge";
+import { useLocalServerName } from "../../hooks/useFederation";
 import {
   updateServerSettings,
   listMembers,
@@ -263,6 +265,7 @@ function MembersTab({
   accessToken: string;
   isOwner: boolean;
 }) {
+  const localServer = useLocalServerName();
   const [members, setMembers] = useState<ServerMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmKick, setConfirmKick] = useState<string | null>(null);
@@ -337,6 +340,7 @@ function MembersTab({
             >
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm text-on-surface truncate">{name}</span>
+                <FederationBadge userId={m.user_id} localServer={localServer} compact />
                 <span className="text-xs text-on-surface-variant truncate">{m.user_id}</span>
                 {roleBadge(m.role)}
               </div>

@@ -1,5 +1,7 @@
 import { Avatar } from "../ui/Avatar";
+import { FederationBadge } from "../ui/FederationBadge";
 import { useDisplayName } from "../../hooks/useDisplayName";
+import { useLocalServerName } from "../../hooks/useFederation";
 import { useUnreadCounts } from "../../hooks/useUnreadCounts";
 
 interface Props {
@@ -11,6 +13,7 @@ interface Props {
 
 export function DMListItem({ otherUserId, matrixRoomId, isActive, onClick }: Props) {
   const displayName = useDisplayName(otherUserId);
+  const localServer = useLocalServerName();
   const unreadCounts = useUnreadCounts();
   const unread = unreadCounts.get(matrixRoomId) ?? 0;
 
@@ -24,9 +27,12 @@ export function DMListItem({ otherUserId, matrixRoomId, isActive, onClick }: Pro
       }`}
     >
       <Avatar userId={otherUserId} size="md" showPresence />
-      <span className="truncate font-body text-sm font-medium flex-1 text-left">
-        {displayName}
-      </span>
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        <span className="truncate font-body text-sm font-medium text-left">
+          {displayName}
+        </span>
+        <FederationBadge userId={otherUserId} localServer={localServer} compact />
+      </div>
       {unread > 0 && !isActive && (
         <span className="min-w-5 h-5 px-1.5 rounded-full bg-primary text-on-primary text-xs font-bold flex items-center justify-center node-pulse">
           {unread > 99 ? "99+" : unread}
