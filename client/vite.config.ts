@@ -6,4 +6,12 @@ import tailwindcss from '@tailwindcss/vite'
 // Nginx handles all routing in production.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    allowedHosts: true,
+    hmr: {
+      // HMR connects back through the same host the page was loaded from
+      clientPort: 443,
+      protocol: 'wss',
+    },
+  },
 })

@@ -67,7 +67,7 @@ export function ProfileTab() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-xl font-semibold text-white">Profile</h3>
+      <h3 className="text-xl font-semibold text-on-surface">Profile</h3>
 
       {/* Avatar preview + upload */}
       <div className="flex items-center gap-4">
@@ -76,11 +76,11 @@ export function ProfileTab() {
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white text-sm rounded-md transition-colors"
+            className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
           >
             {uploading ? "Uploading..." : "Change Avatar"}
           </button>
-          <p className="text-xs text-zinc-500">JPG, PNG, or GIF. Max 2MB.</p>
+          <p className="text-xs text-on-surface-variant">JPG, PNG, or GIF. Max 2MB.</p>
           <input
             ref={fileRef}
             type="file"
@@ -93,7 +93,7 @@ export function ProfileTab() {
 
       {/* Display name */}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-zinc-200">
+        <label className="text-sm font-medium text-on-surface">
           Display Name
         </label>
         <div className="flex gap-2">
@@ -101,12 +101,12 @@ export function ProfileTab() {
             type="text"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
           />
           <button
             onClick={handleNameSave}
             disabled={saving || !displayName.trim() || displayName === currentName}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md transition-colors"
+            className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
           >
             {saving ? "Saving..." : "Save"}
           </button>
@@ -115,8 +115,8 @@ export function ProfileTab() {
 
       {/* User ID (read-only) */}
       <div className="flex items-center justify-between py-2">
-        <span className="text-sm text-zinc-400">User ID</span>
-        <span className="text-sm text-zinc-500 font-mono">{userId}</span>
+        <span className="text-sm text-on-surface-variant">User ID</span>
+        <span className="text-sm text-on-surface-variant font-mono">{userId}</span>
       </div>
 
       {/* Password change */}
@@ -163,8 +163,8 @@ function PasswordChangeSection() {
   };
 
   return (
-    <div className="border-t border-zinc-700 pt-6 space-y-3">
-      <h4 className="text-sm font-medium text-zinc-200">Change Password</h4>
+    <div className="border-t border-outline-variant/15 pt-6 space-y-3">
+      <h4 className="text-sm font-medium text-on-surface">Change Password</h4>
       <form onSubmit={handleSubmit} className="space-y-3">
         <input
           type="password"
@@ -172,7 +172,7 @@ function PasswordChangeSection() {
           onChange={(e) => setCurrentPw(e.target.value)}
           placeholder="Current password"
           autoComplete="current-password"
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         <input
           type="password"
@@ -180,7 +180,7 @@ function PasswordChangeSection() {
           onChange={(e) => setNewPw(e.target.value)}
           placeholder="New password (min 8 characters)"
           autoComplete="new-password"
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         <input
           type="password"
@@ -188,20 +188,20 @@ function PasswordChangeSection() {
           onChange={(e) => setConfirmPw(e.target.value)}
           placeholder="Confirm new password"
           autoComplete="new-password"
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         {newPw.length > 0 && newPw.length < 8 && (
-          <p className="text-xs text-amber-400">
+          <p className="text-xs text-primary">
             Password must be at least 8 characters
           </p>
         )}
         {confirmPw.length > 0 && newPw !== confirmPw && (
-          <p className="text-xs text-red-400">Passwords do not match</p>
+          <p className="text-xs text-error">Passwords do not match</p>
         )}
         <button
           type="submit"
           disabled={!canSubmit}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md transition-colors"
+          className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
         >
           {saving ? "Changing..." : "Change Password"}
         </button>
@@ -271,16 +271,16 @@ function TOTPSection() {
   if (enabled === null) return null;
 
   return (
-    <div className="border-t border-zinc-700 pt-6 space-y-3">
-      <h4 className="text-sm font-medium text-zinc-200">Two-Factor Authentication</h4>
+    <div className="border-t border-outline-variant/15 pt-6 space-y-3">
+      <h4 className="text-sm font-medium text-on-surface">Two-Factor Authentication</h4>
 
       {enabled ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span className="text-sm text-emerald-400">Enabled</span>
+            <span className="w-2 h-2 rounded-full bg-secondary" />
+            <span className="text-sm text-secondary">Enabled</span>
           </div>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-on-surface-variant">
             Your account is protected with an authenticator app. Your online indicator appears on the left side of your avatar.
           </p>
           <div className="flex gap-2">
@@ -289,13 +289,13 @@ function TOTPSection() {
               value={disableCode}
               onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               placeholder="Enter code to disable"
-              className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 font-mono tracking-widest"
+              className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-error/30 font-mono tracking-widest"
               maxLength={6}
             />
             <button
               onClick={handleDisable}
               disabled={working || disableCode.length !== 6}
-              className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md transition-colors"
+              className="px-4 py-2 bg-error hover:bg-error-dim disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
             >
               Disable
             </button>
@@ -303,7 +303,7 @@ function TOTPSection() {
         </div>
       ) : setupData ? (
         <div className="space-y-4">
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-on-surface-variant">
             Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.), then enter the 6-digit code to confirm.
           </p>
           <div className="flex justify-center">
@@ -313,9 +313,9 @@ function TOTPSection() {
               className="w-48 h-48 rounded-lg bg-white p-2"
             />
           </div>
-          <div className="bg-zinc-800 rounded p-2">
-            <p className="text-xs text-zinc-500 mb-1">Manual entry key:</p>
-            <p className="text-xs text-zinc-300 font-mono break-all select-all">{setupData.secret}</p>
+          <div className="bg-surface-container rounded p-2">
+            <p className="text-xs text-on-surface-variant mb-1">Manual entry key:</p>
+            <p className="text-xs text-on-surface font-mono break-all select-all">{setupData.secret}</p>
           </div>
           <div className="flex gap-2">
             <input
@@ -323,35 +323,35 @@ function TOTPSection() {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               placeholder="6-digit code"
-              className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono tracking-widest text-center text-lg"
+              className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 font-mono tracking-widest text-center text-lg"
               maxLength={6}
               autoFocus
             />
             <button
               onClick={handleVerify}
               disabled={working || code.length !== 6}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md transition-colors"
+              className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
             >
               {working ? "..." : "Verify"}
             </button>
           </div>
           <button
             onClick={() => setSetupData(null)}
-            className="text-xs text-zinc-500 hover:text-zinc-300"
+            className="text-xs text-on-surface-variant hover:text-on-surface"
           >
             Cancel setup
           </button>
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-on-surface-variant">
             Add an extra layer of security by requiring a code from an authenticator app when you log in.
             Authorized users have their online indicator on the left side of their avatar.
           </p>
           <button
             onClick={handleSetup}
             disabled={working}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white text-sm rounded-md transition-colors"
+            className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
           >
             {working ? "Setting up..." : "Set Up Authenticator"}
           </button>

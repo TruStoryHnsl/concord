@@ -1,0 +1,36 @@
+services:
+  # Vite dev server with HMR — source mounted for live editing
+  vite-dev:
+    build:
+      context: .
+      dockerfile: web/Dockerfile.dev
+    volumes:
+      - ./client/src:/app/src:ro
+      - ./client/index.html:/app/index.html:ro
+      - ./client/vite.config.ts:/app/vite.config.ts:ro
+      - ./client/tsconfig.json:/app/tsconfig.json:ro
+      - ./client/tsconfig.app.json:/app/tsconfig.app.json:ro
+      - ./client/tsconfig.node.json:/app/tsconfig.node.json:ro
+      - ./client/eslint.config.js:/app/eslint.config.js:ro
+    networks:
+      - concord
+
+  # Override web to use dev Caddyfile (proxies to vite-dev instead of static)
+  web:
+    volumes:
+      - ./config/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./downloads:/srv/downloads:ro
+    depends_on:
+      conduwuit:
+        condition: service_started
+      concord-api:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+      vite-dev:
+        condition: service_started
+
+networks:
+  concord:
+    driver: bridge

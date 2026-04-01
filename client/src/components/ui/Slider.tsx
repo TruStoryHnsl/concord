@@ -25,8 +25,8 @@ export function Slider({
   return (
     <div className={className}>
       <div className="flex items-center justify-between mb-1.5">
-        <label className="text-sm text-zinc-300">{label}</label>
-        <span className="text-xs text-zinc-500 tabular-nums">
+        <label className="text-sm text-on-surface">{label}</label>
+        <span className="text-xs text-on-surface-variant tabular-nums">
           {displayValue}
         </span>
       </div>
@@ -37,7 +37,7 @@ export function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-zinc-700
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-container-highest
           [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5
           [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full
           [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md

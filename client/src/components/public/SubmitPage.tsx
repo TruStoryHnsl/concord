@@ -50,17 +50,17 @@ export function SubmitPage({ webhookId }: Props) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-900 flex items-center justify-center">
-        <span className="text-zinc-500">Loading...</span>
+      <div className="min-h-screen bg-surface flex items-center justify-center">
+        <span className="text-on-surface-variant">Loading...</span>
       </div>
     );
   }
 
   if (error || !info) {
     return (
-      <div className="min-h-screen bg-zinc-900 flex items-center justify-center">
-        <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-8 max-w-md w-full mx-4 text-center">
-          <p className="text-red-400 text-sm">{error || "Webhook not found"}</p>
+      <div className="min-h-screen bg-surface flex items-center justify-center">
+        <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-8 max-w-md w-full mx-4 text-center">
+          <p className="text-error text-sm">{error || "Webhook not found"}</p>
         </div>
       </div>
     );
@@ -68,34 +68,34 @@ export function SubmitPage({ webhookId }: Props) {
 
   if (!info.enabled) {
     return (
-      <div className="min-h-screen bg-zinc-900 flex items-center justify-center">
-        <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-8 max-w-md w-full mx-4 text-center">
-          <p className="text-zinc-400 text-sm">This webhook is currently disabled.</p>
+      <div className="min-h-screen bg-surface flex items-center justify-center">
+        <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-8 max-w-md w-full mx-4 text-center">
+          <p className="text-on-surface-variant text-sm">This webhook is currently disabled.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4">
-      <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-8 max-w-lg w-full">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+      <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-8 max-w-lg w-full">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-xl font-semibold text-white">{info.name}</h1>
-          <p className="text-sm text-zinc-500 mt-1">
-            Posting to <span className="text-zinc-400">#{info.channel_name}</span> in{" "}
-            <span className="text-zinc-400">{info.server_name}</span>
+          <h1 className="text-xl font-semibold text-on-surface">{info.name}</h1>
+          <p className="text-sm text-on-surface-variant mt-1">
+            Posting to <span className="text-on-surface-variant">#{info.channel_name}</span> in{" "}
+            <span className="text-on-surface-variant">{info.server_name}</span>
           </p>
         </div>
 
         {submitted ? (
           <div className="space-y-4">
-            <div className="bg-emerald-600/10 border border-emerald-600/30 rounded-md p-4">
-              <p className="text-emerald-400 text-sm">Message sent successfully!</p>
+            <div className="bg-secondary/10 border border-secondary/15 rounded-md p-4">
+              <p className="text-secondary text-sm">Message sent successfully!</p>
             </div>
             <button
               onClick={() => setSubmitted(false)}
-              className="w-full px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-sm rounded transition-colors"
+              className="w-full px-4 py-2 bg-surface-container-highest hover:bg-surface-bright text-on-surface text-sm rounded transition-colors"
             >
               Send Another
             </button>
@@ -103,8 +103,8 @@ export function SubmitPage({ webhookId }: Props) {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1">
-                Name <span className="text-zinc-600 font-normal">(optional)</span>
+              <label className="block text-sm font-medium text-on-surface mb-1">
+                Name <span className="text-on-surface-variant/50 font-normal">(optional)</span>
               </label>
               <input
                 type="text"
@@ -112,13 +112,13 @@ export function SubmitPage({ webhookId }: Props) {
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Anonymous"
                 maxLength={100}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-600 rounded text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                className="w-full px-3 py-2 bg-surface border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/30 focus:outline-none focus:ring-1 focus:ring-primary/30"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1">
-                Message <span className="text-red-400">*</span>
+              <label className="block text-sm font-medium text-on-surface mb-1">
+                Message <span className="text-error">*</span>
               </label>
               <textarea
                 value={content}
@@ -127,30 +127,30 @@ export function SubmitPage({ webhookId }: Props) {
                 maxLength={2000}
                 rows={5}
                 required
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-600 rounded text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 resize-none"
+                className="w-full px-3 py-2 bg-surface border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/30 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
               />
-              <p className="text-xs text-zinc-600 mt-1 text-right">
+              <p className="text-xs text-on-surface-variant/50 mt-1 text-right">
                 {content.length}/2000
               </p>
             </div>
 
             {submitError && (
-              <div className="bg-red-600/10 border border-red-600/30 rounded-md p-3">
-                <p className="text-red-400 text-sm">{submitError}</p>
+              <div className="bg-error/10 border border-error/30 rounded-md p-3">
+                <p className="text-error text-sm">{submitError}</p>
               </div>
             )}
 
             <button
               type="submit"
               disabled={submitting || !content.trim()}
-              className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded transition-colors"
+              className="w-full px-4 py-2.5 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm font-medium rounded transition-colors"
             >
               {submitting ? "Sending..." : "Send Message"}
             </button>
           </form>
         )}
 
-        <p className="text-xs text-zinc-600 mt-6 text-center">
+        <p className="text-xs text-on-surface-variant/50 mt-6 text-center">
           Powered by Concord
         </p>
       </div>

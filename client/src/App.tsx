@@ -170,10 +170,10 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="h-screen bg-zinc-900 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <span className="inline-block w-6 h-6 border-2 border-zinc-600 border-t-indigo-400 rounded-full animate-spin" />
-          <span className="text-zinc-500 text-sm">Loading...</span>
+      <div className="h-screen bg-surface flex items-center justify-center mesh-background">
+        <div className="flex flex-col items-center gap-3 relative z-10">
+          <span className="inline-block w-6 h-6 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
+          <span className="text-on-surface-variant text-sm font-body">Loading...</span>
         </div>
       </div>
     );

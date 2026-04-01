@@ -42,7 +42,7 @@ function BarChart({
 
   if (values.every((v) => v === 0)) {
     return (
-      <p className="text-zinc-500 text-sm text-center py-8">{emptyLabel}</p>
+      <p className="text-on-surface-variant text-sm text-center py-8">{emptyLabel}</p>
     );
   }
 
@@ -63,7 +63,7 @@ function BarChart({
           >
             <div className="w-full flex flex-col items-center justify-end h-24">
               {val > 0 && (
-                <span className="text-[10px] text-zinc-400 mb-0.5 truncate">
+                <span className="text-[10px] text-on-surface-variant mb-0.5 truncate">
                   {formatValue(val)}
                 </span>
               )}
@@ -76,7 +76,7 @@ function BarChart({
                 }}
               />
             </div>
-            <span className="text-[9px] text-zinc-600 truncate w-full text-center">
+            <span className="text-[9px] text-on-surface-variant/50 truncate w-full text-center">
               {label}
             </span>
           </div>
@@ -107,13 +107,13 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl w-full max-w-lg mx-4">
+      <div className="bg-surface border border-outline-variant/15 rounded-lg shadow-xl w-full max-w-lg mx-4">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
-          <h2 className="text-lg font-semibold text-white">Your Stats</h2>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/15">
+          <h2 className="text-lg font-semibold text-on-surface">Your Stats</h2>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-white transition-colors"
+            className="text-on-surface-variant hover:text-on-surface transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -124,48 +124,48 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
         {/* Content */}
         <div className="p-4 space-y-4">
           {loading ? (
-            <p className="text-zinc-500 text-sm text-center py-8">
+            <p className="text-on-surface-variant text-sm text-center py-8">
               Loading stats...
             </p>
           ) : !stats ? (
-            <p className="text-zinc-500 text-sm text-center py-8">
+            <p className="text-on-surface-variant text-sm text-center py-8">
               Failed to load stats
             </p>
           ) : (
             <>
               {/* Summary cards */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-zinc-800 rounded-lg p-3 border border-zinc-700">
-                  <p className="text-xs text-zinc-500">Total Voice Time</p>
-                  <p className="text-xl font-bold text-indigo-400">
+                <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/15">
+                  <p className="text-xs text-on-surface-variant">Total Voice Time</p>
+                  <p className="text-xl font-bold text-primary">
                     {formatDurationLong(stats.total_voice_seconds)}
                   </p>
                 </div>
-                <div className="bg-zinc-800 rounded-lg p-3 border border-zinc-700">
-                  <p className="text-xs text-zinc-500">Messages Sent</p>
-                  <p className="text-xl font-bold text-emerald-400">
+                <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/15">
+                  <p className="text-xs text-on-surface-variant">Messages Sent</p>
+                  <p className="text-xl font-bold text-secondary">
                     {stats.total_messages.toLocaleString()}
                   </p>
                 </div>
               </div>
 
               {stats.active_since && (
-                <div className="bg-indigo-950/30 border border-indigo-800/50 rounded-lg px-3 py-2 flex items-center gap-2">
+                <div className="bg-primary/10 border border-primary/30 rounded-lg px-3 py-2 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-sm text-indigo-300">
+                  <span className="text-sm text-primary">
                     Currently in voice
                   </span>
                 </div>
               )}
 
               {/* Tabs */}
-              <div className="flex gap-1 border-b border-zinc-700">
+              <div className="flex gap-1 border-b border-outline-variant/15">
                 <button
                   onClick={() => setTab("voice")}
                   className={`px-3 py-1.5 text-sm transition-colors ${
                     tab === "voice"
-                      ? "text-indigo-400 border-b-2 border-indigo-400"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "text-primary border-b-2 border-primary"
+                      : "text-on-surface-variant hover:text-on-surface"
                   }`}
                 >
                   Voice
@@ -174,8 +174,8 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                   onClick={() => setTab("messages")}
                   className={`px-3 py-1.5 text-sm transition-colors ${
                     tab === "messages"
-                      ? "text-emerald-400 border-b-2 border-emerald-400"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "text-secondary border-b-2 border-secondary"
+                      : "text-on-surface-variant hover:text-on-surface"
                   }`}
                 >
                   Messages
@@ -184,7 +184,7 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
                 <select
                   value={days}
                   onChange={(e) => setDays(Number(e.target.value))}
-                  className="bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs rounded px-2 py-1 mb-1"
+                  className="bg-surface-container border border-outline-variant/15 text-on-surface text-xs rounded px-2 py-1 mb-1"
                 >
                   <option value={7}>7 days</option>
                   <option value={14}>14 days</option>

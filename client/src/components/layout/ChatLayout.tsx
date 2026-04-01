@@ -33,13 +33,14 @@ class SilentBoundary extends Component<{ children: ReactNode; fallback?: ReactNo
   static getDerivedStateFromError() { return { ok: false }; }
   componentDidCatch(err: Error) {
     console.warn("SilentBoundary caught:", err.message);
-    // Auto-recover after a tick so transient hook mismatches resolve
     setTimeout(() => this.setState({ ok: true }), 100);
   }
   render() {
     return this.state.ok ? this.props.children : (this.props.fallback ?? null);
   }
 }
+
+type MobileView = "servers" | "channels" | "chat" | "settings";
 
 export function ChatLayout() {
   const syncing = useMatrixSync();
@@ -68,12 +69,13 @@ export function ChatLayout() {
   const [showStats, setShowStats] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  // Mobile view state — replaces the old drawer system
+  const [mobileView, setMobileView] = useState<MobileView>("chat");
 
-  // Resizable channel sidebar
+  // Resizable channel sidebar (desktop only)
   const SIDEBAR_MIN = 160;
   const SIDEBAR_MAX = 400;
-  const SIDEBAR_DEFAULT = 224; // w-56
+  const SIDEBAR_DEFAULT = 224;
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try {
       const saved = localStorage.getItem("concord_sidebar_width");
@@ -101,9 +103,7 @@ export function ChatLayout() {
       document.removeEventListener("mouseup", onUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      try {
-        localStorage.setItem("concord_sidebar_width", String(sidebarWidth));
-      } catch {}
+      try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
     };
 
     document.body.style.cursor = "col-resize";
@@ -112,15 +112,11 @@ export function ChatLayout() {
     document.addEventListener("mouseup", onUp);
   }, [sidebarWidth]);
 
-  // Persist sidebar width on change
   useEffect(() => {
     try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
   }, [sidebarWidth]);
 
-  // Clear edit state on channel switch
-  useEffect(() => {
-    setEditingMessage(null);
-  }, [activeChannelId]);
+  useEffect(() => { setEditingMessage(null); }, [activeChannelId]);
 
   const activeServer = useMemo(
     () => servers.find((s) => s.id === activeServerId),
@@ -136,6 +132,7 @@ export function ChatLayout() {
   const closeSettings = useSettingsStore((s) => s.closeSettings);
   const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
   const closeServerSettings = useSettingsStore((s) => s.closeServerSettings);
+  const openSettings = useSettingsStore((s) => s.openSettings);
 
   const memberCount = useMemo(() => {
     if (!client || !activeChannelId) return 0;
@@ -149,271 +146,434 @@ export function ChatLayout() {
 
   useEffect(() => {
     if (accessToken && syncing && !serversLoaded) {
-      loadServers(accessToken).then(() => {
-        setServersLoaded(true);
-      });
+      loadServers(accessToken).then(() => setServersLoaded(true));
     }
   }, [accessToken, syncing, serversLoaded, loadServers]);
 
-  // Load members when active server changes
   useEffect(() => {
     if (accessToken && activeServerId) {
       loadMembers(activeServerId, accessToken);
     }
   }, [accessToken, activeServerId, loadMembers]);
 
-  return (
-    <div className="h-full flex overflow-hidden bg-zinc-900 text-white">
-      {/* Mobile sidebar backdrop */}
-      {mobileSidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/60 drawer-backdrop md:hidden"
-          onClick={() => setMobileSidebarOpen(false)}
-        />
-      )}
+  // When selecting a channel on mobile, auto-switch to chat view
+  const origSetActiveChannel = useServerStore((s) => s.setActiveChannel);
+  const handleMobileChannelSelect = useCallback((roomId: string) => {
+    origSetActiveChannel(roomId);
+    setMobileView("chat");
+  }, [origSetActiveChannel]);
 
-      {/* Sidebars — drawer on mobile, static on desktop */}
-      <div className={`
-        fixed inset-y-0 left-0 z-50 flex
-        ${mobileSidebarOpen ? "drawer-open" : "drawer-closed"}
-        md:relative md:!transform-none md:!transition-none
-      `}>
+  // When settings is opened, show it on mobile
+  useEffect(() => {
+    if (settingsOpen) setMobileView("settings");
+  }, [settingsOpen]);
+
+  // Desktop layout
+  const renderDesktopLayout = () => (
+    <div className="h-full flex overflow-hidden bg-surface text-on-surface">
+      {/* Server sidebar */}
+      <SilentBoundary>
+        <ServerSidebar />
+      </SilentBoundary>
+
+      {/* Channel sidebar */}
+      <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
         <SilentBoundary>
-          <ServerSidebar />
+          <ChannelSidebar />
         </SilentBoundary>
-        <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
-          <SilentBoundary>
-            <ChannelSidebar />
-          </SilentBoundary>
-        </div>
       </div>
 
-      {/* Resize handle — desktop only */}
+      {/* Resize handle */}
       <div
         onMouseDown={handleResizeStart}
-        className="hidden md:block w-1 cursor-col-resize hover:bg-indigo-500/50 active:bg-indigo-500/70 transition-colors flex-shrink-0"
+        className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
       />
 
+      {/* Main content */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {settingsOpen ? (
-          <>
-            <div className="h-12 border-b border-zinc-700 flex items-center px-4 justify-between">
-              <h2 className="font-semibold">Settings</h2>
-              <button
-                onClick={closeSettings}
-                className="text-sm text-zinc-400 hover:text-white transition-colors"
-              >
-                Back
-              </button>
-            </div>
-            <SettingsPanel />
-          </>
-        ) : serverSettingsId ? (
-          <>
-            <div className="h-12 border-b border-zinc-700 flex items-center px-4 justify-between">
-              <h2 className="font-semibold">
-                {servers.find((s) => s.id === serverSettingsId)?.name ?? "Server"} — Settings
-              </h2>
-              <button
-                onClick={closeServerSettings}
-                className="text-sm text-zinc-400 hover:text-white transition-colors"
-              >
-                Back
-              </button>
-            </div>
-            <ServerSettingsPanel serverId={serverSettingsId} />
-          </>
-        ) : (
-          <>
-            {/* Channel header */}
-            <div className="h-12 border-b border-zinc-700 flex items-center px-2 md:px-4">
-              {/* Mobile hamburger */}
-              <button
-                onClick={() => setMobileSidebarOpen(true)}
-                className="md:hidden w-10 h-10 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors mr-1 shrink-0"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-              {activeChannel ? (
-                <div className="flex items-center gap-3 min-w-0">
-                  <h2 className="font-semibold truncate">
-                    {isVoiceChannel ? "🔊" : "#"} {activeChannel.name}
-                  </h2>
-                  {memberCount > 0 && (
-                    <span className="text-xs text-zinc-500">
-                      {memberCount} {memberCount === 1 ? "member" : "members"}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <span className="text-zinc-500">
-                  {!syncing || !serversLoaded ? (
-                    <span className="flex items-center gap-2">
-                      <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
-                      {!syncing ? "Connecting..." : "Loading servers..."}
-                    </span>
-                  ) : servers.length === 0 ? (
-                    "Welcome — join or create a server to get started"
-                  ) : (
-                    "Select a channel"
-                  )}
-                </span>
-              )}
-            </div>
-
-            {/* Content: voice or text */}
-            {activeChannelId && activeChannel ? (
-              isVoiceChannel ? (
-                <VoiceChannel
-                  roomId={activeChannelId}
-                  channelName={activeChannel.name}
-                  serverId={activeServerId!}
-                />
-              ) : (
-                <>
-                  <MessageList
-                    messages={messages}
-                    isPaginating={isPaginating}
-                    hasMore={hasMore}
-                    onLoadMore={loadMore}
-                    currentUserId={userId}
-                    isServerOwner={isOwner}
-                    onDelete={deleteMessage}
-                    onStartEdit={setEditingMessage}
-                    onReact={sendReaction}
-                    onRemoveReaction={removeReaction}
-                  />
-                  <TypingIndicator typingUsers={typingUsers} />
-                  <FloatingButtons onStats={() => setShowStats(true)} onBug={() => setShowBugReport(true)} onHelp={() => setShowHelp(true)} />
-                  <MessageInput
-                    onSend={sendMessage}
-                    onSubmitEdit={editMessage}
-                    onSendFile={activeServer?.media_uploads_enabled !== false ? sendFile : undefined}
-                    uploading={uploading}
-                    editingMessage={editingMessage}
-                    onCancelEdit={() => setEditingMessage(null)}
-                    onKeystroke={onKeystroke}
-                    onStopTyping={onStopTyping}
-                    roomName={activeChannel.name}
-                  />
-                </>
-              )
-            ) : (
-              <div className="flex-1 flex items-center justify-center p-8">
-                {!syncing || !serversLoaded ? (
-                  <div className="flex flex-col items-center gap-3">
-                    <span className="inline-block w-6 h-6 border-2 border-zinc-600 border-t-indigo-400 rounded-full animate-spin" />
-                    <p className="text-zinc-500 text-sm">
-                      {!syncing ? "Connecting..." : "Loading your servers..."}
-                    </p>
-                  </div>
-                ) : servers.length === 0 ? (
-                  <OnboardingGuide />
-                ) : (
-                  <div className="text-center space-y-2">
-                    <p className="text-zinc-400">Select a channel to start chatting</p>
-                    <p className="text-zinc-600 text-sm">
-                      Pick a text or voice channel from the sidebar
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-
-        {showBugReport && <BugReportModal onClose={() => setShowBugReport(false)} />}
-        {showStats && <StatsModal onClose={() => setShowStats(false)} />}
-        {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+        {renderMainContent()}
       </div>
     </div>
   );
+
+  // Mobile layout with bottom nav
+  const renderMobileLayout = () => (
+    <div className="h-full flex flex-col overflow-hidden bg-surface text-on-surface">
+      {/* Top bar */}
+      <div className="h-12 flex items-center px-3 bg-surface-container-low safe-top flex-shrink-0">
+        {mobileView === "chat" && activeChannel ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setMobileView("channels")}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold truncate text-on-surface">
+              {isVoiceChannel ? (
+                <span className="material-symbols-outlined text-base align-middle mr-1">volume_up</span>
+              ) : (
+                <span className="text-on-surface-variant mr-1">#</span>
+              )}
+              {activeChannel.name}
+            </h2>
+            {memberCount > 0 && (
+              <span className="text-xs text-on-surface-variant font-label">
+                {memberCount}
+              </span>
+            )}
+          </div>
+        ) : mobileView === "channels" && activeServer ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setMobileView("servers")}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold truncate">{activeServer.name}</h2>
+          </div>
+        ) : mobileView === "settings" ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => { closeSettings(); closeServerSettings(); setMobileView("chat"); }}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold">Settings</h2>
+          </div>
+        ) : (
+          <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
+        )}
+      </div>
+
+      {/* Main content area */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {mobileView === "servers" && (
+          <SilentBoundary>
+            <ServerSidebar mobile onServerSelect={() => setMobileView("channels")} />
+          </SilentBoundary>
+        )}
+        {mobileView === "channels" && (
+          <SilentBoundary>
+            <ChannelSidebar mobile onChannelSelect={handleMobileChannelSelect} />
+          </SilentBoundary>
+        )}
+        {mobileView === "settings" && (
+          settingsOpen ? (
+            <SettingsPanel />
+          ) : serverSettingsId ? (
+            <ServerSettingsPanel serverId={serverSettingsId} />
+          ) : (
+            <SettingsPanel />
+          )
+        )}
+        {mobileView === "chat" && (
+          <div className="h-full flex flex-col min-h-0">
+            {renderChatContent()}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom navigation */}
+      <BottomNav
+        active={mobileView}
+        onChange={setMobileView}
+        onSettingsOpen={openSettings}
+      />
+    </div>
+  );
+
+  // Shared main content renderer (desktop)
+  const renderMainContent = () => {
+    if (settingsOpen) {
+      return (
+        <>
+          <div className="h-12 flex items-center px-4 justify-between bg-surface-container-low flex-shrink-0">
+            <h2 className="font-headline font-semibold">Settings</h2>
+            <button
+              onClick={closeSettings}
+              className="text-sm text-on-surface-variant hover:text-on-surface transition-colors font-label"
+            >
+              Back
+            </button>
+          </div>
+          <SettingsPanel />
+        </>
+      );
+    }
+
+    if (serverSettingsId) {
+      return (
+        <>
+          <div className="h-12 flex items-center px-4 justify-between bg-surface-container-low flex-shrink-0">
+            <h2 className="font-headline font-semibold">
+              {servers.find((s) => s.id === serverSettingsId)?.name ?? "Server"} — Settings
+            </h2>
+            <button
+              onClick={closeServerSettings}
+              className="text-sm text-on-surface-variant hover:text-on-surface transition-colors font-label"
+            >
+              Back
+            </button>
+          </div>
+          <ServerSettingsPanel serverId={serverSettingsId} />
+        </>
+      );
+    }
+
+    return (
+      <>
+        {/* Channel header */}
+        <div className="h-12 flex items-center px-4 bg-surface-container-low flex-shrink-0">
+          {activeChannel ? (
+            <div className="flex items-center gap-3 min-w-0">
+              <h2 className="font-headline font-semibold truncate">
+                {isVoiceChannel ? (
+                  <span className="material-symbols-outlined text-base align-middle mr-1">volume_up</span>
+                ) : (
+                  <span className="text-on-surface-variant mr-1">#</span>
+                )}
+                {activeChannel.name}
+              </h2>
+              {memberCount > 0 && (
+                <span className="text-xs text-on-surface-variant font-label">
+                  {memberCount} {memberCount === 1 ? "member" : "members"}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span className="text-on-surface-variant font-body">
+              {!syncing || !serversLoaded ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 border-2 border-on-surface-variant border-t-primary rounded-full animate-spin" />
+                  {!syncing ? "Connecting..." : "Loading servers..."}
+                </span>
+              ) : servers.length === 0 ? (
+                "Welcome — join or create a server to get started"
+              ) : (
+                "Select a channel"
+              )}
+            </span>
+          )}
+        </div>
+
+        {renderChatContent()}
+      </>
+    );
+  };
+
+  // Shared chat/voice content
+  const renderChatContent = () => {
+    if (activeChannelId && activeChannel) {
+      if (isVoiceChannel) {
+        return (
+          <VoiceChannel
+            roomId={activeChannelId}
+            channelName={activeChannel.name}
+            serverId={activeServerId!}
+          />
+        );
+      }
+      return (
+        <>
+          <MessageList
+            messages={messages}
+            isPaginating={isPaginating}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            currentUserId={userId}
+            isServerOwner={isOwner}
+            onDelete={deleteMessage}
+            onStartEdit={setEditingMessage}
+            onReact={sendReaction}
+            onRemoveReaction={removeReaction}
+          />
+          <TypingIndicator typingUsers={typingUsers} />
+          <FloatingButtons onStats={() => setShowStats(true)} onBug={() => setShowBugReport(true)} onHelp={() => setShowHelp(true)} />
+          <MessageInput
+            onSend={sendMessage}
+            onSubmitEdit={editMessage}
+            onSendFile={activeServer?.media_uploads_enabled !== false ? sendFile : undefined}
+            uploading={uploading}
+            editingMessage={editingMessage}
+            onCancelEdit={() => setEditingMessage(null)}
+            onKeystroke={onKeystroke}
+            onStopTyping={onStopTyping}
+            roomName={activeChannel.name}
+          />
+        </>
+      );
+    }
+
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        {!syncing || !serversLoaded ? (
+          <div className="flex flex-col items-center gap-3">
+            <span className="inline-block w-6 h-6 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
+            <p className="text-on-surface-variant text-sm font-body">
+              {!syncing ? "Connecting..." : "Loading your servers..."}
+            </p>
+          </div>
+        ) : servers.length === 0 ? (
+          <OnboardingGuide />
+        ) : (
+          <div className="text-center space-y-2">
+            <p className="text-on-surface-variant font-body">Select a channel to start chatting</p>
+            <p className="text-on-surface-variant/50 text-sm font-label">
+              Pick a text or voice channel from the sidebar
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {/* Desktop */}
+      <div className="hidden md:block h-full">
+        {renderDesktopLayout()}
+      </div>
+      {/* Mobile */}
+      <div className="md:hidden h-full">
+        {renderMobileLayout()}
+      </div>
+
+      {showBugReport && <BugReportModal onClose={() => setShowBugReport(false)} />}
+      {showStats && <StatsModal onClose={() => setShowStats(false)} />}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+    </>
+  );
 }
 
+/* ── Bottom Navigation (Mobile) ── */
+function BottomNav({
+  active,
+  onChange,
+  onSettingsOpen,
+}: {
+  active: MobileView;
+  onChange: (view: MobileView) => void;
+  onSettingsOpen: () => void;
+}) {
+  const items: { key: MobileView; icon: string; label: string }[] = [
+    { key: "servers", icon: "dns", label: "Servers" },
+    { key: "channels", icon: "tag", label: "Channels" },
+    { key: "chat", icon: "chat_bubble", label: "Chat" },
+    { key: "settings", icon: "settings", label: "Settings" },
+  ];
+
+  return (
+    <nav className="flex items-center justify-around bg-surface-container-low safe-bottom flex-shrink-0 pt-1 pb-1">
+      {items.map(({ key, icon, label }) => {
+        const isActive = active === key;
+        return (
+          <button
+            key={key}
+            onClick={() => {
+              if (key === "settings") onSettingsOpen();
+              onChange(key);
+            }}
+            className={`btn-press flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-all ${
+              isActive
+                ? "text-primary"
+                : "text-on-surface-variant hover:text-on-surface"
+            }`}
+          >
+            <span
+              className="material-symbols-outlined text-xl"
+              style={isActive ? { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' } : undefined}
+            >
+              {icon}
+            </span>
+            <span className="text-[10px] font-label font-medium tracking-wider">
+              {label}
+            </span>
+            {isActive && (
+              <div className="w-1 h-1 rounded-full bg-primary mt-0.5" />
+            )}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/* ── Floating Action Buttons ── */
 function FloatingButtons({ onStats, onBug, onHelp }: { onStats: () => void; onBug: () => void; onHelp: () => void }) {
   return (
     <div className="flex-shrink-0 flex justify-end gap-2 px-4 py-1">
       <button
         onClick={onHelp}
-        className="btn-press w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-white hover:border-zinc-500 transition-colors"
+        className="btn-press w-8 h-8 flex items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
         title="Help & Getting Started"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+        <span className="material-symbols-outlined text-base">help</span>
       </button>
       <button
         onClick={onStats}
-        className="btn-press w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-white hover:border-zinc-500 transition-colors"
+        className="btn-press w-8 h-8 flex items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
         title="Your Stats"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-        </svg>
+        <span className="material-symbols-outlined text-base">bar_chart</span>
       </button>
       <button
         onClick={onBug}
-        className="btn-press w-8 h-8 flex items-center justify-center rounded-full bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-white hover:border-zinc-500 transition-colors"
+        className="btn-press w-8 h-8 flex items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
         title="Report a Bug"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-        </svg>
+        <span className="material-symbols-outlined text-base">bug_report</span>
       </button>
     </div>
   );
 }
 
+/* ── Onboarding Guide ── */
 function OnboardingGuide() {
   return (
     <div className="max-w-md w-full space-y-6 animate-[fadeSlideUp_0.5s_ease-out]">
       <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-white">Welcome to Concord</h2>
-        <p className="text-zinc-400 text-sm">
+        <h2 className="text-2xl font-headline font-bold text-on-surface">Welcome to Concord</h2>
+        <p className="text-on-surface-variant text-sm font-body" style={{ lineHeight: "1.6" }}>
           Get started by joining or creating a server.
         </p>
       </div>
 
       <div className="space-y-3">
-        <div className="flex items-start gap-3 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-          <div className="w-8 h-8 rounded-full bg-indigo-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <span className="text-indigo-400 font-bold text-sm">+</span>
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-surface-container">
+          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <span className="material-symbols-outlined text-primary text-lg">add</span>
           </div>
           <div>
-            <p className="text-sm font-medium text-zinc-200">Create or browse servers</p>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Click the <strong className="text-zinc-400">+</strong> button in the left sidebar to create your own server or browse public ones.
+            <p className="text-sm font-medium text-on-surface font-headline">Create or browse servers</p>
+            <p className="text-xs text-on-surface-variant mt-0.5 font-body">
+              Tap the <strong className="text-on-surface">+</strong> button to create your own server or browse public ones.
             </p>
           </div>
         </div>
 
-        <div className="flex items-start gap-3 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-          <div className="w-8 h-8 rounded-full bg-emerald-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-surface-container">
+          <div className="w-8 h-8 rounded-full bg-secondary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <span className="material-symbols-outlined text-secondary text-lg">link</span>
           </div>
           <div>
-            <p className="text-sm font-medium text-zinc-200">Got an invite link?</p>
-            <p className="text-xs text-zinc-500 mt-0.5">
+            <p className="text-sm font-medium text-on-surface font-headline">Got an invite link?</p>
+            <p className="text-xs text-on-surface-variant mt-0.5 font-body">
               Paste the invite URL in your browser to automatically join a server.
             </p>
           </div>
         </div>
 
-        <div className="flex items-start gap-3 p-4 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-          <div className="w-8 h-8 rounded-full bg-amber-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-surface-container">
+          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <span className="material-symbols-outlined text-primary text-lg">tune</span>
           </div>
           <div>
-            <p className="text-sm font-medium text-zinc-200">Customize your profile</p>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Click the gear icon in the bottom left to set up two-factor auth, change your password, and adjust audio settings.
+            <p className="text-sm font-medium text-on-surface font-headline">Customize your profile</p>
+            <p className="text-xs text-on-surface-variant mt-0.5 font-body">
+              Open settings to configure two-factor auth, passwords, and audio devices.
             </p>
           </div>
         </div>
@@ -422,21 +582,20 @@ function OnboardingGuide() {
   );
 }
 
+/* ── Help Modal ── */
 function HelpModal({ onClose }: { onClose: () => void }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="relative animate-[fadeSlideUp_0.3s_ease-out]">
+      <div className="relative glass-panel rounded-2xl p-6 animate-[fadeSlideUp_0.3s_ease-out]">
         <button
           onClick={onClose}
-          className="absolute -top-3 -right-3 w-8 h-8 flex items-center justify-center rounded-full bg-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-600 transition-colors z-10"
+          className="absolute -top-3 -right-3 w-8 h-8 flex items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant hover:text-on-surface transition-colors z-10"
           title="Close"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <span className="material-symbols-outlined text-lg">close</span>
         </button>
         <OnboardingGuide />
       </div>

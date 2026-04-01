@@ -66,15 +66,15 @@ export function ServerSettingsPanel({ serverId }: Props) {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-zinc-700 overflow-x-auto">
+      <div className="flex items-center gap-1 px-4 py-2 border-b border-outline-variant/15 overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`px-3 py-1.5 rounded text-sm whitespace-nowrap transition-colors ${
               tab === t.key
-                ? "bg-zinc-700 text-white"
-                : "text-zinc-400 hover:bg-zinc-700/50 hover:text-zinc-200"
+                ? "bg-surface-container-highest text-on-surface"
+                : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
             }`}
           >
             {t.label}
@@ -150,10 +150,10 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
 
   return (
     <div className="space-y-6">
-      <h3 className="text-xl font-semibold text-white">General</h3>
+      <h3 className="text-xl font-semibold text-on-surface">General</h3>
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">
+        <label className="block text-sm font-medium text-on-surface mb-1">
           Server Name
         </label>
         <input
@@ -161,14 +161,14 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={100}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+          className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">
+        <label className="block text-sm font-medium text-on-surface mb-1">
           Abbreviation
-          <span className="text-zinc-500 font-normal ml-1">(3 chars max, shown on sidebar)</span>
+          <span className="text-on-surface-variant font-normal ml-1">(3 chars max, shown on sidebar)</span>
         </label>
         <div className="flex items-center gap-3">
           <input
@@ -177,17 +177,17 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
             onChange={(e) => setAbbreviation(e.target.value.slice(0, 3))}
             maxLength={3}
             placeholder={name.charAt(0).toUpperCase()}
-            className="w-24 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white text-center focus:outline-none focus:border-indigo-500"
+            className="w-24 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface text-center focus:outline-none focus:ring-1 focus:ring-primary/30"
           />
           {/* Preview bubble */}
-          <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center text-sm font-bold text-zinc-400">
+          <div className="w-12 h-12 rounded-2xl bg-surface-container flex items-center justify-center text-sm font-bold text-on-surface-variant">
             {abbreviation || name.charAt(0).toUpperCase()}
           </div>
         </div>
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-1">
+        <label className="block text-sm font-medium text-on-surface mb-1">
           Visibility
         </label>
         <div className="flex gap-2">
@@ -195,8 +195,8 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
             onClick={() => setVisibility("private")}
             className={`px-4 py-2 rounded text-sm transition-colors ${
               visibility === "private"
-                ? "bg-zinc-700 text-white"
-                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                ? "bg-surface-container-highest text-on-surface"
+                : "bg-surface-container text-on-surface-variant hover:text-on-surface"
             }`}
           >
             Private
@@ -205,14 +205,14 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
             onClick={() => setVisibility("public")}
             className={`px-4 py-2 rounded text-sm transition-colors ${
               visibility === "public"
-                ? "bg-zinc-700 text-white"
-                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                ? "bg-surface-container-highest text-on-surface"
+                : "bg-surface-container text-on-surface-variant hover:text-on-surface"
             }`}
           >
             Public
           </button>
         </div>
-        <p className="text-xs text-zinc-500 mt-1">
+        <p className="text-xs text-on-surface-variant mt-1">
           {visibility === "private"
             ? "Only invited users can join"
             : "Anyone can find and join this server"}
@@ -220,13 +220,13 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-2">
+        <label className="block text-sm font-medium text-on-surface mb-2">
           Media Uploads
         </label>
         <button
           onClick={() => setMediaUploads(!mediaUploads)}
           className={`relative w-10 h-5 rounded-full transition-colors ${
-            mediaUploads ? "bg-indigo-600" : "bg-zinc-600"
+            mediaUploads ? "bg-primary" : "bg-surface-bright"
           }`}
           title={mediaUploads ? "Disable media uploads" : "Enable media uploads"}
         >
@@ -236,7 +236,7 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
             }`}
           />
         </button>
-        <p className="text-xs text-zinc-500 mt-1">
+        <p className="text-xs text-on-surface-variant mt-1">
           {mediaUploads
             ? "Members can upload images and videos in text channels"
             : "Image and video uploads are disabled in this server"}
@@ -246,7 +246,7 @@ function GeneralTab({ serverId, accessToken }: { serverId: string; accessToken: 
       <button
         onClick={handleSave}
         disabled={saving}
-        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white text-sm font-medium rounded transition-colors"
+        className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm font-medium rounded transition-colors"
       >
         {saving ? "Saving..." : "Save Changes"}
       </button>
@@ -306,9 +306,9 @@ function MembersTab({
 
   const roleBadge = (role: string) => {
     const colors: Record<string, string> = {
-      owner: "bg-amber-600/20 text-amber-400",
-      admin: "bg-indigo-600/20 text-indigo-400",
-      member: "bg-zinc-700 text-zinc-400",
+      owner: "bg-primary/10 text-primary",
+      admin: "bg-primary/10 text-primary",
+      member: "bg-surface-container-highest text-on-surface-variant",
     };
     return (
       <span className={`text-xs px-1.5 py-0.5 rounded ${colors[role] ?? colors.member}`}>
@@ -318,12 +318,12 @@ function MembersTab({
   };
 
   if (loading) {
-    return <p className="text-zinc-500 text-sm">Loading members...</p>;
+    return <p className="text-on-surface-variant text-sm">Loading members...</p>;
   }
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-semibold text-white">
+      <h3 className="text-xl font-semibold text-on-surface">
         Members ({members.length})
       </h3>
 
@@ -333,11 +333,11 @@ function MembersTab({
           return (
             <div
               key={m.user_id}
-              className="flex items-center justify-between px-3 py-2 rounded bg-zinc-800/50 group"
+              className="flex items-center justify-between px-3 py-2 rounded bg-surface-container group"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-sm text-zinc-200 truncate">{name}</span>
-                <span className="text-xs text-zinc-500 truncate">{m.user_id}</span>
+                <span className="text-sm text-on-surface truncate">{name}</span>
+                <span className="text-xs text-on-surface-variant truncate">{m.user_id}</span>
                 {roleBadge(m.role)}
               </div>
               <div className="flex items-center gap-1">
@@ -345,7 +345,7 @@ function MembersTab({
                   <select
                     value={m.role}
                     onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
-                    className="text-xs bg-zinc-700 text-zinc-300 rounded px-1.5 py-1 border-none focus:outline-none"
+                    className="text-xs bg-surface-container-highest text-on-surface rounded px-1.5 py-1 border-none focus:outline-none"
                   >
                     <option value="member">Member</option>
                     <option value="admin">Admin</option>
@@ -356,14 +356,14 @@ function MembersTab({
                     <button
                       onClick={() => handleKick(m.user_id)}
                       onMouseLeave={() => setConfirmKick(null)}
-                      className="text-red-400 text-xs px-1.5 py-1 animate-pulse"
+                      className="text-error text-xs px-1.5 py-1 animate-pulse"
                     >
                       Confirm?
                     </button>
                   ) : (
                     <button
                       onClick={() => setConfirmKick(m.user_id)}
-                      className="text-zinc-600 hover:text-red-400 text-xs px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="text-on-surface-variant/50 hover:text-error text-xs px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       Kick
                     </button>
@@ -422,7 +422,7 @@ function BansTab({ serverId, accessToken }: { serverId: string; accessToken: str
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-semibold text-white">Bans</h3>
+      <h3 className="text-xl font-semibold text-on-surface">Bans</h3>
 
       <form onSubmit={handleBan} className="flex gap-2">
         <input
@@ -430,31 +430,31 @@ function BansTab({ serverId, accessToken }: { serverId: string; accessToken: str
           value={newBanId}
           onChange={(e) => setNewBanId(e.target.value)}
           placeholder="@user:server.com"
-          className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         <button
           type="submit"
-          className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded transition-colors"
+          className="px-4 py-2 bg-error hover:bg-error-dim text-on-surface text-sm rounded transition-colors"
         >
           Ban
         </button>
       </form>
 
       {loading ? (
-        <p className="text-zinc-500 text-sm">Loading...</p>
+        <p className="text-on-surface-variant text-sm">Loading...</p>
       ) : bans.length === 0 ? (
-        <p className="text-zinc-500 text-sm">No banned users</p>
+        <p className="text-on-surface-variant text-sm">No banned users</p>
       ) : (
         <div className="space-y-1">
           {bans.map((b) => (
             <div
               key={b.id}
-              className="flex items-center justify-between px-3 py-2 rounded bg-zinc-800/50"
+              className="flex items-center justify-between px-3 py-2 rounded bg-surface-container"
             >
-              <span className="text-sm text-zinc-300">{b.user_id}</span>
+              <span className="text-sm text-on-surface">{b.user_id}</span>
               <button
                 onClick={() => handleUnban(b.user_id)}
-                className="text-xs text-zinc-500 hover:text-emerald-400 transition-colors"
+                className="text-xs text-on-surface-variant hover:text-secondary transition-colors"
               >
                 Unban
               </button>
@@ -510,8 +510,8 @@ function WhitelistTab({ serverId, accessToken }: { serverId: string; accessToken
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-semibold text-white">Whitelist</h3>
-      <p className="text-xs text-zinc-500">
+      <h3 className="text-xl font-semibold text-on-surface">Whitelist</h3>
+      <p className="text-xs text-on-surface-variant">
         Only whitelisted users can join this private server via invite.
       </p>
 
@@ -521,31 +521,31 @@ function WhitelistTab({ serverId, accessToken }: { serverId: string; accessToken
           value={newUserId}
           onChange={(e) => setNewUserId(e.target.value)}
           placeholder="@user:server.com"
-          className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         <button
           type="submit"
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded transition-colors"
+          className="px-4 py-2 primary-glow hover:brightness-110 text-on-surface text-sm rounded transition-colors"
         >
           Add
         </button>
       </form>
 
       {loading ? (
-        <p className="text-zinc-500 text-sm">Loading...</p>
+        <p className="text-on-surface-variant text-sm">Loading...</p>
       ) : entries.length === 0 ? (
-        <p className="text-zinc-500 text-sm">No whitelisted users</p>
+        <p className="text-on-surface-variant text-sm">No whitelisted users</p>
       ) : (
         <div className="space-y-1">
           {entries.map((e) => (
             <div
               key={e.id}
-              className="flex items-center justify-between px-3 py-2 rounded bg-zinc-800/50"
+              className="flex items-center justify-between px-3 py-2 rounded bg-surface-container"
             >
-              <span className="text-sm text-zinc-300">{e.user_id}</span>
+              <span className="text-sm text-on-surface">{e.user_id}</span>
               <button
                 onClick={() => handleRemove(e.user_id)}
-                className="text-xs text-zinc-500 hover:text-red-400 transition-colors"
+                className="text-xs text-on-surface-variant hover:text-error transition-colors"
               >
                 Remove
               </button>
@@ -628,8 +628,8 @@ function WebhooksTab({ serverId, accessToken }: { serverId: string; accessToken:
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-semibold text-white">Webhooks</h3>
-      <p className="text-xs text-zinc-500">
+      <h3 className="text-xl font-semibold text-on-surface">Webhooks</h3>
+      <p className="text-xs text-on-surface-variant">
         Webhooks let external users or apps post messages to a channel via a public URL.
       </p>
 
@@ -637,7 +637,7 @@ function WebhooksTab({ serverId, accessToken }: { serverId: string; accessToken:
         <select
           value={newChannelId}
           onChange={(e) => setNewChannelId(e.target.value ? Number(e.target.value) : "")}
-          className="px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+          className="px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30"
         >
           <option value="">Select channel</option>
           {textChannels.map((ch) => (
@@ -650,39 +650,39 @@ function WebhooksTab({ serverId, accessToken }: { serverId: string; accessToken:
           onChange={(e) => setNewName(e.target.value)}
           placeholder="Webhook name"
           maxLength={100}
-          className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         <button
           type="submit"
           disabled={!newName.trim() || newChannelId === ""}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded transition-colors"
+          className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded transition-colors"
         >
           Create
         </button>
       </form>
 
       {loading ? (
-        <p className="text-zinc-500 text-sm">Loading...</p>
+        <p className="text-on-surface-variant text-sm">Loading...</p>
       ) : webhooks.length === 0 ? (
-        <p className="text-zinc-500 text-sm">No webhooks configured</p>
+        <p className="text-on-surface-variant text-sm">No webhooks configured</p>
       ) : (
         <div className="space-y-2">
           {webhooks.map((wh) => (
             <div
               key={wh.id}
-              className="px-3 py-3 rounded bg-zinc-800/50 space-y-2"
+              className="px-3 py-3 rounded bg-surface-container space-y-2"
             >
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
-                  <span className="text-sm text-zinc-200 font-medium">{wh.name}</span>
-                  <span className="text-xs text-zinc-500 ml-2">#{wh.channel_name}</span>
+                  <span className="text-sm text-on-surface font-medium">{wh.name}</span>
+                  <span className="text-xs text-on-surface-variant ml-2">#{wh.channel_name}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {/* Enabled toggle */}
                   <button
                     onClick={() => handleToggle(wh.id)}
                     className={`relative w-8 h-4 rounded-full transition-colors ${
-                      wh.enabled ? "bg-emerald-600" : "bg-zinc-600"
+                      wh.enabled ? "bg-secondary-container" : "bg-surface-bright"
                     }`}
                     title={wh.enabled ? "Enabled" : "Disabled"}
                   >
@@ -697,14 +697,14 @@ function WebhooksTab({ serverId, accessToken }: { serverId: string; accessToken:
                     <button
                       onClick={() => handleDelete(wh.id)}
                       onMouseLeave={() => setConfirmDelete(null)}
-                      className="text-red-400 text-xs px-1 animate-pulse"
+                      className="text-error text-xs px-1 animate-pulse"
                     >
                       Confirm?
                     </button>
                   ) : (
                     <button
                       onClick={() => setConfirmDelete(wh.id)}
-                      className="text-zinc-600 hover:text-red-400 text-xs transition-colors"
+                      className="text-on-surface-variant/50 hover:text-error text-xs transition-colors"
                     >
                       Delete
                     </button>
@@ -714,18 +714,18 @@ function WebhooksTab({ serverId, accessToken }: { serverId: string; accessToken:
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => copyUrl(wh.id, "form")}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  className="text-xs text-primary hover:text-primary transition-colors"
                 >
                   Copy Form URL
                 </button>
-                <span className="text-zinc-700">|</span>
+                <span className="text-outline-variant">|</span>
                 <button
                   onClick={() => copyUrl(wh.id, "api")}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  className="text-xs text-primary hover:text-primary transition-colors"
                 >
                   Copy API URL
                 </button>
-                <span className="text-xs text-zinc-600 ml-auto">
+                <span className="text-xs text-on-surface-variant/50 ml-auto">
                   by {wh.created_by.split(":")[0].replace("@", "")}
                 </span>
               </div>
@@ -796,21 +796,21 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
     }
   };
 
-  if (loading) return <p className="text-zinc-500 text-sm">Loading...</p>;
+  if (loading) return <p className="text-on-surface-variant text-sm">Loading...</p>;
 
   const nonOwnerMembers = members.filter((m) => m.role !== "owner");
 
   return (
     <div className="space-y-8">
       <div className="space-y-4">
-        <h3 className="text-xl font-semibold text-white">Moderation Settings</h3>
-        <p className="text-xs text-zinc-500">
+        <h3 className="text-xl font-semibold text-on-surface">Moderation Settings</h3>
+        <p className="text-xs text-on-surface-variant">
           Configure kick limits and ban behavior for this server.
         </p>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
+            <label className="block text-sm font-medium text-on-surface mb-1">
               Kick Limit
             </label>
             <input
@@ -819,15 +819,15 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
               max={100}
               value={kickLimit}
               onChange={(e) => setKickLimit(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+              className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
-            <p className="text-xs text-zinc-500 mt-1">
+            <p className="text-xs text-on-surface-variant mt-1">
               Kicks before ban escalation
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
+            <label className="block text-sm font-medium text-on-surface mb-1">
               Kick Window (minutes)
             </label>
             <input
@@ -836,16 +836,16 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
               max={1440}
               value={kickWindow}
               onChange={(e) => setKickWindow(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+              className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
-            <p className="text-xs text-zinc-500 mt-1">
+            <p className="text-xs text-on-surface-variant mt-1">
               Time window for counting kicks
             </p>
           </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-zinc-300 mb-2">
+          <label className="block text-sm font-medium text-on-surface mb-2">
             Ban Mode
           </label>
           <div className="flex gap-2">
@@ -853,8 +853,8 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
               onClick={() => setBanMode("soft")}
               className={`px-4 py-2 rounded text-sm transition-colors ${
                 banMode === "soft"
-                  ? "bg-amber-600/30 text-amber-300 border border-amber-600/50"
-                  : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                  ? "bg-primary/15 text-primary border border-primary/30"
+                  : "bg-surface-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
               Soft Ban
@@ -863,14 +863,14 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
               onClick={() => setBanMode("harsh")}
               className={`px-4 py-2 rounded text-sm transition-colors ${
                 banMode === "harsh"
-                  ? "bg-red-600/30 text-red-300 border border-red-600/50"
-                  : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                  ? "bg-error-container/30 text-on-error-container border border-red-600/50"
+                  : "bg-surface-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
               Harsh Ban
             </button>
           </div>
-          <p className="text-xs text-zinc-500 mt-1">
+          <p className="text-xs text-on-surface-variant mt-1">
             {banMode === "soft"
               ? "Soft: Warns the user with escalation details after each kick."
               : "Harsh: Bans the user's IP address with a dramatic prank overlay."}
@@ -884,20 +884,20 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
             settings?.kick_window_minutes === kickWindow &&
             settings?.ban_mode === banMode
           )}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded transition-colors"
+          className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm font-medium rounded transition-colors"
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>
       </div>
 
-      <div className="border-t border-zinc-700 pt-6 space-y-4">
-        <h3 className="text-lg font-semibold text-white">Member Permissions</h3>
-        <p className="text-xs text-zinc-500">
+      <div className="border-t border-outline-variant/15 pt-6 space-y-4">
+        <h3 className="text-lg font-semibold text-on-surface">Member Permissions</h3>
+        <p className="text-xs text-on-surface-variant">
           Grant kick/ban permissions to individual members. Admins and owners always have these permissions.
         </p>
 
         {nonOwnerMembers.length === 0 ? (
-          <p className="text-zinc-500 text-sm">No non-owner members</p>
+          <p className="text-on-surface-variant text-sm">No non-owner members</p>
         ) : (
           <div className="space-y-1">
             {nonOwnerMembers.map((m) => {
@@ -906,12 +906,12 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
               return (
                 <div
                   key={m.user_id}
-                  className="flex items-center justify-between px-3 py-2 rounded bg-zinc-800/50"
+                  className="flex items-center justify-between px-3 py-2 rounded bg-surface-container"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm text-zinc-200 truncate">{name}</span>
+                    <span className="text-sm text-on-surface truncate">{name}</span>
                     {isAdmin && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-400">
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
                         admin
                       </span>
                     )}
@@ -923,9 +923,9 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
                         checked={isAdmin || m.can_kick}
                         disabled={isAdmin}
                         onChange={(e) => handlePermissionChange(m.user_id, "can_kick", e.target.checked)}
-                        className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-700 text-indigo-500 focus:ring-0 focus:ring-offset-0"
+                        className="w-3.5 h-3.5 rounded border-outline-variant bg-surface-container-highest text-primary focus:ring-0 focus:ring-offset-0"
                       />
-                      <span className="text-xs text-zinc-400">Kick</span>
+                      <span className="text-xs text-on-surface-variant">Kick</span>
                     </label>
                     <label className="flex items-center gap-1.5 cursor-pointer">
                       <input
@@ -933,9 +933,9 @@ function ModerationTab({ serverId, accessToken }: { serverId: string; accessToke
                         checked={isAdmin || m.can_ban}
                         disabled={isAdmin}
                         onChange={(e) => handlePermissionChange(m.user_id, "can_ban", e.target.checked)}
-                        className="w-3.5 h-3.5 rounded border-zinc-600 bg-zinc-700 text-indigo-500 focus:ring-0 focus:ring-offset-0"
+                        className="w-3.5 h-3.5 rounded border-outline-variant bg-surface-container-highest text-primary focus:ring-0 focus:ring-offset-0"
                       />
-                      <span className="text-xs text-zinc-400">Ban</span>
+                      <span className="text-xs text-on-surface-variant">Ban</span>
                     </label>
                   </div>
                 </div>
@@ -997,8 +997,8 @@ function InviteUserTab({ serverId, accessToken }: { serverId: string; accessToke
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-semibold text-white">Invite User</h3>
-      <p className="text-xs text-zinc-500">
+      <h3 className="text-xl font-semibold text-on-surface">Invite User</h3>
+      <p className="text-xs text-on-surface-variant">
         Search for registered users to invite directly to this server.
       </p>
 
@@ -1007,13 +1007,13 @@ function InviteUserTab({ serverId, accessToken }: { serverId: string; accessToke
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search users..."
-        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+        className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
       />
 
       {loading ? (
-        <p className="text-zinc-500 text-sm">Searching...</p>
+        <p className="text-on-surface-variant text-sm">Searching...</p>
       ) : filteredResults.length === 0 ? (
-        <p className="text-zinc-500 text-sm">
+        <p className="text-on-surface-variant text-sm">
           {results.length > 0 && filteredResults.length === 0
             ? "All matching users are already members"
             : query
@@ -1027,18 +1027,18 @@ function InviteUserTab({ serverId, accessToken }: { serverId: string; accessToke
             return (
               <div
                 key={user.user_id}
-                className="flex items-center justify-between px-3 py-2 rounded bg-zinc-800/50"
+                className="flex items-center justify-between px-3 py-2 rounded bg-surface-container"
               >
                 <div className="min-w-0">
-                  <span className="text-sm text-zinc-200">{name}</span>
+                  <span className="text-sm text-on-surface">{name}</span>
                   {user.display_name && (
-                    <span className="text-xs text-zinc-500 ml-2">{user.user_id}</span>
+                    <span className="text-xs text-on-surface-variant ml-2">{user.user_id}</span>
                   )}
                 </div>
                 <button
                   onClick={() => handleInvite(user.user_id)}
                   disabled={sending === user.user_id}
-                  className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white rounded transition-colors"
+                  className="text-xs px-3 py-1 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface rounded transition-colors"
                 >
                   {sending === user.user_id ? "..." : "Invite"}
                 </button>

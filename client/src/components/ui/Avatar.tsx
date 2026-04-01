@@ -4,9 +4,9 @@ import { useTOTPUsers } from "../../hooks/useTOTPUsers";
 
 // Deterministic fallback color from userId hash
 const COLORS = [
-  "bg-indigo-600",
-  "bg-emerald-600",
-  "bg-amber-600",
+  "bg-primary",
+  "bg-secondary-container",
+  "bg-tertiary",
   "bg-rose-600",
   "bg-cyan-600",
   "bg-violet-600",
@@ -35,9 +35,9 @@ const dotSizes = {
 } as const;
 
 const presenceColors: Record<PresenceState, string> = {
-  online: "bg-emerald-500",
-  unavailable: "bg-amber-500",
-  offline: "bg-zinc-500",
+  online: "bg-secondary",
+  unavailable: "bg-primary",
+  offline: "bg-on-surface-variant/50",
 };
 
 interface AvatarProps {
@@ -70,14 +70,14 @@ export function Avatar({ userId, size = "md", showPresence = false }: AvatarProp
         />
       ) : (
         <div
-          className={`${sizeClasses[size]} ${hashColor(userId)} rounded-full flex items-center justify-center font-bold text-white`}
+          className={`${sizeClasses[size]} ${hashColor(userId)} rounded-full flex items-center justify-center font-bold text-on-surface`}
         >
           {initial}
         </div>
       )}
       {showPresence && (
         <div
-          className={`absolute ${dotPosition} ${dotSizes[size]} ${presenceColors[presence]} rounded-full border-zinc-900`}
+          className={`absolute ${dotPosition} ${dotSizes[size]} ${presenceColors[presence]} rounded-full border-surface`}
         />
       )}
     </div>

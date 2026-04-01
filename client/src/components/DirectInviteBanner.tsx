@@ -25,12 +25,12 @@ export function DirectInviteBanner() {
         return (
           <div
             key={invite.id}
-            className="bg-zinc-800 border border-zinc-600 rounded-lg p-3 shadow-lg animate-in slide-in-from-left"
+            className="bg-surface-container border border-outline-variant rounded-lg p-3 shadow-lg animate-in slide-in-from-left"
           >
-            <p className="text-sm text-zinc-200 mb-2">
-              <span className="text-indigo-400 font-medium">{inviterName}</span>
+            <p className="text-sm text-on-surface mb-2">
+              <span className="text-primary font-medium">{inviterName}</span>
               {" invited you to "}
-              <span className="text-white font-medium">
+              <span className="text-on-surface font-medium">
                 {invite.server_name}
               </span>
             </p>
@@ -39,7 +39,7 @@ export function DirectInviteBanner() {
                 onClick={() =>
                   accessToken && respond(invite.id, "accept", accessToken)
                 }
-                className="flex-1 py-1.5 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors"
+                className="flex-1 py-1.5 text-xs font-medium primary-glow hover:brightness-110 text-on-surface rounded transition-colors"
               >
                 Accept
               </button>
@@ -47,7 +47,7 @@ export function DirectInviteBanner() {
                 onClick={() =>
                   accessToken && respond(invite.id, "decline", accessToken)
                 }
-                className="flex-1 py-1.5 text-xs font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded transition-colors"
+                className="flex-1 py-1.5 text-xs font-medium bg-surface-container-highest hover:bg-surface-bright text-on-surface rounded transition-colors"
               >
                 Decline
               </button>

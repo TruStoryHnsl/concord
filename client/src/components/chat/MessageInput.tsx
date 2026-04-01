@@ -167,7 +167,7 @@ export function MessageInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="border-t border-zinc-700"
+      className="bg-surface-container-low"
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -176,7 +176,7 @@ export function MessageInput({
       onDrop={handleDrop}
     >
       {editingMessage && (
-        <div className="flex items-center gap-2 px-4 pt-2 text-xs text-zinc-400">
+        <div className="flex items-center gap-2 px-4 pt-2 text-xs text-on-surface-variant font-label">
           <span>Editing message</span>
           <button
             type="button"
@@ -184,15 +184,15 @@ export function MessageInput({
               setText("");
               onCancelEdit();
             }}
-            className="text-zinc-500 hover:text-white"
+            className="text-on-surface-variant hover:text-on-surface"
           >
             Esc to cancel
           </button>
         </div>
       )}
       {uploading && (
-        <div className="flex items-center gap-2 px-4 pt-2 text-xs text-indigo-400">
-          <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+        <div className="flex items-center gap-2 px-4 pt-2 text-xs text-primary font-label">
+          <span className="inline-block w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           Uploading...
         </div>
       )}
@@ -210,25 +210,23 @@ export function MessageInput({
                   <img
                     src={sf.previewUrl}
                     alt={sf.file.name}
-                    className="w-20 h-20 object-cover rounded-lg border border-zinc-600"
+                    className="w-20 h-20 object-cover rounded-xl"
                   />
                 ) : (
-                  <div className="w-20 h-20 rounded-lg border border-zinc-600 bg-zinc-800 flex flex-col items-center justify-center p-1.5">
-                    <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-zinc-500 mb-1">
-                      <path d="M3 3.5A1.5 1.5 0 014.5 2h6.879a1.5 1.5 0 011.06.44l4.122 4.12A1.5 1.5 0 0117 7.622V16.5a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 013 16.5v-13z" />
-                    </svg>
-                    <span className="text-[9px] text-zinc-500 truncate w-full text-center">{sf.file.name}</span>
-                    <span className="text-[9px] text-zinc-600">{formatSize(sf.file.size)}</span>
+                  <div className="w-20 h-20 rounded-xl bg-surface-container-high flex flex-col items-center justify-center p-1.5">
+                    <span className="material-symbols-outlined text-on-surface-variant text-xl mb-1">description</span>
+                    <span className="text-[9px] text-on-surface-variant truncate w-full text-center font-label">{sf.file.name}</span>
+                    <span className="text-[9px] text-on-surface-variant/50 font-label">{formatSize(sf.file.size)}</span>
                   </div>
                 )}
                 {/* Remove button */}
                 <button
                   type="button"
                   onClick={() => removeStaged(sf.id)}
-                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity shadow"
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-error text-on-error flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Remove"
                 >
-                  ×
+                  <span className="material-symbols-outlined text-xs">close</span>
                 </button>
               </div>
             ))}
@@ -238,12 +236,12 @@ export function MessageInput({
 
       <div className="px-4 py-3">
         <div
-          className={`flex items-center gap-2 bg-zinc-800 border rounded-lg px-2 ${
+          className={`flex items-center gap-2 bg-surface-container rounded-xl px-2 transition-all ${
             dragOver
-              ? "border-indigo-500 bg-indigo-500/10"
+              ? "ring-1 ring-primary/30 bg-primary/5"
               : editingMessage
-                ? "border-indigo-500/50"
-                : "border-zinc-700"
+                ? "ring-1 ring-primary/20"
+                : ""
           }`}
         >
           {onSendFile && (
@@ -251,20 +249,10 @@ export function MessageInput({
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="btn-press p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-zinc-400 hover:text-white active:text-indigo-400 transition-colors flex-shrink-0 rounded-lg"
+                className="btn-press p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-on-surface-variant hover:text-on-surface active:text-primary transition-colors flex-shrink-0 rounded-xl"
                 title="Upload file"
               >
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                  className="w-5 h-5"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M15.621 4.379a3 3 0 00-4.242 0l-7 7a3 3 0 004.241 4.243h.001l.497-.5a.75.75 0 011.064 1.057l-.498.501-.002.002a4.5 4.5 0 01-6.364-6.364l7-7a4.5 4.5 0 016.368 6.36l-3.455 3.553A2.625 2.625 0 119.52 9.52l3.45-3.451a.75.75 0 111.061 1.06l-3.45 3.451a1.125 1.125 0 001.587 1.595l3.454-3.553a3 3 0 000-4.242z"
-                    clipRule="evenodd"
-                  />
-                </svg>
+                <span className="material-symbols-outlined text-xl">attach_file</span>
               </button>
               <input
                 ref={fileRef}
@@ -296,19 +284,16 @@ export function MessageInput({
                     ? "Add a message or press Enter to send"
                     : `Message #${roomName}`
             }
-            className="flex-1 px-2 py-3 bg-transparent text-white placeholder-zinc-500 focus:outline-none text-base md:text-sm"
+            className="flex-1 px-2 py-3 bg-transparent text-on-surface placeholder-on-surface-variant/50 focus:outline-none text-base md:text-sm font-body"
           />
-          {/* Show send button when there are staged files */}
           {hasContent && (
             <button
               type="submit"
               disabled={sending}
-              className="p-2 text-indigo-400 hover:text-indigo-300 disabled:text-zinc-600 transition-colors flex-shrink-0"
+              className="btn-press p-2 text-primary hover:text-primary-container disabled:text-outline transition-colors flex-shrink-0"
               title="Send"
             >
-              <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-                <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
-              </svg>
+              <span className="material-symbols-outlined text-xl">send</span>
             </button>
           )}
         </div>

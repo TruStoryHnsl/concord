@@ -20,11 +20,11 @@ export function TypingIndicator({ typingUsers }: TypingIndicatorProps) {
   }
 
   return (
-    <div className="h-6 px-4 flex items-center gap-1.5 text-xs text-zinc-400">
+    <div className="h-6 px-4 flex items-center gap-1.5 text-xs text-on-surface-variant font-label">
       <span className="flex gap-0.5">
-        <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce [animation-delay:0ms]" />
-        <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce [animation-delay:150ms]" />
-        <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce [animation-delay:300ms]" />
+        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0ms]" />
+        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:150ms]" />
+        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:300ms]" />
       </span>
       <span>{text}</span>
     </div>

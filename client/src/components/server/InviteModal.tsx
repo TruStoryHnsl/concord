@@ -29,12 +29,12 @@ export function InviteModal({ serverId, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-zinc-800 rounded-lg w-full max-w-md border border-zinc-700 shadow-xl">
-        <div className="p-4 border-b border-zinc-700 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Invite People</h2>
+      <div className="bg-surface-container rounded-lg w-full max-w-md border border-outline-variant/15 shadow-xl">
+        <div className="p-4 border-b border-outline-variant/15 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-on-surface">Invite People</h2>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-white transition-colors"
+            className="text-on-surface-variant hover:text-on-surface transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -48,11 +48,11 @@ export function InviteModal({ serverId, onClose }: Props) {
               {emailAvailable && (
                 <>
                   <EmailInviteSection serverId={serverId} accessToken={accessToken} addToast={addToast} />
-                  <div className="border-t border-zinc-700" />
+                  <div className="border-t border-outline-variant/15" />
                 </>
               )}
               <PermanentLinkSection serverId={serverId} accessToken={accessToken} addToast={addToast} />
-              <div className="border-t border-zinc-700" />
+              <div className="border-t border-outline-variant/15" />
               <ExpiringLinkSection serverId={serverId} accessToken={accessToken} addToast={addToast} />
             </>
           )}
@@ -90,7 +90,7 @@ function EmailInviteSection({
 
   return (
     <div>
-      <h3 className="text-sm font-medium text-zinc-300 mb-2">Send via Email</h3>
+      <h3 className="text-sm font-medium text-on-surface mb-2">Send via Email</h3>
       <div className="flex gap-2">
         <input
           type="email"
@@ -98,17 +98,17 @@ function EmailInviteSection({
           onChange={(e) => setEmail(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder="friend@example.com"
-          className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="flex-1 px-3 py-2 bg-surface border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
         <button
           onClick={send}
           disabled={sending || !email.trim()}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded transition-colors"
+          className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded transition-colors"
         >
           {sending ? "Sending..." : "Send"}
         </button>
       </div>
-      <p className="text-xs text-zinc-500 mt-1">Sends a single-use invite link (expires in 7 days)</p>
+      <p className="text-xs text-on-surface-variant mt-1">Sends a single-use invite link (expires in 7 days)</p>
     </div>
   );
 }
@@ -153,18 +153,18 @@ function PermanentLinkSection({
 
   return (
     <div>
-      <h3 className="text-sm font-medium text-zinc-300 mb-2">Permanent Link</h3>
+      <h3 className="text-sm font-medium text-on-surface mb-2">Permanent Link</h3>
       {link ? (
         <div className="flex gap-2">
-          <code className="flex-1 text-xs text-indigo-300 bg-zinc-900 px-3 py-2 rounded truncate">
+          <code className="flex-1 text-xs text-primary bg-surface px-3 py-2 rounded truncate">
             {link}
           </code>
           <button
             onClick={copy}
             className={`px-3 py-2 text-xs rounded transition-colors ${
               copied
-                ? "bg-emerald-600/20 text-emerald-400"
-                : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                ? "bg-secondary/10 text-secondary"
+                : "bg-surface-container-highest text-on-surface hover:bg-surface-bright"
             }`}
           >
             {copied ? "Copied!" : "Copy"}
@@ -174,12 +174,12 @@ function PermanentLinkSection({
         <button
           onClick={generate}
           disabled={generating}
-          className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 disabled:bg-zinc-800 text-zinc-300 text-sm rounded transition-colors"
+          className="px-4 py-2 bg-surface-container-highest hover:bg-surface-bright disabled:opacity-40 text-on-surface text-sm rounded transition-colors"
         >
           {generating ? "Generating..." : "Generate Permanent Link"}
         </button>
       )}
-      <p className="text-xs text-zinc-500 mt-1">This link never expires</p>
+      <p className="text-xs text-on-surface-variant mt-1">This link never expires</p>
     </div>
   );
 }
@@ -233,20 +233,20 @@ function ExpiringLinkSection({
 
   return (
     <div>
-      <h3 className="text-sm font-medium text-zinc-300 mb-2">Expiring Link</h3>
+      <h3 className="text-sm font-medium text-on-surface mb-2">Expiring Link</h3>
 
       {link ? (
         <div className="space-y-2">
           <div className="flex gap-2">
-            <code className="flex-1 text-xs text-indigo-300 bg-zinc-900 px-3 py-2 rounded truncate">
+            <code className="flex-1 text-xs text-primary bg-surface px-3 py-2 rounded truncate">
               {link}
             </code>
             <button
               onClick={copy}
               className={`px-3 py-2 text-xs rounded transition-colors ${
                 copied
-                  ? "bg-emerald-600/20 text-emerald-400"
-                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  ? "bg-secondary/10 text-secondary"
+                  : "bg-surface-container-highest text-on-surface hover:bg-surface-bright"
               }`}
             >
               {copied ? "Copied!" : "Copy"}
@@ -254,7 +254,7 @@ function ExpiringLinkSection({
           </div>
           <button
             onClick={() => setLink(null)}
-            className="text-xs text-zinc-500 hover:text-zinc-300"
+            className="text-xs text-on-surface-variant hover:text-on-surface"
           >
             Generate another
           </button>
@@ -262,7 +262,7 @@ function ExpiringLinkSection({
       ) : (
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Duration</label>
+            <label className="text-xs text-on-surface-variant mb-1 block">Duration</label>
             <div className="flex gap-1">
               {durations.map((d) => (
                 <button
@@ -270,8 +270,8 @@ function ExpiringLinkSection({
                   onClick={() => setDuration(d.value)}
                   className={`flex-1 py-1.5 text-xs rounded transition-colors ${
                     duration === d.value
-                      ? "bg-zinc-700 text-white"
-                      : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                      ? "bg-surface-container-highest text-on-surface"
+                      : "bg-surface text-on-surface-variant hover:text-on-surface"
                   }`}
                 >
                   {d.label}
@@ -281,21 +281,21 @@ function ExpiringLinkSection({
           </div>
 
           <div>
-            <label className="text-xs text-zinc-400 mb-1 block">Max Uses</label>
+            <label className="text-xs text-on-surface-variant mb-1 block">Max Uses</label>
             <input
               type="number"
               value={maxUses}
               onChange={(e) => setMaxUses(Math.max(1, Math.min(1000, Number(e.target.value))))}
               min={1}
               max={1000}
-              className="w-24 px-3 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-sm text-white focus:outline-none focus:border-indigo-500"
+              className="w-24 px-3 py-1.5 bg-surface border border-outline-variant rounded text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
           </div>
 
           <button
             onClick={generate}
             disabled={generating}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white text-sm rounded transition-colors"
+            className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded transition-colors"
           >
             {generating ? "Generating..." : "Generate Link"}
           </button>

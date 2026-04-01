@@ -128,19 +128,19 @@ export const MessageList = memo(function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500">
+      <div className="flex-1 flex items-center justify-center text-on-surface-variant font-body">
         No messages yet. Say something!
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-1">
+    <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-1 selectable">
       {/* Top sentinel for scrollback */}
       <div ref={topRef} className="h-1" />
       {isPaginating && (
         <div className="flex justify-center py-2">
-          <span className="inline-block w-4 h-4 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+          <span className="inline-block w-4 h-4 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
         </div>
       )}
 
@@ -175,52 +175,40 @@ export const MessageList = memo(function MessageList({
           >
             {showDateSeparator && (
               <div className="flex items-center gap-3 py-2 mt-2">
-                <div className="flex-1 h-px bg-zinc-700" />
-                <span className="text-xs text-zinc-500 font-medium">
+                <div className="flex-1 h-px bg-outline-variant/15" />
+                <span className="text-[10px] text-on-surface-variant font-label font-medium tracking-wider uppercase">
                   {formatDate(msg.timestamp)}
                 </span>
-                <div className="flex-1 h-px bg-zinc-700" />
+                <div className="flex-1 h-px bg-outline-variant/15" />
               </div>
             )}
 
             {/* Hover action bar */}
             {showActions && (
-              <div className="absolute -top-3 right-2 z-10 flex gap-0.5 bg-zinc-800 border border-zinc-600 rounded p-0.5 shadow-lg">
-                {/* React button */}
+              <div className="absolute -top-3 right-2 z-10 flex gap-0.5 glass-panel rounded-xl p-0.5">
                 <button
-                  onClick={() =>
-                    setReactingId(reactingId === msg.id ? null : msg.id)
-                  }
-                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-zinc-700 text-zinc-400 hover:text-white text-sm"
+                  onClick={() => setReactingId(reactingId === msg.id ? null : msg.id)}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface"
                   title="React"
                 >
-                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.536-4.464a.75.75 0 10-1.06-1.06 3.5 3.5 0 01-4.95 0 .75.75 0 00-1.06 1.06 5 5 0 007.07 0zM9 8.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S7.448 7 8 7s1 .672 1 1.5zm3 1.5c.552 0 1-.672 1-1.5S12.552 7 12 7s-1 .672-1 1.5.448 1.5 1 1.5z" clipRule="evenodd" />
-                  </svg>
+                  <span className="material-symbols-outlined text-base">add_reaction</span>
                 </button>
 
-                {/* Edit button (own text messages only) */}
                 {canEdit && (
                   <button
                     onClick={() => onStartEdit(msg)}
-                    className="w-7 h-7 flex items-center justify-center rounded hover:bg-zinc-700 text-zinc-400 hover:text-white text-sm"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface"
                     title="Edit"
                   >
-                    <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                      <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
-                    </svg>
+                    <span className="material-symbols-outlined text-base">edit</span>
                   </button>
                 )}
 
-                {/* Delete button */}
                 {canDelete && (
                   confirmDeleteId === msg.id ? (
                     <button
-                      onClick={() => {
-                        onDelete(msg.id);
-                        setConfirmDeleteId(null);
-                      }}
-                      className="w-7 h-7 flex items-center justify-center rounded bg-red-600/20 text-red-400 animate-pulse text-xs font-bold"
+                      onClick={() => { onDelete(msg.id); setConfirmDeleteId(null); }}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-error/20 text-error animate-pulse text-xs font-bold"
                       title="Click to confirm"
                     >
                       ?
@@ -228,12 +216,10 @@ export const MessageList = memo(function MessageList({
                   ) : (
                     <button
                       onClick={() => setConfirmDeleteId(msg.id)}
-                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-zinc-700 text-zinc-400 hover:text-red-400 text-sm"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container-high text-on-surface-variant hover:text-error"
                       title="Delete"
                     >
-                      <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                        <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022 1.005 11.07A2.75 2.75 0 007.769 19.5h4.462a2.75 2.75 0 002.75-2.479l1.005-11.07.149.022a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                      </svg>
+                      <span className="material-symbols-outlined text-base">delete</span>
                     </button>
                   )
                 )}
@@ -259,14 +245,14 @@ export const MessageList = memo(function MessageList({
                   <Avatar userId={msg.sender} size="md" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-semibold text-indigo-400">
+                      <span className="text-sm font-headline font-semibold text-primary">
                         <SenderName userId={msg.sender} />
                       </span>
-                      <span className="text-xs text-zinc-500">
+                      <span className="text-[10px] text-on-surface-variant font-label">
                         {formatTime(msg.timestamp)}
                       </span>
                       {msg.edited && (
-                        <span className="text-xs text-zinc-600">(edited)</span>
+                        <span className="text-[10px] text-on-surface-variant/50 font-label">(edited)</span>
                       )}
                     </div>
                     <MessageContent message={msg} />
@@ -282,7 +268,7 @@ export const MessageList = memo(function MessageList({
                 <div className="pl-10">
                   <MessageContent message={msg} />
                   {msg.edited && (
-                    <span className="text-xs text-zinc-600 ml-1">(edited)</span>
+                    <span className="text-[10px] text-on-surface-variant/50 font-label ml-1">(edited)</span>
                   )}
                   <ReactionPills
                     reactions={msg.reactions}

@@ -1,9 +1,9 @@
 import { useToastStore } from "../../stores/toast";
 
-const typeStyles = {
-  error: "bg-red-600/90 text-white",
-  success: "bg-emerald-600/90 text-white",
-  info: "bg-zinc-700/90 text-zinc-200",
+const typeConfig = {
+  error: { bg: "bg-error-container", text: "text-on-error-container", icon: "error" },
+  success: { bg: "bg-secondary-container", text: "text-on-secondary-container", icon: "check_circle" },
+  info: { bg: "glass-panel", text: "text-on-surface", icon: "info" },
 };
 
 export function ToastContainer() {
@@ -13,23 +13,29 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
-      {toasts.map((toast) => (
-        <div
-          key={toast.id}
-          className={`px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium animate-[slideIn_0.2s_ease-out] ${typeStyles[toast.type]}`}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span>{toast.message}</span>
-            <button
-              onClick={() => removeToast(toast.id)}
-              className="text-white/60 hover:text-white text-xs shrink-0"
-            >
-              x
-            </button>
+    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm">
+      {toasts.map((toast) => {
+        const config = typeConfig[toast.type];
+        return (
+          <div
+            key={toast.id}
+            className={`px-4 py-2.5 rounded-xl text-sm font-body font-medium animate-[slideIn_0.3s_ease-out] ${config.bg} ${config.text}`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-base">{config.icon}</span>
+                <span>{toast.message}</span>
+              </div>
+              <button
+                onClick={() => removeToast(toast.id)}
+                className="opacity-60 hover:opacity-100 shrink-0"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

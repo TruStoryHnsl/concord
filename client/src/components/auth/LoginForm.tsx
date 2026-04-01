@@ -28,7 +28,6 @@ export function LoginForm() {
   const [totpCode, setTotpCode] = useState("");
   const [totpError, setTotpError] = useState("");
 
-  // Fetch instance name
   useEffect(() => {
     getInstanceInfo()
       .then((info) => {
@@ -40,21 +39,15 @@ export function LoginForm() {
       .catch(() => {});
   }, []);
 
-  // Welcome screen auto-dismiss
   useEffect(() => {
     const fadeTimer = setTimeout(() => setWelcomeFading(true), 1500);
     const hideTimer = setTimeout(() => setShowWelcome(false), 2200);
-    return () => {
-      clearTimeout(fadeTimer);
-      clearTimeout(hideTimer);
-    };
+    return () => { clearTimeout(fadeTimer); clearTimeout(hideTimer); };
   }, []);
 
-  // Check URL and sessionStorage for invite token
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token =
-      params.get("invite") || sessionStorage.getItem(INVITE_STORAGE_KEY);
+    const token = params.get("invite") || sessionStorage.getItem(INVITE_STORAGE_KEY);
     if (token) {
       setInviteToken(token);
       setMode("register");
@@ -64,7 +57,6 @@ export function LoginForm() {
           if (result.valid) {
             setServerName(result.server_name);
           } else {
-            // Invite is invalid but user can still register without it
             setInviteToken("");
             setError("Invite link is invalid or expired — you can still create an account");
           }
@@ -73,9 +65,7 @@ export function LoginForm() {
           setInviteToken("");
           setError("Failed to validate invite link — you can still create an account");
         })
-        .finally(() => {
-          setValidatingInvite(false);
-        });
+        .finally(() => setValidatingInvite(false));
     }
   }, []);
 
@@ -87,11 +77,9 @@ export function LoginForm() {
     try {
       if (mode === "login") {
         const result = await loginWithPassword(username, password);
-        // Check if user has TOTP enabled
         try {
           const totpStatus = await getTOTPStatus(result.accessToken);
           if (totpStatus.enabled) {
-            // Hold login pending TOTP verification
             setPendingLogin({
               accessToken: result.accessToken,
               userId: result.userId,
@@ -101,8 +89,6 @@ export function LoginForm() {
             return;
           }
         } catch (totpErr: unknown) {
-          // Only allow bypass if the TOTP endpoint doesn't exist (404);
-          // any other error (network, server) should block login for safety
           const status = (totpErr as { status?: number })?.status;
           if (status !== 404) {
             setError("Could not verify two-factor authentication status. Please try again.");
@@ -112,19 +98,13 @@ export function LoginForm() {
         }
         login(result.accessToken, result.userId, result.deviceId);
       } else {
-        const result = await registerUser(
-          username,
-          password,
-          inviteToken || undefined,
-        );
+        const result = await registerUser(username, password, inviteToken || undefined);
         login(result.access_token, result.user_id, result.device_id);
-        // Clear invite from URL and sessionStorage
         sessionStorage.removeItem(INVITE_STORAGE_KEY);
         window.history.replaceState({}, "", window.location.pathname);
       }
     } catch (err: unknown) {
       const error = err as { message?: string; data?: { error?: string } };
-      // matrix-js-sdk errors have data.error, our API errors have message
       setError(error.data?.error || error.message || "Authentication failed");
     } finally {
       setLoading(false);
@@ -148,53 +128,53 @@ export function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4 relative">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4 relative mesh-background">
       {/* Welcome overlay */}
       {showWelcome && (
         <div
-          className={`absolute inset-0 z-10 bg-zinc-900 flex items-center justify-center transition-opacity duration-700 ${
+          className={`absolute inset-0 z-10 bg-surface flex items-center justify-center transition-opacity duration-700 ${
             welcomeFading ? "opacity-0" : "opacity-100"
           }`}
         >
           <div className="text-center">
-            <h1 className="text-5xl font-bold text-white mb-3 animate-[fadeSlideUp_0.6s_ease-out]">
+            <h1 className="text-5xl font-headline font-bold text-primary mb-3 animate-[fadeSlideUp_0.6s_ease-out]">
               {instanceName}
             </h1>
-            <p className="text-zinc-400 text-lg animate-[fadeSlideUp_0.6s_ease-out_0.2s_both]">
+            <p className="text-on-surface-variant text-lg font-body animate-[fadeSlideUp_0.6s_ease-out_0.2s_both]">
               Welcome back
             </p>
           </div>
         </div>
       )}
 
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-sm relative z-10">
         {/* TOTP verification screen */}
         {pendingLogin ? (
           <div className="text-center">
-            <h1 className="text-3xl font-bold text-white mb-2">{instanceName}</h1>
-            <p className="text-zinc-400 text-sm mb-6">Enter the 6-digit code from your authenticator app</p>
+            <h1 className="text-3xl font-headline font-bold text-on-surface mb-2">{instanceName}</h1>
+            <p className="text-on-surface-variant text-sm mb-6 font-body">Enter the 6-digit code from your authenticator app</p>
             <form onSubmit={handleTOTPVerify} className="space-y-4">
               <input
                 type="text"
                 value={totpCode}
                 onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="000000"
-                className="w-full px-4 py-4 bg-zinc-800 border border-zinc-700 rounded-lg text-white text-center text-2xl font-mono tracking-[0.5em] placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                className="w-full px-4 py-4 bg-surface-container rounded-xl text-on-surface text-center text-2xl font-mono tracking-[0.5em] placeholder-on-surface-variant/30 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all"
                 maxLength={6}
                 autoFocus
               />
-              {totpError && <p className="text-red-400 text-sm">{totpError}</p>}
+              {totpError && <p className="text-error text-sm font-body">{totpError}</p>}
               <button
                 type="submit"
                 disabled={loading || totpCode.length !== 6}
-                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium rounded-lg transition-colors"
+                className="w-full py-3 primary-glow text-on-primary font-headline font-semibold rounded-xl transition-all hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100 shadow-lg shadow-primary/20"
               >
                 {loading ? "Verifying..." : "Verify"}
               </button>
               <button
                 type="button"
                 onClick={() => { setPendingLogin(null); setTotpCode(""); setTotpError(""); }}
-                className="text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
+                className="text-on-surface-variant hover:text-on-surface text-sm transition-colors font-body"
               >
                 Back to login
               </button>
@@ -202,18 +182,18 @@ export function LoginForm() {
           </div>
         ) : (
         <>
-        <h1 className="text-3xl font-bold text-white text-center mb-2">
+        <h1 className="text-3xl font-headline font-bold text-on-surface text-center mb-2">
           {instanceName}
         </h1>
 
         {validatingInvite && (
-          <p className="text-center text-zinc-400 text-sm mb-6 mt-6">
+          <p className="text-center text-on-surface-variant text-sm mb-6 mt-6 font-body">
             Validating invite...
           </p>
         )}
 
         {!validatingInvite && serverName && (
-          <p className="text-center text-indigo-400 text-sm mb-6">
+          <p className="text-center text-primary text-sm mb-6 font-body">
             You've been invited to <strong>{serverName}</strong>
           </p>
         )}
@@ -224,7 +204,7 @@ export function LoginForm() {
             placeholder="Username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+            className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
             required
           />
           <input
@@ -232,21 +212,21 @@ export function LoginForm() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+            className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
             required
           />
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-error text-sm font-body">{error}</p>}
 
-          {/* Login + Register buttons side by side */}
+          {/* Login + Register buttons */}
           <div className="flex gap-2">
             <button
               type={mode === "login" ? "submit" : "button"}
               onClick={mode !== "login" ? () => setMode("login") : undefined}
               disabled={mode === "login" && (loading || validatingInvite)}
-              className={`flex-1 py-3 font-medium rounded-lg transition-colors ${
+              className={`flex-1 py-3 font-headline font-semibold rounded-xl transition-all ${
                 mode === "login"
-                  ? "bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                  ? "primary-glow text-on-primary hover:brightness-110 shadow-lg shadow-primary/20 disabled:opacity-40"
+                  : "bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
               }`}
             >
               {mode === "login" && loading ? "..." : "Login"}
@@ -255,10 +235,10 @@ export function LoginForm() {
               type={mode === "register" ? "submit" : "button"}
               onClick={mode !== "register" ? () => setMode("register") : undefined}
               disabled={mode === "register" && (loading || validatingInvite)}
-              className={`flex-1 py-3 font-medium rounded-lg transition-colors ${
+              className={`flex-1 py-3 font-headline font-semibold rounded-xl transition-all ${
                 mode === "register"
-                  ? "bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                  ? "primary-glow text-on-primary hover:brightness-110 shadow-lg shadow-primary/20 disabled:opacity-40"
+                  : "bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
               }`}
             >
               {mode === "register" && loading
@@ -270,35 +250,26 @@ export function LoginForm() {
           </div>
         </form>
 
-        {/* Download client — toggle */}
+        {/* Download client */}
         <div className="mt-8 text-center">
           {!showDownloads ? (
             <button
               onClick={() => setShowDownloads(true)}
-              className="text-zinc-500 hover:text-zinc-300 text-sm transition-colors"
+              className="text-on-surface-variant hover:text-on-surface text-sm transition-colors font-label"
             >
               Download Client
             </button>
           ) : (
-            <div className="flex justify-center gap-4 text-sm animate-[fadeSlideUp_0.3s_ease-out]">
-              <a
-                href="/downloads/Concord Setup.exe"
-                className="text-zinc-400 hover:text-white transition-colors"
-              >
+            <div className="flex justify-center gap-4 text-sm animate-[fadeSlideUp_0.3s_ease-out] font-label">
+              <a href="/downloads/Concord Setup.exe" className="text-on-surface-variant hover:text-primary transition-colors">
                 Windows
               </a>
-              <span className="text-zinc-700">|</span>
-              <a
-                href="/downloads/Concord.AppImage"
-                className="text-zinc-400 hover:text-white transition-colors"
-              >
+              <span className="text-outline-variant">|</span>
+              <a href="/downloads/Concord.AppImage" className="text-on-surface-variant hover:text-primary transition-colors">
                 Linux
               </a>
-              <span className="text-zinc-700">|</span>
-              <a
-                href="/downloads/Concord-mac.zip"
-                className="text-zinc-400 hover:text-white transition-colors"
-              >
+              <span className="text-outline-variant">|</span>
+              <a href="/downloads/Concord-mac.zip" className="text-on-surface-variant hover:text-primary transition-colors">
                 macOS
               </a>
             </div>

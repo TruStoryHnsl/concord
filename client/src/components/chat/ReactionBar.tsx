@@ -10,7 +10,7 @@ interface QuickReactBarProps {
 export function QuickReactBar({ onReact, onClose }: QuickReactBarProps) {
   return (
     <div
-      className="flex gap-0.5 bg-zinc-800 border border-zinc-600 rounded-lg p-1 shadow-lg"
+      className="flex gap-0.5 glass-panel rounded-xl p-1"
       onMouseLeave={onClose}
     >
       {QUICK_EMOJIS.map((emoji) => (
@@ -20,7 +20,7 @@ export function QuickReactBar({ onReact, onClose }: QuickReactBarProps) {
             onReact(emoji);
             onClose();
           }}
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-zinc-700 transition-colors text-base"
+          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container-high transition-colors text-base"
         >
           {emoji}
         </button>
@@ -61,10 +61,10 @@ export function ReactionPills({
                 onReact(r.emoji);
               }
             }}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors font-label ${
               isMine
-                ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
-                : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                ? "bg-primary/10 text-primary hover:bg-primary/20"
+                : "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest"
             }`}
           >
             <span>{r.emoji}</span>

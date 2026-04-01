@@ -36,7 +36,7 @@ export function AudioTab() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-xl font-semibold text-white">Audio</h3>
+      <h3 className="text-xl font-semibold text-on-surface">Audio</h3>
 
       {/* Output Volume */}
       <Slider
@@ -52,7 +52,7 @@ export function AudioTab() {
       {/* Output Device */}
       {outputDevices.length > 0 && (
         <div>
-          <label className="block text-sm text-zinc-300 mb-1.5">
+          <label className="block text-sm text-on-surface mb-1.5">
             Output Device
           </label>
           <select
@@ -60,7 +60,7 @@ export function AudioTab() {
             onChange={(e) =>
               setPreferredOutputDeviceId(e.target.value || null)
             }
-            className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-md text-sm text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+            className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded-md text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30 cursor-pointer"
           >
             <option value="">Default</option>
             {outputDevices.map((d) => (
@@ -73,13 +73,13 @@ export function AudioTab() {
       )}
 
       {/* Normalization */}
-      <div className="border-t border-zinc-700 pt-6">
+      <div className="border-t border-outline-variant/15 pt-6">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h4 className="text-sm font-medium text-white">
+            <h4 className="text-sm font-medium text-on-surface">
               Audio Normalization
             </h4>
-            <p className="text-xs text-zinc-500 mt-0.5">
+            <p className="text-xs text-on-surface-variant mt-0.5">
               Compresses dynamic range so loud and quiet speakers sound more
               even
             </p>
@@ -89,7 +89,7 @@ export function AudioTab() {
             aria-checked={normalizationEnabled}
             onClick={() => setNormalizationEnabled(!normalizationEnabled)}
             className={`relative w-10 h-5 rounded-full transition-colors ${
-              normalizationEnabled ? "bg-indigo-500" : "bg-zinc-600"
+              normalizationEnabled ? "bg-primary" : "bg-surface-bright"
             }`}
           >
             <span
@@ -105,7 +105,7 @@ export function AudioTab() {
           <div>
             <button
               onClick={() => setShowAdvanced(!showAdvanced)}
-              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="text-xs text-on-surface-variant hover:text-on-surface transition-colors"
             >
               {showAdvanced ? "Hide" : "Show"} Advanced
             </button>

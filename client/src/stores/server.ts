@@ -66,7 +66,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
       return;
     }
 
-    // Auto-join default server if user has no servers
+    // Server-side auto-joins the lobby if needed, but if user somehow
+    // still has zero servers, try the explicit join as a fallback
     if (servers.length === 0) {
       try {
         const defaultInfo = await getDefaultServer(accessToken);
@@ -81,13 +82,17 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
     set({ servers });
 
-    // Auto-select first server and channel if none selected
+    // Auto-select: land in the lobby's #welcome channel by default
     const { activeServerId } = get();
     if (!activeServerId && servers.length > 0) {
-      const server = servers[0];
+      // Find the lobby (first server, which is oldest by created_at)
+      const lobby = servers[0];
+      // Prefer #welcome channel, fall back to first channel
+      const welcomeChannel = lobby.channels.find((ch) => ch.name === "welcome");
+      const targetChannel = welcomeChannel ?? lobby.channels[0];
       set({
-        activeServerId: server.id,
-        activeChannelId: server.channels[0]?.matrix_room_id ?? null,
+        activeServerId: lobby.id,
+        activeChannelId: targetChannel?.matrix_room_id ?? null,
       });
     }
   },

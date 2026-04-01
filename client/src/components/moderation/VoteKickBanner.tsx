@@ -55,26 +55,26 @@ export function VoteKickBanner({
   };
 
   return (
-    <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg px-4 py-3 mx-4 my-2 animate-[fadeSlideUp_0.3s_ease-out]">
+    <div className="bg-primary/10 border border-primary/30 rounded-lg px-4 py-3 mx-4 my-2 animate-[fadeSlideUp_0.3s_ease-out]">
       <div className="flex items-center justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-amber-200">
+          <p className="text-sm text-on-surface">
             <strong>{initiatorName}</strong> wants to kick <strong>{targetName}</strong>
           </p>
-          <p className="text-xs text-amber-400/70 mt-0.5">
+          <p className="text-xs text-primary/70 mt-0.5">
             {yesCount}/{totalEligible} votes needed (all must agree)
           </p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => handleVote(true)}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs rounded transition-colors"
+            className="px-3 py-1.5 bg-error hover:bg-error-dim text-on-surface text-xs rounded transition-colors"
           >
             Kick
           </button>
           <button
             onClick={() => handleVote(false)}
-            className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-xs rounded transition-colors"
+            className="px-3 py-1.5 bg-surface-container-highest hover:bg-surface-bright text-on-surface text-xs rounded transition-colors"
           >
             No
           </button>

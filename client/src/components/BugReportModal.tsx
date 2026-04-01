@@ -73,12 +73,12 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-zinc-800 rounded-xl border border-zinc-700 shadow-2xl w-full max-w-lg mx-4">
-        <div className="flex items-center justify-between p-4 border-b border-zinc-700">
-          <h2 className="text-lg font-semibold text-white">Report a Bug</h2>
+      <div className="bg-surface-container rounded-xl border border-outline-variant/15 shadow-2xl w-full max-w-lg mx-4">
+        <div className="flex items-center justify-between p-4 border-b border-outline-variant/15">
+          <h2 className="text-lg font-semibold text-on-surface">Report a Bug</h2>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-white transition-colors"
+            className="text-on-surface-variant hover:text-on-surface transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -88,7 +88,7 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
+            <label className="block text-sm font-medium text-on-surface mb-1">
               Title
             </label>
             <input
@@ -98,12 +98,12 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
               placeholder="Brief summary of the issue"
               maxLength={200}
               autoFocus
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+              className="w-full px-3 py-2 bg-surface border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
+            <label className="block text-sm font-medium text-on-surface mb-1">
               Description
             </label>
             <textarea
@@ -112,11 +112,11 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
               placeholder="What happened? What did you expect to happen?"
               maxLength={5000}
               rows={5}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 resize-none"
+              className="w-full px-3 py-2 bg-surface border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
             />
           </div>
 
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-on-surface-variant">
             System info (browser, OS, screen size, etc.) will be attached
             automatically.
           </p>
@@ -125,14 +125,14 @@ export function BugReportModal({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+              className="px-4 py-2 text-sm text-on-surface-variant hover:text-on-surface transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!title.trim() || !description.trim() || submitting}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md transition-colors"
+              className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded-md transition-colors"
             >
               {submitting ? "Submitting..." : "Submit Report"}
             </button>

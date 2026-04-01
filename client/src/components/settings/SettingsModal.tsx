@@ -10,11 +10,11 @@ import { AboutTab } from "./AboutTab";
 import { AdminTab } from "./AdminTab";
 
 const baseTabs = [
-  { key: "audio" as const, label: "Audio" },
-  { key: "voice" as const, label: "Voice" },
-  { key: "notifications" as const, label: "Notifications" },
-  { key: "profile" as const, label: "Profile" },
-  { key: "about" as const, label: "About" },
+  { key: "audio" as const, label: "Audio", icon: "headphones" },
+  { key: "voice" as const, label: "Voice", icon: "graphic_eq" },
+  { key: "notifications" as const, label: "Notifications", icon: "notifications" },
+  { key: "profile" as const, label: "Profile", icon: "person" },
+  { key: "about" as const, label: "About", icon: "info" },
 ];
 
 /**
@@ -33,7 +33,6 @@ export function SettingsPanel() {
     checkAdmin(accessToken).then((r) => setIsAdmin(r.is_admin)).catch(() => {});
   }, [accessToken]);
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
@@ -43,23 +42,29 @@ export function SettingsPanel() {
   }, [close]);
 
   const tabs = isAdmin
-    ? [...baseTabs, { key: "admin" as const, label: "Admin" }]
+    ? [...baseTabs, { key: "admin" as const, label: "Admin", icon: "shield_person" }]
     : baseTabs;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-zinc-700 overflow-x-auto">
+      <div className="flex items-center gap-1 px-4 py-2 bg-surface-container-low overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setTab(tab.key)}
-            className={`px-3 py-1.5 rounded text-sm whitespace-nowrap transition-colors ${
+            className={`btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-all font-label ${
               activeTab === tab.key
-                ? "bg-zinc-700 text-white"
-                : "text-zinc-400 hover:bg-zinc-700/50 hover:text-zinc-200"
+                ? "bg-surface-container-highest text-on-surface"
+                : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
             }`}
           >
+            <span
+              className="material-symbols-outlined text-base"
+              style={activeTab === tab.key ? { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' } : undefined}
+            >
+              {tab.icon}
+            </span>
             {tab.label}
           </button>
         ))}

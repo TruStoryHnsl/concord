@@ -1,41 +1,128 @@
 @import "tailwindcss";
 
 @theme {
-  --color-sidebar: #1e1e24;
+  /* ── Surface Hierarchy (Kinetic Node) ── */
+  --color-surface: #0c0e11;
+  --color-surface-container-low: #111417;
+  --color-surface-container: #171a1d;
+  --color-surface-container-high: #1d2024;
+  --color-surface-container-highest: #23262a;
+  --color-surface-variant: #23262a;
+  --color-surface-bright: #292c31;
+  --color-surface-dim: #0c0e11;
+  --color-surface-tint: #a4a5ff;
+
+  /* ── On-Surface (Text/Content) ── */
+  --color-on-surface: #f9f9fd;
+  --color-on-surface-variant: #aaabaf;
+
+  /* ── Primary (Electric Indigo) ── */
+  --color-primary: #a4a5ff;
+  --color-primary-dim: #5e5eff;
+  --color-primary-container: #9496ff;
+
+  /* ── On-Primary ── */
+  --color-on-primary: #1300a3;
+
+  /* ── Secondary (Mint/Teal) ── */
+  --color-secondary: #afefdd;
+  --color-secondary-dim: #a1e1cf;
+  --color-secondary-container: #0b5345;
+
+  /* ── On-Secondary ── */
+  --color-on-secondary: #195c4e;
+  --color-on-secondary-container: #a1e1cf;
+
+  /* ── Tertiary ── */
+  --color-tertiary: #98ffd9;
+
+  /* ── Error ── */
+  --color-error: #ff716c;
+  --color-error-dim: #d7383b;
+  --color-error-container: #9f0519;
+  --color-on-error-container: #ffa8a3;
+
+  /* ── Outline ── */
+  --color-outline: #747579;
+  --color-outline-variant: #46484b;
+
+  /* ── Typography ── */
+  --font-headline: "Space Grotesk", sans-serif;
+  --font-body: "Manrope", sans-serif;
+  --font-label: "Manrope", sans-serif;
 }
 
+/* ── Base ── */
 html, body, #root {
   height: 100%;
   overflow: hidden;
 }
 
+body {
+  font-family: "Manrope", sans-serif;
+  background-color: #0c0e11;
+  color: #f9f9fd;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Re-enable text selection for content areas */
+.selectable,
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ── Material Symbols ── */
+.material-symbols-outlined {
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+/* ── Animations ── */
 @keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes fadeSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-/* Press feedback for interactive buttons */
+@keyframes nodePulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(164, 165, 255, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(164, 165, 255, 0.6), 0 0 32px rgba(164, 165, 255, 0.2); }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* ── Button Press Feedback ── */
 .btn-press {
   transition: transform 100ms ease, background-color 150ms ease, color 150ms ease;
   -webkit-tap-highlight-color: transparent;
@@ -44,7 +131,6 @@ html, body, #root {
   transform: scale(0.93);
 }
 
-/* Global mobile touch feedback — every button/link gets press response */
 @media (pointer: coarse) {
   button:active, a:active, [role="button"]:active {
     opacity: 0.8;
@@ -53,24 +139,58 @@ html, body, #root {
   }
 }
 
-/* Safe area padding for notched phones */
+/* ── Glassmorphism ── */
+.glass-panel {
+  background: rgba(35, 38, 42, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(70, 72, 75, 0.3);
+}
+
+/* ── Primary Gradient CTA ── */
+.primary-glow {
+  background: linear-gradient(135deg, #a4a5ff, #9496ff);
+}
+
+/* ── Mesh Background Pattern ── */
+.mesh-background {
+  position: relative;
+}
+.mesh-background::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(164, 165, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Skeleton Loader ── */
+.skeleton-shimmer {
+  background: linear-gradient(90deg, rgba(35,38,42,0.6) 25%, rgba(55,58,62,0.6) 50%, rgba(35,38,42,0.6) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Node Pulse ── */
+.node-pulse {
+  animation: nodePulse 2s ease-in-out infinite;
+}
+
+/* ── Safe Area Utilities ── */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .safe-top {
   padding-top: env(safe-area-inset-top, 0px);
 }
-
-/* Prevent overscroll bounce on mobile */
-html {
-  overscroll-behavior: none;
-  -webkit-overflow-scrolling: touch;
+.safe-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
-/* Mobile sidebar drawer transition */
-.drawer-enter {
-  transform: translateX(-100%);
-}
+/* ── Mobile Sidebar Drawer ── */
 .drawer-open {
   transform: translateX(0);
   transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -79,15 +199,18 @@ html {
   transform: translateX(-100%);
   transition: transform 200ms cubic-bezier(0.4, 0, 1, 1);
 }
-
-/* Backdrop blur for drawer overlay */
 .drawer-backdrop {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   transition: opacity 250ms ease;
 }
 
-/* Voice control bottom bar for mobile */
+/* ── Voice Controls Mobile ── */
 .voice-controls-mobile {
   padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Ghost Border (accessibility fallback) ── */
+.ghost-border {
+  border: 1px solid rgba(70, 72, 75, 0.15);
 }

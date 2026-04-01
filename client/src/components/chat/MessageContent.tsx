@@ -38,7 +38,7 @@ function TextWithLinks({ text }: { text: string }) {
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-indigo-400 hover:text-indigo-300 hover:underline break-all"
+        className="text-primary hover:text-primary hover:underline break-all"
       >
         {url}
       </a>,
@@ -82,7 +82,7 @@ function LinkPreview({ url }: { url: string }) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block mt-2 max-w-sm border border-zinc-700 rounded-lg overflow-hidden hover:border-zinc-500 transition-colors bg-zinc-800/50"
+      className="block mt-2 max-w-sm border border-outline-variant/15 rounded-lg overflow-hidden hover:border-outline-variant transition-colors bg-surface-container"
     >
       {data.image && (
         <img
@@ -96,11 +96,11 @@ function LinkPreview({ url }: { url: string }) {
         />
       )}
       <div className="p-3">
-        <p className="text-sm font-medium text-zinc-100 truncate">{data.title}</p>
+        <p className="text-sm font-medium text-on-surface truncate">{data.title}</p>
         {data.description && (
-          <p className="text-xs text-zinc-400 mt-1 line-clamp-2">{data.description}</p>
+          <p className="text-xs text-on-surface-variant mt-1 line-clamp-2">{data.description}</p>
         )}
-        <p className="text-xs text-zinc-500 mt-1 truncate">{new URL(url).hostname}</p>
+        <p className="text-xs text-on-surface-variant mt-1 truncate">{new URL(url).hostname}</p>
       </div>
     </a>
   );
@@ -115,7 +115,7 @@ function formatSize(bytes: number): string {
 export function MessageContent({ message }: MessageContentProps) {
   if (message.redacted) {
     return (
-      <span className="text-sm text-zinc-500 italic">[Message deleted]</span>
+      <span className="text-sm text-on-surface-variant italic">[Message deleted]</span>
     );
   }
 
@@ -141,7 +141,7 @@ export function MessageContent({ message }: MessageContentProps) {
           />
         </a>
         {body && body !== "image" && (
-          <p className="text-xs text-zinc-500 mt-1">{body}</p>
+          <p className="text-xs text-on-surface-variant mt-1">{body}</p>
         )}
       </div>
     );
@@ -154,7 +154,7 @@ export function MessageContent({ message }: MessageContentProps) {
           <a href={url}>{body}</a>
         </audio>
         {info?.size && (
-          <p className="text-xs text-zinc-500 mt-0.5">{formatSize(info.size)}</p>
+          <p className="text-xs text-on-surface-variant mt-0.5">{formatSize(info.size)}</p>
         )}
       </div>
     );
@@ -177,20 +177,20 @@ export function MessageContent({ message }: MessageContentProps) {
 
   if (msgtype === "m.file" && url) {
     return (
-      <div className="mt-1 flex items-center gap-2 px-3 py-2 bg-zinc-800 rounded-lg max-w-sm">
-        <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-zinc-400 flex-shrink-0">
+      <div className="mt-1 flex items-center gap-2 px-3 py-2 bg-surface-container rounded-lg max-w-sm">
+        <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-on-surface-variant flex-shrink-0">
           <path d="M3 3.5A1.5 1.5 0 014.5 2h6.879a1.5 1.5 0 011.06.44l4.122 4.12A1.5 1.5 0 0117 7.622V16.5a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 013 16.5v-13z" />
         </svg>
         <div className="min-w-0 flex-1">
           <a
             href={url}
             download={body}
-            className="text-sm text-indigo-400 hover:text-indigo-300 truncate block"
+            className="text-sm text-primary hover:text-primary truncate block"
           >
             {body}
           </a>
           {info?.size && (
-            <span className="text-xs text-zinc-500">{formatSize(info.size)}</span>
+            <span className="text-xs text-on-surface-variant">{formatSize(info.size)}</span>
           )}
         </div>
       </div>
@@ -200,7 +200,7 @@ export function MessageContent({ message }: MessageContentProps) {
   // m.text or fallback — render with clickable links and URL previews
   const urls = extractUrls(body);
   return (
-    <div className="text-sm text-zinc-200">
+    <div className="text-sm text-on-surface">
       <TextWithLinks text={body} />
       {urls.map((u) => (
         <LinkPreview key={u} url={u} />

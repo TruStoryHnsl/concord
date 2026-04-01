@@ -42,24 +42,24 @@ export class ErrorBoundary extends Component<Props, State> {
       // Still auto-retrying — show a loading state instead of an error
       if (this.state.retryCount < MAX_AUTO_RETRIES) {
         return (
-          <div className="h-screen bg-zinc-900 flex items-center justify-center">
-            <span className="text-zinc-500">Loading...</span>
+          <div className="h-screen bg-surface flex items-center justify-center">
+            <span className="text-on-surface-variant">Loading...</span>
           </div>
         );
       }
 
       return (
-        <div className="h-screen bg-zinc-900 flex items-center justify-center">
+        <div className="h-screen bg-surface flex items-center justify-center">
           <div className="text-center space-y-4">
-            <p className="text-red-400 text-lg">Something went wrong</p>
-            <pre className="text-zinc-500 text-xs max-w-md overflow-auto">
+            <p className="text-error text-lg">Something went wrong</p>
+            <pre className="text-on-surface-variant text-xs max-w-md overflow-auto">
               {this.state.error?.message}
             </pre>
             <button
               onClick={() =>
                 this.setState({ hasError: false, error: null, retryCount: 0 })
               }
-              className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded hover:bg-zinc-700 transition-colors"
+              className="px-4 py-2 bg-surface-container text-on-surface rounded hover:bg-surface-container-highest transition-colors"
             >
               Try Again
             </button>

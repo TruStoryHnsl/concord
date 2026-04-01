@@ -134,9 +134,9 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
     const needsPin = isLocked && !pinVerified;
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4">
-        <p className="text-zinc-400 flex items-center gap-2">
+        <p className="text-on-surface-variant flex items-center gap-2">
           {isLocked && (
-            <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
           )}
@@ -146,12 +146,12 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
         {/* Participant preview */}
         {previewParticipants.length > 0 && (
           <div className="flex flex-col items-center gap-2">
-            <p className="text-xs text-zinc-500">{previewParticipants.length} in channel</p>
+            <p className="text-xs text-on-surface-variant">{previewParticipants.length} in channel</p>
             <div className={`flex gap-3 ${needsPin ? "opacity-40 blur-[2px]" : ""}`}>
               {previewParticipants.map((p) => (
                 <div key={p.identity} className="flex flex-col items-center gap-1">
                   <Avatar userId={p.identity} size="lg" />
-                  <span className="text-xs text-zinc-400 max-w-[80px] truncate">
+                  <span className="text-xs text-on-surface-variant max-w-[80px] truncate">
                     {p.name || p.identity.split(":")[0].replace("@", "")}
                   </span>
                 </div>
@@ -161,7 +161,7 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
         )}
 
         {previewParticipants.length === 0 && (
-          <p className="text-zinc-600 text-sm">No one in this channel yet</p>
+          <p className="text-on-surface-variant/50 text-sm">No one in this channel yet</p>
         )}
 
         {voiceConnected && voiceChannelId !== roomId && (
@@ -174,7 +174,7 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
           <button
             onClick={() => setShowPinDialog(true)}
             disabled={voiceConnected && voiceChannelId !== roomId}
-            className="px-6 py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+            className="px-6 py-3 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface font-medium rounded-lg transition-colors flex items-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -185,12 +185,12 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
           <button
             onClick={handleJoin}
             disabled={connecting || (voiceConnected && voiceChannelId !== roomId)}
-            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 text-white font-medium rounded-lg transition-colors"
+            className="px-6 py-3 bg-secondary-container hover:bg-secondary-container disabled:opacity-40 text-on-surface font-medium rounded-lg transition-colors"
           >
             {connecting ? "Connecting..." : "Join Voice"}
           </button>
         )}
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        {error && <p className="text-error text-sm">{error}</p>}
 
         {showPinDialog && activeChannel && (
           <PinDialog
@@ -424,47 +424,47 @@ function VoiceRoomUI({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Desktop header — hidden on mobile (controls move to bottom) */}
-      <div className="hidden md:block p-4 border-b border-zinc-700 flex-shrink-0">
+      <div className="hidden md:block p-4 border-b border-outline-variant/15 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ConnectionIndicator state={connectionState} />
-            <span className="text-zinc-500 text-sm">#{channelName}</span>
+            <span className="text-on-surface-variant text-sm">#{channelName}</span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={toggleMic} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${isMicEnabled ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300" : "bg-red-600/20 hover:bg-red-600/30 text-red-400"}`}>
+            <button onClick={toggleMic} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${isMicEnabled ? "bg-surface-container hover:bg-surface-container-highest text-on-surface" : "bg-error/20 hover:bg-error-container/30 text-error"}`}>
               {isMicEnabled ? "Mute" : "Unmute"}
             </button>
-            <button onClick={toggleCamera} disabled={cameraLoading} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${cameraLoading ? "bg-indigo-600/20 text-indigo-400 opacity-75 cursor-wait" : isCameraEnabled ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}>
+            <button onClick={toggleCamera} disabled={cameraLoading} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${cameraLoading ? "bg-primary/10 text-primary opacity-75 cursor-wait" : isCameraEnabled ? "bg-primary/10 hover:bg-primary/15 text-primary" : "bg-surface-container hover:bg-surface-container-highest text-on-surface"}`}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {isCameraEnabled ? (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />) : (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z M3 3l18 18" />)}
               </svg>
               {cameraLoading ? "Starting…" : isCameraEnabled ? "Camera On" : "Camera"}
             </button>
-            <button onClick={toggleScreenShare} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${isScreenShareEnabled ? "bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}>
+            <button onClick={toggleScreenShare} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${isScreenShareEnabled ? "bg-secondary/10 hover:bg-secondary/15 text-secondary" : "bg-surface-container hover:bg-surface-container-highest text-on-surface"}`}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
               {isScreenShareEnabled ? "Sharing" : "Screen"}
             </button>
             {isLockOwner && activeChannel && (
-              <button onClick={() => { setLockAction(channelLocked ? "unlock" : "lock"); setShowLockPinDialog(true); }} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${channelLocked ? "bg-amber-600/20 hover:bg-amber-600/30 text-amber-400" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}>
+              <button onClick={() => { setLockAction(channelLocked ? "unlock" : "lock"); setShowLockPinDialog(true); }} className={`btn-press px-3 py-1.5 text-sm rounded-md transition-colors ${channelLocked ? "bg-primary/10 hover:bg-primary/15 text-primary" : "bg-surface-container hover:bg-surface-container-highest text-on-surface"}`}>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{channelLocked ? (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />) : (<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />)}</svg>
               </button>
             )}
-            <button onClick={() => openSettings("audio")} className="btn-press px-3 py-1.5 text-sm rounded-md transition-colors bg-zinc-800 hover:bg-zinc-700 text-zinc-300">Settings</button>
-            <button onClick={disconnect} className="btn-press px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-sm rounded-md transition-colors">Leave</button>
+            <button onClick={() => openSettings("audio")} className="btn-press px-3 py-1.5 text-sm rounded-md transition-colors bg-surface-container hover:bg-surface-container-highest text-on-surface">Settings</button>
+            <button onClick={disconnect} className="btn-press px-3 py-1.5 bg-error/20 hover:bg-error/30 text-error text-sm rounded-md transition-colors">Leave</button>
           </div>
         </div>
-        {micError && <p className="text-red-400 text-xs mt-2">{micError}</p>}
-        {cameraError && <p className="text-red-400 text-xs mt-2">{cameraError}</p>}
-        {screenShareError && <p className="text-red-400 text-xs mt-2">{screenShareError}</p>}
+        {micError && <p className="text-error text-xs mt-2">{micError}</p>}
+        {cameraError && <p className="text-error text-xs mt-2">{cameraError}</p>}
+        {screenShareError && <p className="text-error text-xs mt-2">{screenShareError}</p>}
         {!window.isSecureContext && <p className="text-yellow-500 text-xs mt-2">Not a secure context — microphone access may be blocked.</p>}
       </div>
 
       {/* Mobile header — compact, just channel name + connection */}
-      <div className="md:hidden px-3 py-2 border-b border-zinc-700 flex-shrink-0 flex items-center gap-2">
+      <div className="md:hidden px-3 py-2 border-b border-outline-variant/15 flex-shrink-0 flex items-center gap-2">
         <ConnectionIndicator state={connectionState} />
-        <span className="text-zinc-400 text-sm font-medium">#{channelName}</span>
+        <span className="text-on-surface-variant text-sm font-medium">#{channelName}</span>
         {(micError || cameraError || screenShareError) && (
-          <span className="text-red-400 text-[10px] ml-auto truncate max-w-[50%]">{micError || cameraError || screenShareError}</span>
+          <span className="text-error text-[10px] ml-auto truncate max-w-[50%]">{micError || cameraError || screenShareError}</span>
         )}
       </div>
 
@@ -509,7 +509,7 @@ function VoiceRoomUI({
 
       {/* Screen share — prominent display above participant grid */}
       {screenTracks.length > 0 && (
-        <div className="flex-shrink-0 p-2 border-b border-zinc-700">
+        <div className="flex-shrink-0 p-2 border-b border-outline-variant/15">
           {screenTracks.map((track) => (
             <div key={track.participant.identity + "-screen"} className="relative rounded-lg overflow-hidden bg-black">
               <VideoTrack
@@ -517,8 +517,8 @@ function VoiceRoomUI({
                 className="w-full max-h-[60vh] object-contain"
               />
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-                <span className="text-xs text-zinc-300 flex items-center gap-1.5">
-                  <svg className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <span className="text-xs text-on-surface flex items-center gap-1.5">
+                  <svg className="w-3 h-3 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
                   {track.participant.identity.split(":")[0].replace("@", "")}'s screen
@@ -557,17 +557,17 @@ function VoiceRoomUI({
           const showMutedSpeaking = isSelf && isMutedSpeaking;
 
           const tileBg = showMutedSpeaking
-            ? "bg-red-900/30"
+            ? "bg-error/10"
             : p.isSpeaking && !isUserMuted
-              ? "bg-emerald-900/30"
+              ? "bg-secondary/10"
               : isUserMuted
-                ? "bg-red-950/40"
-                : "bg-zinc-800/50";
+                ? "bg-error/10"
+                : "bg-surface-container";
 
           const ringClass = showMutedSpeaking
-            ? "ring-2 ring-red-500/60"
+            ? "ring-2 ring-error/60"
             : p.isSpeaking && !isUserMuted
-              ? "ring-2 ring-emerald-500/50"
+              ? "ring-2 ring-secondary/50"
               : "";
 
           return { isSelf, isMuted, hasAudioTrack, cameraTrack, isUserMuted, showMutedSpeaking, tileBg, ringClass };
@@ -578,7 +578,7 @@ function VoiceRoomUI({
           !isSelf && expandedUser === p.identity && (
             <div className="w-full mt-1 space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <svg className="w-3 h-3 text-zinc-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3 h-3 text-on-surface-variant flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                 </svg>
                 <input
@@ -588,7 +588,7 @@ function VoiceRoomUI({
                   step={0.01}
                   value={userVolumes[p.identity] ?? 1.0}
                   onChange={(e) => setUserVolume(p.identity, parseFloat(e.target.value))}
-                  className="w-full h-1 rounded-full appearance-none cursor-pointer bg-zinc-700
+                  className="w-full h-1 rounded-full appearance-none cursor-pointer bg-surface-container-highest
                     [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5
                     [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full
                     [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-sm
@@ -600,14 +600,14 @@ function VoiceRoomUI({
                   }}
                   title={`${Math.round((userVolumes[p.identity] ?? 1.0) * 100)}%`}
                 />
-                <span className="text-[10px] text-zinc-500 tabular-nums w-7 text-right flex-shrink-0">
+                <span className="text-[10px] text-on-surface-variant tabular-nums w-7 text-right flex-shrink-0">
                   {Math.round((userVolumes[p.identity] ?? 1.0) * 100)}%
                 </span>
               </div>
               {participants.length >= 3 && (
                 <button
                   onClick={() => handleStartVoteKick(p.identity)}
-                  className="w-full text-xs py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded transition-colors"
+                  className="w-full text-xs py-1 bg-error/20 hover:bg-error-container/30 text-error rounded transition-colors"
                 >
                   Vote Kick
                 </button>
@@ -633,9 +633,9 @@ function VoiceRoomUI({
                     const { isSelf, isMuted, cameraTrack, isUserMuted, showMutedSpeaking } = getParticipantState(p);
 
                     const borderClass = showMutedSpeaking
-                      ? "border-2 border-red-500/60"
+                      ? "border-2 border-error/60"
                       : p.isSpeaking && !isUserMuted
-                        ? "border-2 border-emerald-500/50"
+                        ? "border-2 border-secondary/50"
                         : "border-2 border-transparent";
 
                     return (
@@ -645,7 +645,7 @@ function VoiceRoomUI({
                       >
                         {/* Red overlay stripe for user-muted */}
                         {isUserMuted && (
-                          <div className="absolute inset-0 rounded-lg border border-red-500/30 pointer-events-none z-10" />
+                          <div className="absolute inset-0 rounded-lg border border-error/30 pointer-events-none z-10" />
                         )}
                         {/* Video feed filling the cell, with loading state */}
                         {cameraTrack ? (
@@ -654,8 +654,8 @@ function VoiceRoomUI({
                             className="w-full h-full object-cover"
                           />
                         ) : isSelf && isCameraEnabled ? (
-                          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/80 z-[5]">
-                            <svg className="w-8 h-8 text-indigo-400 animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
+                          <div className="absolute inset-0 flex items-center justify-center bg-surface/80 z-[5]">
+                            <svg className="w-8 h-8 text-primary animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                             </svg>
@@ -666,7 +666,7 @@ function VoiceRoomUI({
                           <div className="flex items-center gap-1.5">
                             <div
                               className={`w-3 h-3 rounded-full flex-shrink-0 ${
-                                isMuted ? "bg-red-500" : "bg-emerald-500"
+                                isMuted ? "bg-error" : "bg-secondary"
                               }`}
                             />
                             <ParticipantNameLabel
@@ -683,8 +683,8 @@ function VoiceRoomUI({
                                 onClick={() => toggleUserMuted(p.identity)}
                                 className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
                                   userMuted[p.identity]
-                                    ? "text-red-400 hover:text-red-300"
-                                    : "text-zinc-400 hover:text-zinc-200"
+                                    ? "text-error hover:text-on-error-container"
+                                    : "text-on-surface-variant hover:text-on-surface"
                                 }`}
                                 title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
                               >
@@ -711,7 +711,7 @@ function VoiceRoomUI({
             {/* Audio-only participants — compact strip when videos exist, full grid otherwise */}
             {videoParticipants.length > 0 ? (
               audioOnlyParticipants.length > 0 && (
-                <div className="flex-shrink-0 px-4 py-2 border-t border-zinc-700 overflow-x-auto">
+                <div className="flex-shrink-0 px-4 py-2 border-t border-outline-variant/15 overflow-x-auto">
                   <div className="flex gap-2">
                     {audioOnlyParticipants.map((p) => {
                       const { isSelf, isMuted, hasAudioTrack, isUserMuted, showMutedSpeaking, ringClass } = getParticipantState(p);
@@ -721,25 +721,25 @@ function VoiceRoomUI({
                           key={p.identity}
                           className={`relative flex flex-col items-center gap-1 p-2 rounded-lg transition-all flex-shrink-0 ${
                             showMutedSpeaking
-                              ? "bg-red-900/30"
+                              ? "bg-error/10"
                               : p.isSpeaking && !isUserMuted
-                                ? "bg-emerald-900/30"
+                                ? "bg-secondary/10"
                                 : isUserMuted
-                                  ? "bg-red-950/40"
-                                  : "bg-zinc-800/50"
+                                  ? "bg-error/10"
+                                  : "bg-surface-container"
                           } ${isUserMuted ? "opacity-60" : ""}`}
                         >
                           {isUserMuted && (
-                            <div className="absolute inset-0 rounded-lg border border-red-500/30 pointer-events-none" />
+                            <div className="absolute inset-0 rounded-lg border border-error/30 pointer-events-none" />
                           )}
                           <div className={`relative rounded-full transition-all ${ringClass}`}>
                             <Avatar userId={p.identity} size="md" />
                             <div
-                              className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-zinc-900 ${
+                              className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-surface ${
                                 isMuted
-                                  ? "bg-red-500"
+                                  ? "bg-error"
                                   : hasAudioTrack
-                                    ? "bg-emerald-500"
+                                    ? "bg-secondary"
                                     : "bg-yellow-500"
                               }`}
                               title={
@@ -767,8 +767,8 @@ function VoiceRoomUI({
                                   onClick={() => toggleUserMuted(p.identity)}
                                   className={`w-4 h-4 flex items-center justify-center rounded transition-colors ${
                                     userMuted[p.identity]
-                                      ? "text-red-400 hover:text-red-300"
-                                      : "text-zinc-500 hover:text-zinc-300"
+                                      ? "text-error hover:text-on-error-container"
+                                      : "text-on-surface-variant hover:text-on-surface"
                                   }`}
                                   title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
                                 >
@@ -807,7 +807,7 @@ function VoiceRoomUI({
                       >
                         {/* Red overlay stripe for user-muted */}
                         {isUserMuted && (
-                          <div className="absolute inset-0 rounded-xl border border-red-500/30 pointer-events-none" />
+                          <div className="absolute inset-0 rounded-xl border border-error/30 pointer-events-none" />
                         )}
                         {/* Camera video (if active), loading spinner, or avatar */}
                         {cameraTrack ? (
@@ -817,14 +817,14 @@ function VoiceRoomUI({
                               className="w-full h-full object-cover"
                             />
                             <div
-                              className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border border-zinc-900 ${
-                                isMuted ? "bg-red-500" : "bg-emerald-500"
+                              className={`absolute bottom-1 right-1 w-3 h-3 rounded-full border border-surface ${
+                                isMuted ? "bg-error" : "bg-secondary"
                               }`}
                             />
                           </div>
                         ) : isSelf && isCameraEnabled ? (
-                          <div className={`relative w-full rounded-lg overflow-hidden aspect-video transition-all ${ringClass} bg-zinc-900 flex items-center justify-center`}>
-                            <svg className="w-8 h-8 text-indigo-400 animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
+                          <div className={`relative w-full rounded-lg overflow-hidden aspect-video transition-all ${ringClass} bg-surface flex items-center justify-center`}>
+                            <svg className="w-8 h-8 text-primary animate-[spin_0.8s_linear_infinite]" fill="none" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                             </svg>
@@ -833,11 +833,11 @@ function VoiceRoomUI({
                           <div className={`relative rounded-full transition-all ${ringClass}`}>
                             <Avatar userId={p.identity} size="lg" />
                             <div
-                              className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-zinc-900 ${
+                              className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-surface ${
                                 isMuted
-                                  ? "bg-red-500"
+                                  ? "bg-error"
                                   : hasAudioTrack
-                                    ? "bg-emerald-500"
+                                    ? "bg-secondary"
                                     : "bg-yellow-500"
                               }`}
                               title={
@@ -867,8 +867,8 @@ function VoiceRoomUI({
                                 onClick={() => toggleUserMuted(p.identity)}
                                 className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
                                   userMuted[p.identity]
-                                    ? "text-red-400 hover:text-red-300"
-                                    : "text-zinc-500 hover:text-zinc-300"
+                                    ? "text-error hover:text-on-error-container"
+                                    : "text-on-surface-variant hover:text-on-surface"
                                 }`}
                                 title={userMuted[p.identity] ? "Unmute user" : "Mute user"}
                               >
@@ -882,7 +882,7 @@ function VoiceRoomUI({
                               </button>
                             )}
                           </div>
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs text-on-surface-variant">
                             {isUserMuted
                               ? "Muted by you"
                               : showMutedSpeaking
@@ -913,13 +913,13 @@ function VoiceRoomUI({
       />
 
       {/* Mobile voice controls — bottom toolbar with large touch targets */}
-      <div className="md:hidden flex-shrink-0 border-t border-zinc-700 bg-zinc-900/95 backdrop-blur-sm voice-controls-mobile">
+      <div className="md:hidden flex-shrink-0 border-t border-outline-variant/15 bg-surface/95 backdrop-blur-sm voice-controls-mobile">
         <div className="flex items-stretch justify-around px-2 py-2 gap-1">
           {/* Mute */}
           <button
             onClick={toggleMic}
             className={`btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] transition-colors ${
-              isMicEnabled ? "bg-zinc-800 text-zinc-300" : "bg-red-600/25 text-red-400"
+              isMicEnabled ? "bg-surface-container text-on-surface" : "bg-error/25 text-error"
             }`}
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -937,7 +937,7 @@ function VoiceRoomUI({
             onClick={toggleCamera}
             disabled={cameraLoading}
             className={`btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] transition-colors ${
-              cameraLoading ? "bg-indigo-600/15 text-indigo-400 opacity-75" : isCameraEnabled ? "bg-indigo-600/20 text-indigo-400" : "bg-zinc-800 text-zinc-300"
+              cameraLoading ? "bg-primary/15 text-primary opacity-75" : isCameraEnabled ? "bg-primary/10 text-primary" : "bg-surface-container text-on-surface"
             }`}
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -954,7 +954,7 @@ function VoiceRoomUI({
           <button
             onClick={toggleScreenShare}
             className={`btn-press hidden sm:flex flex-1 flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] transition-colors ${
-              isScreenShareEnabled ? "bg-emerald-600/20 text-emerald-400" : "bg-zinc-800 text-zinc-300"
+              isScreenShareEnabled ? "bg-secondary/10 text-secondary" : "bg-surface-container text-on-surface"
             }`}
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
@@ -964,7 +964,7 @@ function VoiceRoomUI({
           {/* Settings */}
           <button
             onClick={() => openSettings("audio")}
-            className="btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] bg-zinc-800 text-zinc-300 transition-colors"
+            className="btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] bg-surface-container text-on-surface transition-colors"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             <span className="text-[10px] font-medium">Settings</span>
@@ -973,7 +973,7 @@ function VoiceRoomUI({
           {/* Leave — visually distinct */}
           <button
             onClick={disconnect}
-            className="btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] bg-red-600/25 text-red-400 transition-colors"
+            className="btn-press flex-1 flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl min-h-[56px] bg-error/25 text-error transition-colors"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
             <span className="text-[10px] font-medium">Leave</span>
@@ -1058,7 +1058,7 @@ function ParticipantNameLabel({
         }}
         autoFocus
         maxLength={32}
-        className="text-sm text-white bg-zinc-700 border border-indigo-500 rounded px-1.5 py-0.5 text-center w-24 focus:outline-none"
+        className="text-sm text-on-surface bg-surface-container-highest border border-primary rounded px-1.5 py-0.5 text-center w-24 focus:outline-none"
       />
     );
   }
@@ -1067,12 +1067,12 @@ function ParticipantNameLabel({
     <span
       onClick={onClick}
       onDoubleClick={handleDoubleClick}
-      className={`text-sm ${isSelf ? "cursor-default" : "hover:text-white cursor-pointer"} text-zinc-200`}
+      className={`text-sm ${isSelf ? "cursor-default" : "hover:text-on-surface cursor-pointer"} text-on-surface`}
       title={isSelf ? "Double-click to edit display name" : "Click to adjust volume"}
     >
       {displayName}
       {isSelf && (
-        <span className="text-zinc-500 text-xs ml-1">(you)</span>
+        <span className="text-on-surface-variant text-xs ml-1">(you)</span>
       )}
     </span>
   );
@@ -1080,12 +1080,12 @@ function ParticipantNameLabel({
 
 function ConnectionIndicator({ state }: { state: ConnectionState }) {
   const config: Record<string, { color: string; label: string }> = {
-    [ConnectionState.Connected]: { color: "bg-emerald-500", label: "Connected" },
+    [ConnectionState.Connected]: { color: "bg-secondary", label: "Connected" },
     [ConnectionState.Connecting]: { color: "bg-yellow-500", label: "Connecting" },
     [ConnectionState.Reconnecting]: { color: "bg-yellow-500", label: "Reconnecting" },
-    [ConnectionState.Disconnected]: { color: "bg-red-500", label: "Disconnected" },
+    [ConnectionState.Disconnected]: { color: "bg-error", label: "Disconnected" },
   };
-  const { color, label } = config[state] ?? { color: "bg-zinc-500", label: state };
+  const { color, label } = config[state] ?? { color: "bg-on-surface-variant/50", label: state };
 
   return (
     <div className="flex items-center gap-1.5">
@@ -1093,8 +1093,8 @@ function ConnectionIndicator({ state }: { state: ConnectionState }) {
       <span
         className={`text-sm font-medium ${
           state === ConnectionState.Connected
-            ? "text-emerald-400"
-            : "text-zinc-400"
+            ? "text-secondary"
+            : "text-on-surface-variant"
         }`}
       >
         {label}

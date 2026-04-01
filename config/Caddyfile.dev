@@ -1,0 +1,67 @@
+{
+    http_port 8080
+    https_port 8443
+}
+
+{$SITE_ADDRESS} {
+    encode gzip
+
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+    }
+
+    request_body {
+        max_size 20MB
+    }
+
+    # Matrix Client-Server API
+    handle /_matrix/* {
+        reverse_proxy conduwuit:6167 {
+            flush_interval -1
+        }
+    }
+
+    handle /.well-known/matrix/* {
+        reverse_proxy conduwuit:6167
+    }
+
+    # Concord API
+    handle /api/* {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+
+    # LiveKit WebSocket signaling
+    handle_path /livekit/* {
+        reverse_proxy livekit:7880 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+            flush_interval -1
+        }
+    }
+
+    # Desktop app downloads
+    handle /downloads/* {
+        header Content-Disposition "attachment"
+        root * /srv
+        file_server
+    }
+
+    # Vite HMR WebSocket — must come before the catch-all
+    @hmr path /ws
+    handle @hmr {
+        reverse_proxy vite-dev:5173 {
+            flush_interval -1
+        }
+    }
+
+    # Proxy everything else to Vite dev server (HMR + SPA)
+    handle {
+        reverse_proxy vite-dev:5173 {
+            flush_interval -1
+        }
+    }
+}

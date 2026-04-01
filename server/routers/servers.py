@@ -175,9 +175,48 @@ def get_access_token(authorization: str = Header(...)) -> str:
 @router.get("", response_model=list[ServerOut])
 async def list_servers(
     user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """List servers the user is a member of."""
+    """List servers the user is a member of.
+
+    Also auto-joins the user to the default lobby if they aren't already a member.
+    """
+    # Auto-join lobby for users who aren't members yet
+    try:
+        import json
+        from config import INSTANCE_SETTINGS_FILE
+
+        if INSTANCE_SETTINGS_FILE.exists():
+            inst_settings = json.loads(INSTANCE_SETTINGS_FILE.read_text())
+            default_id = inst_settings.get("default_server_id")
+            if default_id:
+                existing = await db.execute(
+                    select(ServerMember).where(
+                        ServerMember.server_id == default_id,
+                        ServerMember.user_id == user_id,
+                    )
+                )
+                if not existing.scalar_one_or_none():
+                    db.add(ServerMember(
+                        server_id=default_id,
+                        user_id=user_id,
+                        role="member",
+                    ))
+                    # Join all lobby Matrix rooms
+                    lobby_channels = await db.execute(
+                        select(Channel).where(Channel.server_id == default_id)
+                    )
+                    for ch in lobby_channels.scalars().all():
+                        try:
+                            await join_room(access_token, ch.matrix_room_id)
+                        except Exception:
+                            pass
+                    await db.commit()
+                    logger.info("Auto-joined %s to lobby", user_id)
+    except Exception as e:
+        logger.warning("Lobby auto-join failed for %s: %s", user_id, e)
+
     result = await db.execute(
         select(Server)
         .join(ServerMember, ServerMember.server_id == Server.id)

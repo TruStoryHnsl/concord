@@ -245,6 +245,13 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Default server seed failed: %s", e)
 
+    # One-time: add #welcome channel and post guide to existing lobbies
+    try:
+        await _ensure_lobby_welcome()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Lobby welcome setup failed: %s", e)
+
     yield
 
 
@@ -277,6 +284,7 @@ async def _seed_default_server():
 
     # Define the pre-created channels
     channel_defs = [
+        ("welcome", "text"),
         ("general", "text"),
         ("off-topic", "text"),
         ("introductions", "text"),
@@ -284,6 +292,8 @@ async def _seed_default_server():
         ("hangout", "voice"),
         ("music-lounge", "voice"),
     ]
+
+    general_room_id = None
 
     async with async_session() as db:
         # Create server record
@@ -311,6 +321,8 @@ async def _seed_default_server():
                 channel_type=ch_type,
                 position=position,
             ))
+            if ch_name == "welcome":
+                general_room_id = room_id
 
         await db.commit()
 
@@ -320,6 +332,164 @@ async def _seed_default_server():
         INSTANCE_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
 
         logger.info("Default server '%s' created with ID %s", server_name, server.id)
+
+    # Post welcome guide in the welcome channel
+    if general_room_id:
+        try:
+            from services.bot import bot_send_message
+            await bot_send_message(general_room_id, {
+                "msgtype": "m.text",
+                "body": (
+                    f"Welcome to {instance_name}!\n"
+                    "\n"
+                    "This is the public lobby — everyone who registers gets added here automatically.\n"
+                    "\n"
+                    "GETTING STARTED\n"
+                    "\n"
+                    "Create a server:\n"
+                    "  Desktop — Click the + button at the bottom of the server list (left sidebar)\n"
+                    "  Mobile — Tap Servers in the bottom nav, then tap + Add Server\n"
+                    "  Choose a name and optionally set it to public so others can discover it\n"
+                    "\n"
+                    "Manage channels:\n"
+                    "  Server owners see + Add Channel at the bottom of the channel list\n"
+                    "  Choose between text channels (for messaging) and voice channels (for calls)\n"
+                    "  Hover over a channel and click X to delete it\n"
+                    "\n"
+                    "Invite friends:\n"
+                    "  Click Invite in the channel sidebar header to generate a link\n"
+                    "  Set expiry time, max uses, or make it permanent\n"
+                    "  Share the link — they'll auto-join your server on signup or login\n"
+                    "\n"
+                    "Voice & soundboard:\n"
+                    "  Click a voice channel to join\n"
+                    "  Use the soundboard panel to upload and play audio clips\n"
+                    "  Mute/deafen controls appear in the bottom bar when connected\n"
+                    "\n"
+                    "Settings:\n"
+                    "  Desktop — Click the gear icon at the bottom of the channel sidebar\n"
+                    "  Mobile — Tap Settings in the bottom nav\n"
+                    "  Configure audio devices, voice processing, notifications, and 2FA\n"
+                    "\n"
+                    "Server settings (owners):\n"
+                    "  Click the gear icon next to your server name\n"
+                    "  Manage members, roles, bans, visibility, and moderation options\n"
+                    "\n"
+                    "Need help? Post in #general and the community will help out."
+                ),
+            })
+            logger.info("Welcome message posted to lobby #welcome")
+        except Exception as e:
+            logger.warning("Failed to post welcome message: %s", e)
+
+
+async def _ensure_lobby_welcome():
+    """For already-seeded instances: add a #welcome channel if missing and post the guide."""
+    import json
+    import logging
+    from config import INSTANCE_SETTINGS_FILE, INSTANCE_NAME_DEFAULT
+    from sqlalchemy import select
+    from services.bot import BOT_ACCESS_TOKEN
+    from services.matrix_admin import create_matrix_room
+    from services.bot import bot_send_message
+    from database import async_session
+    from models import Server, Channel
+
+    logger = logging.getLogger(__name__)
+
+    if not INSTANCE_SETTINGS_FILE.exists():
+        return
+    settings = json.loads(INSTANCE_SETTINGS_FILE.read_text())
+    if settings.get("welcome_posted"):
+        return
+    default_id = settings.get("default_server_id")
+    if not default_id or not BOT_ACCESS_TOKEN:
+        return
+
+    instance_name = settings.get("name", INSTANCE_NAME_DEFAULT)
+
+    async with async_session() as db:
+        server = await db.get(Server, default_id)
+        if not server:
+            return
+
+        # Check if #welcome channel already exists
+        result = await db.execute(
+            select(Channel).where(
+                Channel.server_id == default_id,
+                Channel.name == "welcome",
+            )
+        )
+        welcome_ch = result.scalar_one_or_none()
+
+        if not welcome_ch:
+            # Create #welcome as position 0, shift others
+            existing_channels = await db.execute(
+                select(Channel).where(Channel.server_id == default_id).order_by(Channel.position)
+            )
+            for ch in existing_channels.scalars().all():
+                ch.position += 1
+
+            room_id = await create_matrix_room(
+                BOT_ACCESS_TOKEN, f"{server.name} - welcome"
+            )
+            welcome_ch = Channel(
+                server_id=default_id,
+                matrix_room_id=room_id,
+                name="welcome",
+                channel_type="text",
+                position=0,
+            )
+            db.add(welcome_ch)
+            await db.commit()
+            logger.info("Created #welcome channel in lobby")
+
+        # Post the welcome message
+        await bot_send_message(welcome_ch.matrix_room_id, {
+            "msgtype": "m.text",
+            "body": (
+                f"Welcome to {instance_name}!\n"
+                "\n"
+                "This is the public lobby — everyone who registers gets added here automatically.\n"
+                "\n"
+                "GETTING STARTED\n"
+                "\n"
+                "Create a server:\n"
+                "  Desktop — Click the + button at the bottom of the server list (left sidebar)\n"
+                "  Mobile — Tap Servers in the bottom nav, then tap + Add Server\n"
+                "  Choose a name and optionally set it to public so others can discover it\n"
+                "\n"
+                "Manage channels:\n"
+                "  Server owners see + Add Channel at the bottom of the channel list\n"
+                "  Choose between text channels (for messaging) and voice channels (for calls)\n"
+                "  Hover over a channel and click X to delete it\n"
+                "\n"
+                "Invite friends:\n"
+                "  Click Invite in the channel sidebar header to generate a link\n"
+                "  Set expiry time, max uses, or make it permanent\n"
+                "  Share the link — they'll auto-join your server on signup or login\n"
+                "\n"
+                "Voice & soundboard:\n"
+                "  Click a voice channel to join\n"
+                "  Use the soundboard panel to upload and play audio clips\n"
+                "  Mute/deafen controls appear in the bottom bar when connected\n"
+                "\n"
+                "Settings:\n"
+                "  Desktop — Click the gear icon at the bottom of the channel sidebar\n"
+                "  Mobile — Tap Settings in the bottom nav\n"
+                "  Configure audio devices, voice processing, notifications, and 2FA\n"
+                "\n"
+                "Server settings (owners):\n"
+                "  Click the gear icon next to your server name\n"
+                "  Manage members, roles, bans, visibility, and moderation options\n"
+                "\n"
+                "Need help? Post in #general and the community will help out."
+            ),
+        })
+
+        settings["welcome_posted"] = True
+        INSTANCE_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+        logger.info("Welcome message posted to lobby #welcome")
 
 
 app = FastAPI(title="Concord API", lifespan=lifespan)

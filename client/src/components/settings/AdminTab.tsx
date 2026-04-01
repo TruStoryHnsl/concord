@@ -23,9 +23,9 @@ export function AdminTab() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-xl font-semibold text-white">Admin Dashboard</h3>
+      <h3 className="text-xl font-semibold text-on-surface">Admin Dashboard</h3>
 
-      <div className="flex gap-1 border-b border-zinc-700 pb-2">
+      <div className="flex gap-1 border-b border-outline-variant/15 pb-2">
         {(["overview", "instance", "servers", "users", "reports"] as Section[]).map(
           (s) => (
             <button
@@ -33,8 +33,8 @@ export function AdminTab() {
               onClick={() => setSection(s)}
               className={`px-3 py-1.5 text-sm rounded-t transition-colors ${
                 section === s
-                  ? "bg-zinc-700 text-white"
-                  : "text-zinc-400 hover:text-zinc-200"
+                  ? "bg-surface-container-highest text-on-surface"
+                  : "text-on-surface-variant hover:text-on-surface"
               }`}
             >
               {s[0].toUpperCase() + s.slice(1)}
@@ -65,7 +65,7 @@ function OverviewSection({ token }: { token: string | null }) {
   }, [token]);
 
   if (!stats)
-    return <p className="text-zinc-500 text-sm">Loading stats...</p>;
+    return <p className="text-on-surface-variant text-sm">Loading stats...</p>;
 
   const cards: { label: string; value: number; accent?: string }[] = [
     { label: "Servers", value: stats.total_servers },
@@ -77,7 +77,7 @@ function OverviewSection({ token }: { token: string | null }) {
     {
       label: "Open Reports",
       value: stats.open_reports,
-      accent: stats.open_reports > 0 ? "text-amber-400" : undefined,
+      accent: stats.open_reports > 0 ? "text-primary" : undefined,
     },
     { label: "Total Reports", value: stats.total_reports },
   ];
@@ -87,10 +87,10 @@ function OverviewSection({ token }: { token: string | null }) {
       {cards.map((c) => (
         <div
           key={c.label}
-          className="bg-zinc-800 rounded-lg p-3 border border-zinc-700"
+          className="bg-surface-container rounded-lg p-3 border border-outline-variant/15"
         >
-          <p className="text-xs text-zinc-500">{c.label}</p>
-          <p className={`text-2xl font-bold ${c.accent ?? "text-white"}`}>
+          <p className="text-xs text-on-surface-variant">{c.label}</p>
+          <p className={`text-2xl font-bold ${c.accent ?? "text-on-surface"}`}>
             {c.value}
           </p>
         </div>
@@ -150,8 +150,8 @@ function InstanceSection({ token }: { token: string | null }) {
   return (
     <div className="space-y-6">
       <div>
-        <label className="text-sm text-zinc-400 block mb-1">Instance Name</label>
-        <p className="text-xs text-zinc-500 mb-2">
+        <label className="text-sm text-on-surface-variant block mb-1">Instance Name</label>
+        <p className="text-xs text-on-surface-variant mb-2">
           Displayed on the login page, browser tab, and emails. This is your instance's brand name.
         </p>
         <div className="flex gap-2">
@@ -160,31 +160,31 @@ function InstanceSection({ token }: { token: string | null }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={64}
-            className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="flex-1 px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
             placeholder="Concord"
           />
           <button
             onClick={handleSaveName}
             disabled={saving || !name.trim()}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded transition-colors"
+            className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded transition-colors"
           >
             {saving ? "..." : "Save"}
           </button>
         </div>
       </div>
 
-      <div className="border-t border-zinc-700 pt-4">
+      <div className="border-t border-outline-variant/15 pt-4">
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm text-zinc-400 block">Require Two-Factor Authentication</label>
-            <p className="text-xs text-zinc-500 mt-0.5">
+            <label className="text-sm text-on-surface-variant block">Require Two-Factor Authentication</label>
+            <p className="text-xs text-on-surface-variant mt-0.5">
               When enabled, all users must set up an authenticator app to log in.
             </p>
           </div>
           <button
             onClick={handleToggleTOTP}
             className={`relative w-11 h-6 rounded-full transition-colors ${
-              requireTOTP ? "bg-indigo-600" : "bg-zinc-700"
+              requireTOTP ? "bg-primary" : "bg-surface-container-highest"
             }`}
           >
             <span
@@ -212,14 +212,14 @@ function ServersSection({ token }: { token: string | null }) {
   }, [token]);
 
   if (!servers)
-    return <p className="text-zinc-500 text-sm">Loading servers...</p>;
+    return <p className="text-on-surface-variant text-sm">Loading servers...</p>;
 
   if (servers.length === 0)
-    return <p className="text-zinc-500 text-sm">No servers.</p>;
+    return <p className="text-on-surface-variant text-sm">No servers.</p>;
 
   return (
     <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-1 text-xs text-zinc-500 font-medium">
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-1 text-xs text-on-surface-variant font-medium">
         <span>Name</span>
         <span>Visibility</span>
         <span>Members</span>
@@ -228,23 +228,23 @@ function ServersSection({ token }: { token: string | null }) {
       {servers.map((s) => (
         <div
           key={s.id}
-          className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-2 rounded bg-zinc-800/50 text-sm items-center"
+          className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-2 rounded bg-surface-container text-sm items-center"
         >
           <div>
-            <span className="text-white">{s.name}</span>
-            <span className="text-zinc-600 text-xs ml-2">{s.id}</span>
+            <span className="text-on-surface">{s.name}</span>
+            <span className="text-on-surface-variant/50 text-xs ml-2">{s.id}</span>
           </div>
           <span
             className={`text-xs px-1.5 py-0.5 rounded ${
               s.visibility === "public"
-                ? "bg-emerald-900/40 text-emerald-400"
-                : "bg-zinc-700 text-zinc-400"
+                ? "bg-secondary/10 text-secondary"
+                : "bg-surface-container-highest text-on-surface-variant"
             }`}
           >
             {s.visibility}
           </span>
-          <span className="text-zinc-300 text-center">{s.member_count}</span>
-          <span className="text-zinc-500 text-xs">
+          <span className="text-on-surface text-center">{s.member_count}</span>
+          <span className="text-on-surface-variant text-xs">
             {s.created_at
               ? new Date(s.created_at).toLocaleDateString()
               : "—"}
@@ -268,14 +268,14 @@ function UsersSection({ token }: { token: string | null }) {
   }, [token]);
 
   if (!users)
-    return <p className="text-zinc-500 text-sm">Loading users...</p>;
+    return <p className="text-on-surface-variant text-sm">Loading users...</p>;
 
   if (users.length === 0)
-    return <p className="text-zinc-500 text-sm">No users.</p>;
+    return <p className="text-on-surface-variant text-sm">No users.</p>;
 
   return (
     <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-1 text-xs text-zinc-500 font-medium">
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-1 text-xs text-on-surface-variant font-medium">
         <span>User</span>
         <span>Servers</span>
         <span>Role</span>
@@ -284,28 +284,28 @@ function UsersSection({ token }: { token: string | null }) {
       {users.map((u) => (
         <div
           key={u.user_id}
-          className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-2 rounded bg-zinc-800/50 text-sm items-center"
+          className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-2 py-2 rounded bg-surface-container text-sm items-center"
         >
-          <span className="text-white font-mono text-xs truncate">
+          <span className="text-on-surface font-mono text-xs truncate">
             {u.user_id}
           </span>
-          <span className="text-zinc-300 text-center">{u.server_count}</span>
+          <span className="text-on-surface text-center">{u.server_count}</span>
           <div className="flex gap-1">
             {u.is_admin && (
-              <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-900/40 text-indigo-400">
+              <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
                 admin
               </span>
             )}
             {u.has_owner_role && (
-              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400">
+              <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
                 owner
               </span>
             )}
             {!u.is_admin && !u.has_owner_role && (
-              <span className="text-xs text-zinc-500">member</span>
+              <span className="text-xs text-on-surface-variant">member</span>
             )}
           </div>
-          <span className="text-zinc-500 text-xs">
+          <span className="text-on-surface-variant text-xs">
             {u.first_seen
               ? new Date(u.first_seen).toLocaleDateString()
               : "—"}
@@ -321,10 +321,10 @@ function UsersSection({ token }: { token: string | null }) {
 // ---------------------------------------------------------------------------
 
 const STATUS_COLORS: Record<string, string> = {
-  open: "bg-amber-900/40 text-amber-400",
+  open: "bg-primary/10 text-primary",
   in_progress: "bg-blue-900/40 text-blue-400",
-  resolved: "bg-emerald-900/40 text-emerald-400",
-  closed: "bg-zinc-700 text-zinc-400",
+  resolved: "bg-secondary/10 text-secondary",
+  closed: "bg-surface-container-highest text-on-surface-variant",
 };
 
 const STATUS_OPTIONS = ["open", "in_progress", "resolved", "closed"];
@@ -373,23 +373,23 @@ function ReportsSection({ token }: { token: string | null }) {
   };
 
   if (!reports)
-    return <p className="text-zinc-500 text-sm">Loading reports...</p>;
+    return <p className="text-on-surface-variant text-sm">Loading reports...</p>;
 
   if (reports.length === 0)
-    return <p className="text-zinc-500 text-sm">No bug reports yet.</p>;
+    return <p className="text-on-surface-variant text-sm">No bug reports yet.</p>;
 
   return (
     <div className="space-y-2">
       {reports.map((r) => (
         <div
           key={r.id}
-          className="bg-zinc-800/50 rounded border border-zinc-700"
+          className="bg-surface-container rounded border border-outline-variant/15"
         >
           <button
             onClick={() => setExpanded(expanded === r.id ? null : r.id)}
             className="w-full text-left px-3 py-2 flex items-center gap-3"
           >
-            <span className="text-white text-sm flex-1 truncate">
+            <span className="text-on-surface text-sm flex-1 truncate">
               #{r.id} — {r.title}
             </span>
             <span
@@ -397,7 +397,7 @@ function ReportsSection({ token }: { token: string | null }) {
             >
               {r.status.replace("_", " ")}
             </span>
-            <span className="text-zinc-500 text-xs">
+            <span className="text-on-surface-variant text-xs">
               {new Date(r.created_at).toLocaleDateString()}
             </span>
           </button>
@@ -427,15 +427,15 @@ function ReportDetail({
   const [notes, setNotes] = useState(report.admin_notes ?? "");
 
   return (
-    <div className="px-3 pb-3 space-y-3 border-t border-zinc-700 pt-3">
+    <div className="px-3 pb-3 space-y-3 border-t border-outline-variant/15 pt-3">
       <div>
-        <p className="text-xs text-zinc-500 mb-1">
+        <p className="text-xs text-on-surface-variant mb-1">
           Reported by{" "}
-          <span className="text-zinc-300 font-mono">{report.reported_by}</span>
+          <span className="text-on-surface font-mono">{report.reported_by}</span>
           {" "}on{" "}
           {new Date(report.created_at).toLocaleString()}
         </p>
-        <p className="text-sm text-zinc-200 whitespace-pre-wrap">
+        <p className="text-sm text-on-surface whitespace-pre-wrap">
           {report.description}
         </p>
       </div>
@@ -443,18 +443,18 @@ function ReportDetail({
       {/* System info */}
       {report.system_info && (
         <details className="text-xs">
-          <summary className="text-zinc-500 cursor-pointer hover:text-zinc-300">
+          <summary className="text-on-surface-variant cursor-pointer hover:text-on-surface">
             System Info
           </summary>
-          <div className="mt-1 bg-zinc-900 rounded p-2 overflow-x-auto">
-            <table className="text-zinc-400">
+          <div className="mt-1 bg-surface rounded p-2 overflow-x-auto">
+            <table className="text-on-surface-variant">
               <tbody>
                 {Object.entries(report.system_info).map(([k, v]) => (
                   <tr key={k}>
-                    <td className="pr-3 text-zinc-500 whitespace-nowrap align-top">
+                    <td className="pr-3 text-on-surface-variant whitespace-nowrap align-top">
                       {k}
                     </td>
-                    <td className="text-zinc-300">{String(v)}</td>
+                    <td className="text-on-surface">{String(v)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -465,7 +465,7 @@ function ReportDetail({
 
       {/* Status change */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-zinc-500">Status:</span>
+        <span className="text-xs text-on-surface-variant">Status:</span>
         {STATUS_OPTIONS.map((s) => (
           <button
             key={s}
@@ -473,7 +473,7 @@ function ReportDetail({
             className={`text-xs px-2 py-1 rounded transition-colors ${
               report.status === s
                 ? STATUS_COLORS[s]
-                : "text-zinc-500 hover:text-zinc-300 bg-zinc-800"
+                : "text-on-surface-variant hover:text-on-surface bg-surface-container"
             }`}
           >
             {s.replace("_", " ")}
@@ -483,18 +483,18 @@ function ReportDetail({
 
       {/* Admin notes */}
       <div>
-        <label className="text-xs text-zinc-500 block mb-1">Admin Notes</label>
+        <label className="text-xs text-on-surface-variant block mb-1">Admin Notes</label>
         <div className="flex gap-2">
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={2}
-            className="flex-1 px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 resize-none"
+            className="flex-1 px-2 py-1.5 bg-surface border border-outline-variant rounded text-xs text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
             placeholder="Internal notes..."
           />
           <button
             onClick={() => onNotesUpdate(report.id, notes)}
-            className="px-3 self-end bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-xs rounded py-1.5 transition-colors"
+            className="px-3 self-end bg-surface-container-highest hover:bg-surface-bright text-on-surface text-xs rounded py-1.5 transition-colors"
           >
             Save
           </button>

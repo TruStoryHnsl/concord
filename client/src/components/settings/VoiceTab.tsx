@@ -99,7 +99,7 @@ export function VoiceTab() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-xl font-semibold text-white">Voice</h3>
+      <h3 className="text-xl font-semibold text-on-surface">Voice</h3>
 
       {/* Input Volume */}
       <Slider
@@ -115,7 +115,7 @@ export function VoiceTab() {
       {/* Input Device */}
       {inputDevices.length > 0 && (
         <div>
-          <label className="block text-sm text-zinc-300 mb-1.5">
+          <label className="block text-sm text-on-surface mb-1.5">
             Input Device
           </label>
           <select
@@ -123,7 +123,7 @@ export function VoiceTab() {
             onChange={(e) =>
               setPreferredInputDeviceId(e.target.value || null)
             }
-            className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-md text-sm text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+            className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded-md text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30 cursor-pointer"
           >
             <option value="">Default</option>
             {inputDevices.map((d) => (
@@ -137,10 +137,10 @@ export function VoiceTab() {
 
       {/* Mic level meter */}
       <div>
-        <label className="block text-sm text-zinc-300 mb-1.5">
+        <label className="block text-sm text-on-surface mb-1.5">
           Mic Level
         </label>
-        <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
+        <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-75"
             style={{
@@ -157,8 +157,8 @@ export function VoiceTab() {
       </div>
 
       {/* Processing toggles */}
-      <div className="border-t border-zinc-700 pt-6 space-y-4">
-        <h4 className="text-sm font-medium text-white">Voice Processing</h4>
+      <div className="border-t border-outline-variant/15 pt-6 space-y-4">
+        <h4 className="text-sm font-medium text-on-surface">Voice Processing</h4>
 
         <Toggle
           label="Echo Cancellation"
@@ -197,15 +197,15 @@ function Toggle({
   return (
     <div className="flex items-center justify-between">
       <div>
-        <p className="text-sm text-zinc-300">{label}</p>
-        <p className="text-xs text-zinc-500">{description}</p>
+        <p className="text-sm text-on-surface">{label}</p>
+        <p className="text-xs text-on-surface-variant">{description}</p>
       </div>
       <button
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ml-4 ${
-          checked ? "bg-indigo-500" : "bg-zinc-600"
+          checked ? "bg-primary" : "bg-surface-bright"
         }`}
       >
         <span
