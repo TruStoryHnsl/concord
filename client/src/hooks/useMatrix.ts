@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { Room, MatrixEvent } from "matrix-js-sdk";
 import type { RoomMessageEventContent, ReactionEventContent } from "matrix-js-sdk/lib/@types/events";
-import { ClientEvent, RoomEvent, EventType, RelationType, type SyncState, type SyncStateData } from "matrix-js-sdk";
+import { ClientEvent, RoomEvent, RoomMemberEvent, EventType, RelationType, type SyncState, type SyncStateData } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
 import { useToastStore } from "../stores/toast";
 import { mxcToHttp } from "../api/media";
@@ -69,6 +69,23 @@ export function useMatrixSync() {
       useToastStore.getState().addToast("Failed to connect to chat server");
     });
 
+    // Auto-accept DM room invites so the other user can see DM messages
+    // immediately. When someone creates a DM, Matrix sends an invite to the
+    // target — we join automatically if the room is flagged as direct.
+    const onMembership = (_event: MatrixEvent, member: { userId: string; membership: string; roomId: string }) => {
+      if (member.userId !== client.getUserId()) return;
+      if (member.membership !== "invite") return;
+      const room = client.getRoom(member.roomId);
+      // Check if this invite is for a direct message room
+      const isDirect = room?.getDMInviter() != null;
+      if (isDirect) {
+        client.joinRoom(member.roomId).catch((err) => {
+          console.warn("Auto-join DM room failed:", err);
+        });
+      }
+    };
+    client.on(RoomMemberEvent.Membership, onMembership);
+
     // Periodically trim room timelines to prevent memory from growing
     // unbounded. Runs every 60s and caps each room at MAX_TIMELINE_EVENTS.
     const trimInterval = setInterval(() => {
@@ -80,6 +97,7 @@ export function useMatrixSync() {
     return () => {
       clearInterval(trimInterval);
       client.removeListener(ClientEvent.Sync, onSync);
+      client.removeListener(RoomMemberEvent.Membership, onMembership);
       client.stopClient();
     };
   }, [client]);

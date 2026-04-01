@@ -244,6 +244,19 @@ class UserTOTP(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class DMConversation(Base):
+    __tablename__ = "dm_conversations"
+    __table_args__ = (
+        UniqueConstraint("user_a", "user_b", name="uq_dm_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_a: Mapped[str] = mapped_column(String, nullable=False)  # lexicographically smaller Matrix user ID
+    user_b: Mapped[str] = mapped_column(String, nullable=False)  # lexicographically larger Matrix user ID
+    matrix_room_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class BugReport(Base):
     __tablename__ = "bug_reports"
 

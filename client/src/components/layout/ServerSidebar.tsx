@@ -1,5 +1,6 @@
-import { memo, useState } from "react";
+import { memo, useState, useMemo } from "react";
 import { useServerStore } from "../../stores/server";
+import { useDMStore } from "../../stores/dm";
 import { useUnreadCounts } from "../../hooks/useUnreadCounts";
 import { NewServerModal } from "../server/NewServerModal";
 
@@ -15,9 +16,26 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   const unreadCounts = useUnreadCounts();
   const [showNewServer, setShowNewServer] = useState(false);
 
+  // DM state
+  const dmActive = useDMStore((s) => s.dmActive);
+  const setDMActive = useDMStore((s) => s.setDMActive);
+  const dmConversations = useDMStore((s) => s.conversations);
+
+  // Check if any DM has unreads
+  const hasDMUnreads = useMemo(
+    () => dmConversations.some((dm) => (unreadCounts.get(dm.matrix_room_id) ?? 0) > 0),
+    [dmConversations, unreadCounts],
+  );
+
   const handleServerClick = (serverId: string) => {
+    setDMActive(false);
     setActiveServer(serverId);
     onServerSelect?.();
+  };
+
+  const handleDMClick = () => {
+    useServerStore.setState({ activeServerId: null, activeChannelId: null });
+    setDMActive(true);
   };
 
   // Mobile: full-width list view
@@ -29,7 +47,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         </h3>
         <div className="space-y-1">
           {servers.map((server) => {
-            const isActive = activeServerId === server.id;
+            const isActive = !dmActive && activeServerId === server.id;
             const hasUnreads = !isActive && server.channels.some(
               (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
             );
@@ -77,8 +95,33 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // Desktop: compact icon sidebar
   return (
     <div className="w-16 bg-surface flex flex-col items-center py-3 gap-2 overflow-y-auto min-h-0">
+      {/* DM button */}
+      <div className="relative group">
+        <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-primary transition-all ${
+          dmActive ? "h-8" : hasDMUnreads ? "h-2" : "h-0 group-hover:h-5"
+        }`} />
+        <button
+          onClick={handleDMClick}
+          title="Direct Messages"
+          className={`btn-press w-12 h-12 flex items-center justify-center transition-all ${
+            dmActive
+              ? "primary-glow text-on-primary rounded-xl"
+              : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl hover:bg-surface-container-highest hover:text-on-surface"
+          }`}
+        >
+          <span className="material-symbols-outlined text-xl">chat_bubble</span>
+        </button>
+        {hasDMUnreads && !dmActive && (
+          <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse" />
+        )}
+      </div>
+
+      {/* Divider */}
+      <div className="w-8 h-px bg-outline-variant/20 my-0.5" />
+
+      {/* Server list */}
       {servers.map((server) => {
-        const isActive = activeServerId === server.id;
+        const isActive = !dmActive && activeServerId === server.id;
         const hasUnreads = !isActive && server.channels.some(
           (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
         );
@@ -89,7 +132,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
               isActive ? "h-8" : hasUnreads ? "h-2" : "h-0 group-hover:h-5"
             }`} />
             <button
-              onClick={() => setActiveServer(server.id)}
+              onClick={() => handleServerClick(server.id)}
               title={server.name}
               className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
                 isActive

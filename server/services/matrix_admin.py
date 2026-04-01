@@ -65,6 +65,27 @@ async def join_room(access_token: str, room_id: str) -> None:
         resp.raise_for_status()
 
 
+async def create_dm_room(access_token: str, invite_user_id: str) -> str:
+    """Create a direct-message Matrix room and return the room ID."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{MATRIX_HOMESERVER_URL}/_matrix/client/v3/createRoom",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={
+                "is_direct": True,
+                "invite": [invite_user_id],
+                "preset": "trusted_private_chat",
+                "visibility": "private",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        room_id = data.get("room_id")
+        if not room_id:
+            raise Exception(f"Matrix createRoom response missing room_id: {data}")
+        return room_id
+
+
 async def create_matrix_room(access_token: str, name: str) -> str:
     """Create a Matrix room and return the room ID.
 

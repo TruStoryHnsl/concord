@@ -16,8 +16,11 @@ import { useServerStore } from "../../stores/server";
 import { useSendReadReceipt } from "../../hooks/useUnreadCounts";
 import { useNotifications } from "../../hooks/useNotifications";
 import { useSettingsStore } from "../../stores/settings";
+import { useDMStore } from "../../stores/dm";
+import { useDisplayName } from "../../hooks/useDisplayName";
 import { ServerSidebar } from "./ServerSidebar";
 import { ChannelSidebar } from "./ChannelSidebar";
+import { DMSidebar } from "../dm/DMSidebar";
 import { MessageList } from "../chat/MessageList";
 import { MessageInput } from "../chat/MessageInput";
 import { TypingIndicator } from "../chat/TypingIndicator";
@@ -40,7 +43,7 @@ class SilentBoundary extends Component<{ children: ReactNode; fallback?: ReactNo
   }
 }
 
-type MobileView = "servers" | "channels" | "chat" | "settings";
+type MobileView = "servers" | "channels" | "chat" | "dms" | "settings";
 
 export function ChatLayout() {
   const syncing = useMatrixSync();
@@ -52,16 +55,25 @@ export function ChatLayout() {
   const servers = useServerStore((s) => s.servers);
   const activeServerId = useServerStore((s) => s.activeServerId);
 
-  const { messages, isPaginating, hasMore, loadMore } = useRoomMessages(activeChannelId);
-  const sendMessage = useSendMessage(activeChannelId);
-  const deleteMessage = useDeleteMessage(activeChannelId);
-  const editMessage = useEditMessage(activeChannelId);
-  const { sendFile, uploading } = useSendFile(activeChannelId);
-  const sendReaction = useSendReaction(activeChannelId);
-  const removeReaction = useRemoveReaction(activeChannelId);
-  const typingUsers = useTypingUsers(activeChannelId);
-  const { onKeystroke, onStopTyping } = useSendTyping(activeChannelId);
-  useSendReadReceipt(activeChannelId);
+  // DM state
+  const dmActive = useDMStore((s) => s.dmActive);
+  const activeDMRoomId = useDMStore((s) => s.activeDMRoomId);
+  const dmConversation = useDMStore((s) => s.activeConversation)();
+  const loadConversations = useDMStore((s) => s.loadConversations);
+
+  // The active room — either a server channel or a DM room
+  const activeRoomId = dmActive ? activeDMRoomId : activeChannelId;
+
+  const { messages, isPaginating, hasMore, loadMore } = useRoomMessages(activeRoomId);
+  const sendMessage = useSendMessage(activeRoomId);
+  const deleteMessage = useDeleteMessage(activeRoomId);
+  const editMessage = useEditMessage(activeRoomId);
+  const { sendFile, uploading } = useSendFile(activeRoomId);
+  const sendReaction = useSendReaction(activeRoomId);
+  const removeReaction = useRemoveReaction(activeRoomId);
+  const typingUsers = useTypingUsers(activeRoomId);
+  const { onKeystroke, onStopTyping } = useSendTyping(activeRoomId);
+  useSendReadReceipt(activeRoomId);
   useNotifications();
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
@@ -116,7 +128,7 @@ export function ChatLayout() {
     try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
   }, [sidebarWidth]);
 
-  useEffect(() => { setEditingMessage(null); }, [activeChannelId]);
+  useEffect(() => { setEditingMessage(null); }, [activeRoomId]);
 
   const activeServer = useMemo(
     () => servers.find((s) => s.id === activeServerId),
@@ -135,11 +147,11 @@ export function ChatLayout() {
   const openSettings = useSettingsStore((s) => s.openSettings);
 
   const memberCount = useMemo(() => {
-    if (!client || !activeChannelId) return 0;
-    const room = client.getRoom(activeChannelId);
+    if (!client || !activeRoomId) return 0;
+    const room = client.getRoom(activeRoomId);
     if (!room) return 0;
     return room.getJoinedMemberCount();
-  }, [client, activeChannelId, syncing]);
+  }, [client, activeRoomId, syncing]);
 
   const loadMembers = useServerStore((s) => s.loadMembers);
   const [serversLoaded, setServersLoaded] = useState(false);
@@ -147,8 +159,9 @@ export function ChatLayout() {
   useEffect(() => {
     if (accessToken && syncing && !serversLoaded) {
       loadServers(accessToken).then(() => setServersLoaded(true));
+      loadConversations(accessToken);
     }
-  }, [accessToken, syncing, serversLoaded, loadServers]);
+  }, [accessToken, syncing, serversLoaded, loadServers, loadConversations]);
 
   useEffect(() => {
     if (accessToken && activeServerId) {
@@ -163,6 +176,13 @@ export function ChatLayout() {
     setMobileView("chat");
   }, [origSetActiveChannel]);
 
+  // When selecting a DM on mobile, switch to chat view
+  const setActiveDM = useDMStore((s) => s.setActiveDM);
+  const handleMobileDMSelect = useCallback((roomId: string) => {
+    setActiveDM(roomId);
+    setMobileView("chat");
+  }, [setActiveDM]);
+
   // When settings is opened, show it on mobile
   useEffect(() => {
     if (settingsOpen) setMobileView("settings");
@@ -176,10 +196,10 @@ export function ChatLayout() {
         <ServerSidebar />
       </SilentBoundary>
 
-      {/* Channel sidebar */}
+      {/* Channel / DM sidebar */}
       <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
         <SilentBoundary>
-          <ChannelSidebar />
+          {dmActive ? <DMSidebar /> : <ChannelSidebar />}
         </SilentBoundary>
       </div>
 
@@ -201,7 +221,18 @@ export function ChatLayout() {
     <div className="h-full flex flex-col overflow-hidden bg-surface text-on-surface">
       {/* Top bar */}
       <div className="h-12 flex items-center px-3 bg-surface-container-low safe-top flex-shrink-0">
-        {mobileView === "chat" && activeChannel ? (
+        {mobileView === "chat" && dmActive && dmConversation ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setMobileView("dms")}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
+            <DMHeaderName userId={dmConversation.other_user_id} />
+          </div>
+        ) : mobileView === "chat" && activeChannel ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               onClick={() => setMobileView("channels")}
@@ -222,6 +253,10 @@ export function ChatLayout() {
                 {memberCount}
               </span>
             )}
+          </div>
+        ) : mobileView === "dms" ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <h2 className="font-headline font-bold text-lg text-primary">Messages</h2>
           </div>
         ) : mobileView === "channels" && activeServer ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -260,6 +295,11 @@ export function ChatLayout() {
             <ChannelSidebar mobile onChannelSelect={handleMobileChannelSelect} />
           </SilentBoundary>
         )}
+        {mobileView === "dms" && (
+          <SilentBoundary>
+            <DMSidebar mobile onDMSelect={handleMobileDMSelect} />
+          </SilentBoundary>
+        )}
         {mobileView === "settings" && (
           settingsOpen ? (
             <SettingsPanel />
@@ -279,7 +319,14 @@ export function ChatLayout() {
       {/* Bottom navigation */}
       <BottomNav
         active={mobileView}
-        onChange={setMobileView}
+        onChange={(view) => {
+          if (view === "dms") {
+            useDMStore.getState().setDMActive(true);
+          } else if (view === "servers" || view === "channels" || view === "chat") {
+            useDMStore.getState().setDMActive(false);
+          }
+          setMobileView(view);
+        }}
         onSettingsOpen={openSettings}
       />
     </div>
@@ -325,9 +372,14 @@ export function ChatLayout() {
 
     return (
       <>
-        {/* Channel header */}
+        {/* Channel / DM header */}
         <div className="h-12 flex items-center px-4 bg-surface-container-low flex-shrink-0">
-          {activeChannel ? (
+          {dmActive && dmConversation ? (
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
+              <DMHeaderName userId={dmConversation.other_user_id} />
+            </div>
+          ) : activeChannel ? (
             <div className="flex items-center gap-3 min-w-0">
               <h2 className="font-headline font-semibold truncate">
                 {isVoiceChannel ? (
@@ -366,6 +418,40 @@ export function ChatLayout() {
 
   // Shared chat/voice content
   const renderChatContent = () => {
+    // DM chat
+    if (dmActive && activeDMRoomId && dmConversation) {
+      return (
+        <>
+          <MessageList
+            messages={messages}
+            isPaginating={isPaginating}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            currentUserId={userId}
+            isServerOwner={false}
+            onDelete={deleteMessage}
+            onStartEdit={setEditingMessage}
+            onReact={sendReaction}
+            onRemoveReaction={removeReaction}
+          />
+          <TypingIndicator typingUsers={typingUsers} />
+          <FloatingButtons onStats={() => setShowStats(true)} onBug={() => setShowBugReport(true)} onHelp={() => setShowHelp(true)} />
+          <MessageInput
+            onSend={sendMessage}
+            onSubmitEdit={editMessage}
+            onSendFile={sendFile}
+            uploading={uploading}
+            editingMessage={editingMessage}
+            onCancelEdit={() => setEditingMessage(null)}
+            onKeystroke={onKeystroke}
+            onStopTyping={onStopTyping}
+            roomName={dmConversation.other_user_id.split(":")[0].replace("@", "")}
+          />
+        </>
+      );
+    }
+
+    // Server channel chat
     if (activeChannelId && activeChannel) {
       if (isVoiceChannel) {
         return (
@@ -461,7 +547,8 @@ function BottomNav({
   const items: { key: MobileView; icon: string; label: string }[] = [
     { key: "servers", icon: "dns", label: "Servers" },
     { key: "channels", icon: "tag", label: "Channels" },
-    { key: "chat", icon: "chat_bubble", label: "Chat" },
+    { key: "chat", icon: "forum", label: "Chat" },
+    { key: "dms", icon: "chat_bubble", label: "DMs" },
     { key: "settings", icon: "settings", label: "Settings" },
   ];
 
@@ -580,6 +667,12 @@ function OnboardingGuide() {
       </div>
     </div>
   );
+}
+
+/* ── DM Header Name (uses hook, must be a component) ── */
+function DMHeaderName({ userId }: { userId: string }) {
+  const name = useDisplayName(userId);
+  return <h2 className="font-headline font-semibold truncate">{name}</h2>;
 }
 
 /* ── Help Modal ── */

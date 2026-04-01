@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import servers, invites, registration, voice, soundboard, webhooks, admin, direct_invites, stats, totp, moderation, preview, media
+from routers import servers, invites, registration, voice, soundboard, webhooks, admin, direct_invites, stats, totp, moderation, preview, media, dms
 
 
 @asynccontextmanager
@@ -227,6 +227,19 @@ async def lifespan(app: FastAPI):
                 connection.execute(text(
                     "ALTER TABLE soundboard_clips ADD COLUMN keybind VARCHAR"
                 ))
+
+            # DM conversations table
+            if not insp.has_table("dm_conversations"):
+                connection.execute(text("""
+                    CREATE TABLE dm_conversations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_a VARCHAR NOT NULL,
+                        user_b VARCHAR NOT NULL,
+                        matrix_room_id VARCHAR NOT NULL UNIQUE,
+                        created_at DATETIME,
+                        UNIQUE(user_a, user_b)
+                    )
+                """))
 
         await conn.run_sync(_migrate)
 
@@ -523,6 +536,7 @@ app.include_router(totp.router)
 app.include_router(moderation.router)
 app.include_router(preview.router)
 app.include_router(media.router)
+app.include_router(dms.router)
 
 
 @app.get("/api/health")

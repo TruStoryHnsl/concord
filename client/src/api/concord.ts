@@ -1002,3 +1002,29 @@ export async function updateAdminReport(
     accessToken,
   );
 }
+
+// --- Direct Messages ---
+
+export interface DMConversation {
+  id: number;
+  other_user_id: string;
+  matrix_room_id: string;
+  created_at: string | null;
+}
+
+export async function listDMs(
+  accessToken: string,
+): Promise<DMConversation[]> {
+  return apiFetch("/dms", {}, accessToken);
+}
+
+export async function createDM(
+  targetUserId: string,
+  accessToken: string,
+): Promise<{ id: number; target_user_id: string; matrix_room_id: string; created: boolean }> {
+  return apiFetch(
+    "/dms",
+    { method: "POST", body: JSON.stringify({ target_user_id: targetUserId }) },
+    accessToken,
+  );
+}
