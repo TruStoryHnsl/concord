@@ -12,7 +12,7 @@ room:
   empty_timeout: 300         # close room 5 min after last participant leaves
   departure_timeout: 20      # grace period before marking participant as gone
 turn:
-  enabled: true
-  udp_port: 3478
-  tls_port: 0
-  domain: ${LIVEKIT_TURN_DOMAIN:-concorrd.com}
+  enabled: false
+  # Built-in TURN disabled — Concord bundles coturn as a dedicated TURN
+  # relay (see docker-compose.yml). This avoids port conflicts and gives
+  # full control over relay configuration and credential management.

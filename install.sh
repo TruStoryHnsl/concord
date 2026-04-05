@@ -222,6 +222,7 @@ USE_HTTPS=false
 SITE_ADDRESS=""
 SITE_URL=""
 LIVEKIT_TURN_DOMAIN=""
+TURN_HOST=""
 DNS_API_TOKEN=""
 TUNNEL_TOKEN=""
 INTEGRATIONS=""
@@ -231,8 +232,6 @@ SMTP_USER=""
 SMTP_PASS=""
 SMTP_FROM=""
 FREESOUND_KEY=""
-METERED_APP=""
-METERED_KEY=""
 
 # ── Step 1: Server Name ──────────────────────────────────────────────
 
@@ -431,6 +430,7 @@ wizard_step_3() {
     BIND_HOST="127.0.0.1"
     SITE_URL="https://${DOMAIN}"
     LIVEKIT_TURN_DOMAIN="$DOMAIN"
+    TURN_HOST="turn.${DOMAIN}"
 
     echo ""
     info "Domain: ${BOLD}${DOMAIN}${NC}"
@@ -575,11 +575,67 @@ wizard_step_3() {
       warn "DNS issue: ${DNS_ERR:-create a CNAME to ${TUNNEL_ID}.cfargotunnel.com manually}"
     fi
 
+    # ── TURN DNS (direct, no proxy) ───────────────────────────────
+    # Voice relay (coturn) needs a direct connection — CDN proxies block
+    # UDP/TURN traffic. Create a DNS-only A record for turn.DOMAIN that
+    # points straight to the server's public IP.
+    echo ""
+    echo -e "${BOLD}Setting up voice relay DNS${NC}"
+    echo -e "${DIM}Voice chat needs a direct connection that bypasses the tunnel.${NC}"
+    echo -e "${DIM}Creating a DNS record for turn.${DOMAIN}...${NC}"
+
+    local SERVER_PUBLIC_IP
+    SERVER_PUBLIC_IP=$(detect_public_ip)
+
+    if [ -z "$SERVER_PUBLIC_IP" ]; then
+      warn "Could not detect server's public IP."
+      echo -en "${CYAN}Enter this server's public IP: ${NC}"
+      read -r SERVER_PUBLIC_IP
+    fi
+
+    if [ -n "$SERVER_PUBLIC_IP" ]; then
+      # Remove existing turn. record
+      local EXISTING_TURN_RECORDS
+      EXISTING_TURN_RECORDS=$(curl -s -H "Authorization: Bearer $DNS_API_TOKEN" \
+        "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=turn.${DOMAIN}" 2>&1) || true
+      local OLD_TURN_ID
+      OLD_TURN_ID=$(echo "$EXISTING_TURN_RECORDS" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+      if [ -n "$OLD_TURN_ID" ]; then
+        curl -s -X DELETE \
+          -H "Authorization: Bearer $DNS_API_TOKEN" \
+          "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${OLD_TURN_ID}" > /dev/null 2>&1 || true
+      fi
+
+      # Create DNS-only A record (proxied:false = gray cloud = direct)
+      local TURN_DNS_RESPONSE
+      TURN_DNS_RESPONSE=$(curl -s -X POST \
+        -H "Authorization: Bearer $DNS_API_TOKEN" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+        -d "{\"type\":\"A\",\"name\":\"turn.${DOMAIN}\",\"content\":\"${SERVER_PUBLIC_IP}\",\"proxied\":false,\"ttl\":300}" 2>&1) || true
+
+      if echo "$TURN_DNS_RESPONSE" | grep -q '"success":true'; then
+        info "DNS record created: turn.${DOMAIN} → ${SERVER_PUBLIC_IP} (direct, no proxy)"
+        TURN_HOST="turn.${DOMAIN}"
+      else
+        local TURN_DNS_ERR
+        TURN_DNS_ERR=$(cf_error "$TURN_DNS_RESPONSE")
+        warn "Could not create turn DNS record: ${TURN_DNS_ERR:-unknown}"
+        echo -e "  ${DIM}Create an A record for turn.${DOMAIN} → ${SERVER_PUBLIC_IP} manually.${NC}"
+        echo -e "  ${DIM}IMPORTANT: Disable Cloudflare proxy (gray cloud) for this record.${NC}"
+      fi
+    else
+      warn "No public IP available — voice relay DNS not configured."
+      echo -e "  ${DIM}Create an A record for turn.${DOMAIN} → your server IP manually.${NC}"
+      echo -e "  ${DIM}IMPORTANT: Disable Cloudflare proxy (gray cloud) for this record.${NC}"
+    fi
+
     # ── Summary ─────────────────────────────────────────────────────
     echo ""
     info "Tunnel is fully configured!"
     echo -e "  ${DIM}Traffic flow: internet → Cloudflare (HTTPS) → tunnel → this server${NC}"
-    echo -e "  ${DIM}No ports need to be open. Cloudflare handles SSL/TLS.${NC}"
+    echo -e "  ${DIM}Voice relay: internet → turn.${DOMAIN} (direct) → coturn on this server${NC}"
+    echo -e "  ${DIM}Ports to open: 3478/udp+tcp, 5349/tcp, 49152-49252/udp${NC}"
 
   else
     # ══════════════════════════════════════════════════════════════════
@@ -621,10 +677,15 @@ wizard_step_3() {
         SITE_ADDRESS=":8080"
         LIVEKIT_TURN_DOMAIN=$(echo "$SITE_URL" | sed 's|^https\?://||' | sed 's|[:/].*||')
         LIVEKIT_TURN_DOMAIN=${LIVEKIT_TURN_DOMAIN:-$LAN_IP}
+        TURN_HOST="${LIVEKIT_TURN_DOMAIN}"
 
         echo ""
         info "Listening on 0.0.0.0:${HTTP_PORT}"
         echo -e "  ${DIM}Proxy your domain → http://<this-host>:${HTTP_PORT}${NC}"
+        echo ""
+        echo -e "  ${YELLOW}Voice relay note:${NC} If your domain goes through a CDN (Cloudflare, etc.),"
+        echo -e "  ${DIM}create a DNS record for ${BOLD}turn.${LIVEKIT_TURN_DOMAIN}${NC}${DIM} pointing directly to this${NC}"
+        echo -e "  ${DIM}server's IP (no CDN proxy), then set TURN_HOST in .env.${NC}"
         ;;
 
       b|B) # ── Local only ───────────────────────────────────────────
@@ -639,6 +700,7 @@ wizard_step_3() {
         SITE_ADDRESS=":8080"
         SITE_URL="http://localhost:${HTTP_PORT}"
         LIVEKIT_TURN_DOMAIN="localhost"
+        TURN_HOST="localhost"
 
         echo ""
         info "Bound to localhost:${HTTP_PORT}"
@@ -669,7 +731,11 @@ wizard_step_3() {
         read_input "Bind address [0.0.0.0]: " "${BIND_HOST:-0.0.0.0}" BIND_HOST || return 1
 
         echo ""
-        read_input "TURN domain: " "${LIVEKIT_TURN_DOMAIN:-${DOMAIN:-$LAN_IP}}" LIVEKIT_TURN_DOMAIN || return 1
+        read_input "TURN domain (realm): " "${LIVEKIT_TURN_DOMAIN:-${DOMAIN:-$LAN_IP}}" LIVEKIT_TURN_DOMAIN || return 1
+        echo ""
+        echo -e "${DIM}TURN host is the address clients connect to for voice relay.${NC}"
+        echo -e "${DIM}If your domain is behind a CDN, use a direct IP or subdomain.${NC}"
+        read_input "TURN host: " "${TURN_HOST:-${LIVEKIT_TURN_DOMAIN}}" TURN_HOST || return 1
 
         echo ""
         info "Manual network configuration set"
@@ -688,24 +754,20 @@ wizard_step_4() {
   echo ""
   echo -e "  ${BOLD}1${NC}  Email Invites          ${DIM}Send server invitations via email (requires SMTP)${NC}"
   echo -e "  ${BOLD}2${NC}  Sound Effects Library   ${DIM}Browse/import sounds from Freesound.org${NC}"
-  echo -e "  ${BOLD}3${NC}  External Voice Relay    ${DIM}For users behind strict corporate firewalls (Metered.ca)${NC}"
   echo ""
-  echo -e "${DIM}Voice chat works out of the box — option 3 is only needed if users${NC}"
-  echo -e "${DIM}can't connect due to aggressive firewalls blocking UDP traffic.${NC}"
+  echo -e "  ${DIM}Voice relay (coturn) is built-in — no external service needed.${NC}"
   echo ""
-  echo -en "${CYAN}Enter choices (e.g. 1 3), or press Enter to skip: ${NC}"
+  echo -en "${CYAN}Enter choices (e.g. 1 2), or press Enter to skip: ${NC}"
   read -r INTEGRATIONS
   if [ "$INTEGRATIONS" = "back" ]; then return 1; fi
   INTEGRATIONS=${INTEGRATIONS:-}
 
   local WANT_SMTP=false
   local WANT_FREESOUND=false
-  local WANT_TURN=false
   for choice in $INTEGRATIONS; do
     case "$choice" in
       1) WANT_SMTP=true ;;
       2) WANT_FREESOUND=true ;;
-      3) WANT_TURN=true ;;
       *) warn "Unknown option '$choice' — skipping" ;;
     esac
   done
@@ -715,7 +777,6 @@ wizard_step_4() {
     SMTP_HOST="" SMTP_PORT_VAL="587" SMTP_USER="" SMTP_PASS="" SMTP_FROM=""
   fi
   if [ "$WANT_FREESOUND" = false ]; then FREESOUND_KEY=""; fi
-  if [ "$WANT_TURN" = false ]; then METERED_APP="" METERED_KEY=""; fi
 
   # ── Email Invites setup ──
   if [ "$WANT_SMTP" = true ]; then
@@ -742,20 +803,6 @@ wizard_step_4() {
     info "Sound effects library configured"
   fi
 
-  # ── External Voice Relay setup ──
-  if [ "$WANT_TURN" = true ]; then
-    echo ""
-    echo -e "${BOLD}External Voice Relay Setup${NC}"
-    echo -e "${DIM}Metered.ca provides a free TURN relay for NAT traversal.${NC}"
-    echo -e "${DIM}Sign up at https://www.metered.ca/ and find your credentials${NC}"
-    echo -e "${DIM}on the dashboard.${NC}"
-    echo ""
-    echo -e "${DIM}Your app name is the subdomain from your dashboard URL.${NC}"
-    echo -e "${DIM}Example: if it says myapp.metered.live, enter myapp${NC}"
-    read_input "Metered app name: " "$METERED_APP" METERED_APP || return 1
-    read_input "Metered API key: " "$METERED_KEY" METERED_KEY || return 1
-    info "External voice relay configured"
-  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -829,13 +876,18 @@ LK_KEY="API$(generate_secret | tr -dc 'A-Za-z0-9' | head -c 12)"
 LK_SECRET=$(generate_secret)
 info "LiveKit API key/secret generated"
 
+TURN_SECRET_VAL=$(generate_secret)
+info "TURN shared secret generated"
+
 # Generate override based on network mode
 rm -f docker-compose.override.yml
 
+# Start override with header
+echo "# Auto-generated by install.sh — do not edit manually" > docker-compose.override.yml
+echo "services:" >> docker-compose.override.yml
+
 if [ "$NET_MODE" = "automatic" ] && [ -n "$TUNNEL_TOKEN" ]; then
-  cat > docker-compose.override.yml <<'OVERRIDEEOF'
-# Auto-generated: Cloudflare Tunnel for automatic mode
-services:
+  cat >> docker-compose.override.yml <<'OVERRIDEEOF'
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -850,14 +902,36 @@ services:
 OVERRIDEEOF
   info "Cloudflare Tunnel service added (docker-compose.override.yml)"
 elif [ "$USE_HTTPS" = true ]; then
-  cat > docker-compose.override.yml <<'OVERRIDEEOF'
-# Auto-generated: HTTPS port mapping for domain mode
-services:
+  cat >> docker-compose.override.yml <<'OVERRIDEEOF'
   web:
     ports:
       - "${BIND_HOST:-0.0.0.0}:8443:8443"
 OVERRIDEEOF
   info "HTTPS port mapping enabled (docker-compose.override.yml)"
+fi
+
+# coturn external-ip: detect and add so TURN relay addresses are correct.
+# Required when the host is behind NAT (public IP differs from local IP).
+COTURN_PUBLIC_IP="${SERVER_PUBLIC_IP:-$(detect_public_ip)}"
+COTURN_LOCAL_IP="$(detect_lan_ip)"
+if [ -n "$COTURN_PUBLIC_IP" ] && [ -n "$COTURN_LOCAL_IP" ] && [ "$COTURN_PUBLIC_IP" != "$COTURN_LOCAL_IP" ]; then
+  cat >> docker-compose.override.yml <<OVERRIDEEOF
+  coturn:
+    command:
+      - --static-auth-secret=\${TURN_SECRET}
+      - --realm=\${TURN_DOMAIN:-localhost}
+      - --external-ip=${COTURN_PUBLIC_IP}/${COTURN_LOCAL_IP}
+OVERRIDEEOF
+  info "coturn external-ip: ${COTURN_PUBLIC_IP}/${COTURN_LOCAL_IP}"
+elif [ -n "$COTURN_PUBLIC_IP" ]; then
+  cat >> docker-compose.override.yml <<OVERRIDEEOF
+  coturn:
+    command:
+      - --static-auth-secret=\${TURN_SECRET}
+      - --realm=\${TURN_DOMAIN:-localhost}
+      - --external-ip=${COTURN_PUBLIC_IP}
+OVERRIDEEOF
+  info "coturn external-ip: ${COTURN_PUBLIC_IP}"
 fi
 
 # ── Write .env ───────────────────────────────────────────────────────────
@@ -904,11 +978,11 @@ TUNNEL_TOKEN="${TUNNEL_TOKEN}"
 # ── LiveKit (Voice/Video) ─────────────────────────────────────────
 LIVEKIT_API_KEY="${LK_KEY}"
 LIVEKIT_API_SECRET="${LK_SECRET}"
-LIVEKIT_TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN}"
 
-# ── External TURN Relay ───────────────────────────────────────────
-METERED_APP_NAME="${METERED_APP}"
-METERED_API_KEY="${METERED_KEY}"
+# ── TURN Relay (bundled coturn) ───────────────────────────────────
+TURN_SECRET="${TURN_SECRET_VAL}"
+TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN}"
+TURN_HOST="${TURN_HOST:-${LIVEKIT_TURN_DOMAIN}}"
 
 # ── Admin ──────────────────────────────────────────────────────────
 ADMIN_USER_IDS="${ADMIN_USER_ID}"

@@ -41,7 +41,7 @@ class VoiceTokenResponse(BaseModel):
 
 
 TURN_SECRET = os.getenv("TURN_SECRET", "")
-TURN_DOMAIN = os.getenv("TURN_DOMAIN", "concorrd.com")
+TURN_DOMAIN = os.getenv("TURN_DOMAIN", "localhost")
 # Credential TTL: how long a TURN credential is valid (seconds)
 TURN_CREDENTIAL_TTL = 86400  # 24 hours
 
@@ -65,12 +65,20 @@ def _generate_turn_credentials(user_id: str) -> list[IceServer]:
     mac = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1)
     credential = base64.b64encode(mac.digest()).decode()
 
-    turn_host = os.getenv("TURN_HOST", "turn.concorrd.com")
+    turn_host = os.getenv("TURN_HOST", TURN_DOMAIN)
     return [
-        # TURNS (TLS) on port 443 — routed by sslh SNI to coturn
-        IceServer(urls=f"turns:{turn_host}:443?transport=tcp", username=username, credential=credential),
-        # TURN TLS on 5349 — direct to coturn (fallback if 443 routing fails)
-        IceServer(urls=f"turns:{turn_host}:5349?transport=tcp", username=username, credential=credential),
+        # TURN relay — UDP preferred, TCP fallback for restrictive networks.
+        # Both use the same credentials and share one IceServer entry so the
+        # browser tries them as a group.
+        IceServer(
+            urls=[
+                f"turn:{turn_host}:3478?transport=udp",
+                f"turn:{turn_host}:3478?transport=tcp",
+                f"turn:{turn_host}:5349?transport=tcp",
+            ],
+            username=username,
+            credential=credential,
+        ),
         # STUN (discovery only, no relay)
         IceServer(urls="stun:stun.l.google.com:19302"),
     ]

@@ -40,6 +40,9 @@ services:
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
       LIVEKIT_URL: ws://livekit:7880
+      TURN_SECRET: ${TURN_SECRET:-}
+      TURN_HOST: ${TURN_HOST:-}
+      TURN_DOMAIN: ${TURN_DOMAIN:-localhost}
       METERED_APP_NAME: ${METERED_APP_NAME:-}
       METERED_API_KEY: ${METERED_API_KEY:-}
       ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
@@ -66,8 +69,6 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     ports:
-      - "${LIVEKIT_TURN_PORT:-3478}:3478/udp"
-      - "${LIVEKIT_TURN_PORT:-3478}:3478/tcp"
       - "${LIVEKIT_TCP_PORT:-7881}:7881"
       - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
     volumes:
@@ -83,6 +84,22 @@ services:
       start_period: 5s
     networks:
       - concord
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config/turnserver.conf:/etc/turnserver.conf:ro
+    # Secret and realm are injected via CLI so they never touch disk.
+    # external-ip is added in docker-compose.override.yml when the server
+    # is behind NAT (install.sh generates this automatically).
+    command:
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=${TURN_DOMAIN:-localhost}
+    depends_on:
+      livekit:
+        condition: service_healthy
 
   web:
     build:
