@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import type { ChatMessage } from "../../hooks/useMatrix";
 import { useToastStore } from "../../stores/toast";
 
@@ -37,8 +37,21 @@ export function MessageInput({
   const [dragOver, setDragOver] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const pendingRef = useRef<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Auto-grow textarea on text change
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const computedLineHeight = parseFloat(getComputedStyle(el).lineHeight);
+    const lineHeight = Number.isNaN(computedLineHeight) ? 22 : computedLineHeight;
+    const maxHeight = Math.min(window.innerHeight * 0.4, 8 * lineHeight);
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [text]);
 
   // Populate input when entering edit mode
   useEffect(() => {
@@ -77,8 +90,8 @@ export function MessageInput({
 
   const hasContent = text.trim().length > 0 || stagedFiles.length > 0;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.SyntheticEvent) => {
+    e?.preventDefault();
     const trimmed = text.trim();
     if ((!trimmed && stagedFiles.length === 0) || sending) return;
 
@@ -121,15 +134,20 @@ export function MessageInput({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Escape" && editingMessage) {
       e.preventDefault();
       setText("");
       onCancelEdit();
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      handleSubmit(e);
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
     if (!editingMessage) {
       if (e.target.value) onKeystroke?.();
@@ -167,7 +185,7 @@ export function MessageInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-surface-container-low"
+      className="bg-surface-container-low flex-shrink-0"
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -236,7 +254,7 @@ export function MessageInput({
 
       <div className="px-4 py-3">
         <div
-          className={`flex items-center gap-2 bg-surface-container rounded-xl px-2 transition-all ${
+          className={`flex items-end gap-2 bg-surface-container rounded-xl px-2 transition-all ${
             dragOver
               ? "ring-1 ring-primary/30 bg-primary/5"
               : editingMessage
@@ -263,9 +281,9 @@ export function MessageInput({
               />
             </>
           )}
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
+            rows={1}
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
@@ -284,7 +302,7 @@ export function MessageInput({
                     ? "Add a message or press Enter to send"
                     : `Message #${roomName}`
             }
-            className="flex-1 px-2 py-3 bg-transparent text-on-surface placeholder-on-surface-variant/50 focus:outline-none text-base md:text-sm font-body"
+            className="flex-1 px-2 py-3 bg-transparent text-on-surface placeholder-on-surface-variant/50 focus:outline-none text-base md:text-sm font-body resize-none leading-[22px]"
           />
           {hasContent && (
             <button

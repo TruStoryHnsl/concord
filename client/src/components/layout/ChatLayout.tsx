@@ -83,6 +83,8 @@ export function ChatLayout() {
 
   // Mobile view state — replaces the old drawer system
   const [mobileView, setMobileView] = useState<MobileView>("chat");
+  // Mobile account sheet (T003)
+  const [accountSheetOpen, setAccountSheetOpen] = useState(false);
 
   // Resizable channel sidebar (desktop only)
   const SIDEBAR_MIN = 160;
@@ -218,9 +220,10 @@ export function ChatLayout() {
 
   // Mobile layout with bottom nav
   const renderMobileLayout = () => (
-    <div className="h-full flex flex-col overflow-hidden bg-surface text-on-surface">
+    <div className="h-full flex flex-col overflow-hidden bg-surface text-on-surface min-h-0">
       {/* Top bar */}
-      <div className="h-12 flex items-center px-3 bg-surface-container-low safe-top flex-shrink-0">
+      <div className="h-12 flex items-center px-3 bg-surface-container-low safe-top flex-shrink-0 gap-2">
+        <div className="flex-1 min-w-0 flex items-center">
         {mobileView === "chat" && dmActive && dmConversation ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
@@ -281,6 +284,16 @@ export function ChatLayout() {
         ) : (
           <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
         )}
+        </div>
+        {/* T003: Account button — visible on every mobile view */}
+        <button
+          onClick={() => setAccountSheetOpen(true)}
+          aria-label="Account"
+          className="btn-press flex items-center justify-center w-11 h-11 -mr-2 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+          title="Account"
+        >
+          <span className="material-symbols-outlined text-xl">account_circle</span>
+        </button>
       </div>
 
       {/* Main content area */}
@@ -530,11 +543,63 @@ export function ChatLayout() {
       {showBugReport && <BugReportModal onClose={() => setShowBugReport(false)} />}
       {showStats && <StatsModal onClose={() => setShowStats(false)} />}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {accountSheetOpen && (
+        <AccountSheet
+          userId={userId}
+          onClose={() => setAccountSheetOpen(false)}
+        />
+      )}
     </>
   );
 }
 
-/* ── Bottom Navigation (Mobile) ── */
+/* ── Account Sheet (Mobile, T003) ── */
+function AccountSheet({
+  userId,
+  onClose,
+}: {
+  userId: string | null;
+  onClose: () => void;
+}) {
+  const handleLogout = () => {
+    onClose();
+    useAuthStore.getState().logout();
+  };
+  const username = userId?.split(":")[0].replace("@", "") ?? "Signed in";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="glass-panel w-full max-w-sm rounded-t-2xl md:rounded-2xl p-5 m-0 md:m-4 animate-[fadeSlideUp_0.25s_ease-out] safe-bottom">
+        <div className="flex items-center gap-3 mb-4 min-w-0">
+          <div className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+            <span className="material-symbols-outlined text-on-surface-variant">person</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-on-surface-variant font-label">Signed in as</p>
+            <p className="text-sm font-headline font-semibold text-on-surface break-all min-w-0">{username}</p>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="btn-press w-9 h-9 flex items-center justify-center rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+          >
+            <span className="material-symbols-outlined text-base">close</span>
+          </button>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="w-full px-4 py-3 rounded-xl text-error border border-error/30 hover:bg-error/10 transition-colors text-sm font-label font-medium min-h-[44px]"
+        >
+          Logout
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Bottom Navigation (Mobile, T005) ── */
 function BottomNav({
   active,
   onChange,
@@ -552,39 +617,65 @@ function BottomNav({
     { key: "settings", icon: "settings", label: "Settings" },
   ];
 
+  const activeIndex = Math.max(0, items.findIndex((it) => it.key === active));
+  // Each tab takes 1/5 of width; slide indicator to active.
+  const indicatorStyle: React.CSSProperties = {
+    transform: `translateX(${activeIndex * 100}%)`,
+  };
+
   return (
-    <nav className="flex items-center justify-around bg-surface-container-low safe-bottom flex-shrink-0 pt-1 pb-1">
-      {items.map(({ key, icon, label }) => {
-        const isActive = active === key;
-        return (
-          <button
-            key={key}
-            onClick={() => {
-              if (key === "settings") onSettingsOpen();
-              onChange(key);
-            }}
-            className={`btn-press flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-all ${
-              isActive
-                ? "text-primary"
-                : "text-on-surface-variant hover:text-on-surface"
-            }`}
-          >
-            <span
-              className="material-symbols-outlined text-xl"
-              style={isActive ? { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' } : undefined}
+    <div className="concord-mobile-nav-wrap safe-bottom flex-shrink-0">
+      <nav
+        className="concord-mobile-nav glass-panel mx-3 mb-2 rounded-2xl relative flex items-stretch"
+        aria-label="Mobile navigation"
+      >
+        {/* Sliding active pill indicator */}
+        <div
+          className="concord-mobile-nav-indicator pointer-events-none absolute top-1.5 bottom-1.5 left-1.5"
+          style={indicatorStyle}
+          aria-hidden="true"
+        />
+        {items.map(({ key, icon, label }, i) => {
+          const isActive = active === key;
+          const isCenter = i === 2; // chat
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                if (key === "settings") onSettingsOpen();
+                onChange(key);
+              }}
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+              className={`relative z-10 flex-1 flex flex-col items-center justify-center min-h-[56px] min-w-[44px] gap-0.5 active:scale-95 transition-transform duration-100 ${
+                isActive ? "text-on-surface" : "text-on-surface-variant hover:text-on-surface"
+              }`}
             >
-              {icon}
-            </span>
-            <span className="text-[10px] font-label font-medium tracking-wider">
-              {label}
-            </span>
-            {isActive && (
-              <div className="w-1 h-1 rounded-full bg-primary mt-0.5" />
-            )}
-          </button>
-        );
-      })}
-    </nav>
+              <span
+                className={`material-symbols-outlined text-xl transition-all duration-200 ${
+                  isCenter && isActive ? "concord-mobile-nav-center-glow" : ""
+                } ${isCenter ? "text-2xl" : ""}`}
+                style={
+                  isActive
+                    ? { fontVariationSettings: '"FILL" 1, "wght" 600, "GRAD" 0, "opsz" 24' }
+                    : undefined
+                }
+              >
+                {icon}
+              </span>
+              <span
+                className={`text-[10px] font-label font-medium tracking-wider transition-opacity duration-200 ${
+                  isActive ? "opacity-100" : "opacity-70"
+                }`}
+              >
+                {label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
   );
 }
 

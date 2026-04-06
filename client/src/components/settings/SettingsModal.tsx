@@ -71,13 +71,23 @@ export function SettingsPanel() {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-6 max-w-2xl">
+      <div className="flex-1 overflow-y-auto min-h-0 p-6 max-w-2xl">
         {activeTab === "audio" && <AudioTab />}
         {activeTab === "voice" && <VoiceTab />}
         {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "profile" && <ProfileTab />}
         {activeTab === "about" && <AboutTab />}
         {activeTab === "admin" && isAdmin && <AdminTab />}
+
+        {/* T003: Logout (secondary fallback path, available on every tab) */}
+        <div className="mt-8 pt-6 border-t border-outline-variant/15 flex justify-start">
+          <button
+            onClick={() => useAuthStore.getState().logout()}
+            className="text-error border border-error/30 rounded px-4 py-2 hover:bg-error/10 transition-colors text-sm font-label font-medium min-h-[44px]"
+          >
+            Logout
+          </button>
+        </div>
       </div>
     </div>
   );

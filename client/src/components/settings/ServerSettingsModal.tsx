@@ -85,7 +85,7 @@ export function ServerSettingsPanel({ serverId }: Props) {
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-6 max-w-2xl">
+      <div className="flex-1 overflow-y-auto min-h-0 p-6 max-w-2xl">
         {tab === "general" && (
           <GeneralTab serverId={serverId} accessToken={accessToken} />
         )}

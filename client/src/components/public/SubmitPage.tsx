@@ -50,7 +50,7 @@ export function SubmitPage({ webhookId }: Props) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
+      <div className="min-h-screen bg-surface flex items-center justify-center overflow-y-auto">
         <span className="text-on-surface-variant">Loading...</span>
       </div>
     );
@@ -58,7 +58,7 @@ export function SubmitPage({ webhookId }: Props) {
 
   if (error || !info) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
+      <div className="min-h-screen bg-surface flex items-center justify-center overflow-y-auto">
         <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-8 max-w-md w-full mx-4 text-center">
           <p className="text-error text-sm">{error || "Webhook not found"}</p>
         </div>
@@ -68,7 +68,7 @@ export function SubmitPage({ webhookId }: Props) {
 
   if (!info.enabled) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center">
+      <div className="min-h-screen bg-surface flex items-center justify-center overflow-y-auto">
         <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-8 max-w-md w-full mx-4 text-center">
           <p className="text-on-surface-variant text-sm">This webhook is currently disabled.</p>
         </div>
@@ -77,8 +77,8 @@ export function SubmitPage({ webhookId }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
-      <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-8 max-w-lg w-full">
+    <div className="min-h-screen bg-surface flex items-start sm:items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-surface-container border border-outline-variant/15 rounded-lg p-6 sm:p-8 max-w-lg w-full my-auto break-words min-w-0">
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-xl font-semibold text-on-surface">{info.name}</h1>

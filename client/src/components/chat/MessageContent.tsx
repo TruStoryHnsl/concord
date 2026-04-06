@@ -1,4 +1,7 @@
 import { useState, useEffect } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { ChatMessage } from "../../hooks/useMatrix";
 import { useAuthStore } from "../../stores/auth";
 
@@ -22,35 +25,187 @@ function extractUrls(text: string): string[] {
   return [...new Set(text.match(URL_REGEX) ?? [])].slice(0, 3);
 }
 
-function TextWithLinks({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
+/**
+ * Sanitize schema for chat-message markdown.
+ *
+ * Extends rehype-sanitize's defaultSchema to:
+ *  - Drop dangerous tags (script, iframe, style, object, embed) — these are
+ *    not in defaultSchema's allow-list, so dropping is implicit, but we list
+ *    them explicitly via tagNames filter as a defensive measure.
+ *  - Strip every `on*` event-handler attribute from every tag.
+ *  - Restrict `href` URLs to http, https, and mailto protocols.
+ *  - Allow `className` on the common content tags so the Tailwind classes
+ *    injected by our `components` map survive sanitization.
+ */
+const FORBIDDEN_TAGS = new Set([
+  "script",
+  "iframe",
+  "style",
+  "object",
+  "embed",
+]);
 
-  for (const match of text.matchAll(URL_REGEX)) {
-    const url = match[0];
-    const start = match.index!;
-    if (start > lastIndex) {
-      parts.push(text.slice(lastIndex, start));
+const CLASSNAME_TAGS = [
+  "a",
+  "p",
+  "code",
+  "pre",
+  "ul",
+  "ol",
+  "li",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "blockquote",
+  "strong",
+  "em",
+  "span",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+];
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: (defaultSchema.tagNames ?? []).filter(
+    (t) => !FORBIDDEN_TAGS.has(t),
+  ),
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: ["http", "https", "mailto"],
+    src: ["http", "https"],
+  },
+  attributes: {
+    ...(defaultSchema.attributes ?? {}),
+    // Allow className on the tags our components map styles
+    ...Object.fromEntries(
+      CLASSNAME_TAGS.map((tag) => {
+        const existing = (defaultSchema.attributes?.[tag] ?? []) as Array<
+          string | [string, ...unknown[]]
+        >;
+        return [tag, [...existing, "className"]];
+      }),
+    ),
+    // Ensure anchor attributes are allowed and safe
+    a: [
+      ...((defaultSchema.attributes?.a ?? []) as Array<
+        string | [string, ...unknown[]]
+      >),
+      "className",
+      "target",
+      "rel",
+    ],
+  },
+} as typeof defaultSchema;
+
+/**
+ * Components map: applies Tailwind utility classes to rendered markdown
+ * elements so they match the rest of the chat surface tokens.
+ */
+const markdownComponents: Components = {
+  p: ({ children, ...props }) => (
+    <p className="mb-1 last:mb-0" {...props}>
+      {children}
+    </p>
+  ),
+  a: ({ children, href, ...props }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary hover:underline break-all"
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+  code: ({ className, children, ...props }) => {
+    // react-markdown v9 no longer passes `inline`; detect fenced blocks via
+    // the language-* className that GFM/markdown adds, and let the `pre`
+    // renderer handle the block wrapper. Inline code = no className.
+    const isBlock = typeof className === "string" && /language-/.test(className);
+    if (isBlock) {
+      return (
+        <code
+          className={`block bg-surface-container-high text-on-surface p-3 rounded overflow-x-auto text-sm font-mono ${className ?? ""}`}
+          {...props}
+        >
+          {children}
+        </code>
+      );
     }
-    parts.push(
-      <a
-        key={start}
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary hover:text-primary hover:underline break-all"
+    return (
+      <code
+        className="bg-surface-container-high text-on-surface px-1 py-0.5 rounded text-sm font-mono"
+        {...props}
       >
-        {url}
-      </a>,
+        {children}
+      </code>
     );
-    lastIndex = start + url.length;
-  }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return <>{parts}</>;
-}
+  },
+  pre: ({ children, ...props }) => (
+    <pre className="my-1" {...props}>
+      {children}
+    </pre>
+  ),
+  ul: ({ children, ...props }) => (
+    <ul className="list-disc list-inside" {...props}>
+      {children}
+    </ul>
+  ),
+  ol: ({ children, ...props }) => (
+    <ol className="list-decimal list-inside" {...props}>
+      {children}
+    </ol>
+  ),
+  li: ({ children, ...props }) => <li {...props}>{children}</li>,
+  h1: ({ children, ...props }) => (
+    <h1 className="text-xl font-bold font-headline mt-1 mb-1" {...props}>
+      {children}
+    </h1>
+  ),
+  h2: ({ children, ...props }) => (
+    <h2 className="text-lg font-bold font-headline mt-1 mb-1" {...props}>
+      {children}
+    </h2>
+  ),
+  h3: ({ children, ...props }) => (
+    <h3 className="text-base font-bold font-headline mt-1 mb-1" {...props}>
+      {children}
+    </h3>
+  ),
+  h4: ({ children, ...props }) => (
+    <h4 className="text-sm font-bold font-headline mt-1 mb-1" {...props}>
+      {children}
+    </h4>
+  ),
+  h5: ({ children, ...props }) => (
+    <h5 className="text-xs font-bold font-headline mt-1 mb-1" {...props}>
+      {children}
+    </h5>
+  ),
+  h6: ({ children, ...props }) => (
+    <h6 className="text-xs font-semibold font-headline mt-1 mb-1" {...props}>
+      {children}
+    </h6>
+  ),
+  blockquote: ({ children, ...props }) => (
+    <blockquote
+      className="border-l-4 border-primary pl-3 text-on-surface-variant"
+      {...props}
+    >
+      {children}
+    </blockquote>
+  ),
+  strong: ({ children, ...props }) => <strong {...props}>{children}</strong>,
+  em: ({ children, ...props }) => <em {...props}>{children}</em>,
+};
 
 function LinkPreview({ url }: { url: string }) {
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -197,11 +352,19 @@ export function MessageContent({ message }: MessageContentProps) {
     );
   }
 
-  // m.text or fallback — render with clickable links and URL previews
+  // m.text or fallback — render markdown (sanitized) with URL previews.
+  // URL extraction runs on the RAW body so previews work even when the URL
+  // is wrapped in markdown link syntax.
   const urls = extractUrls(body);
   return (
-    <div className="text-sm text-on-surface">
-      <TextWithLinks text={body} />
+    <div className="text-sm text-on-surface markdown-content concord-message-body">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+        components={markdownComponents}
+      >
+        {body}
+      </ReactMarkdown>
       {urls.map((u) => (
         <LinkPreview key={u} url={u} />
       ))}
