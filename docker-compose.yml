@@ -85,22 +85,6 @@ services:
     networks:
       - concord
 
-  coturn:
-    image: coturn/coturn:latest
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./config/turnserver.conf:/etc/turnserver.conf:ro
-    # Secret and realm are injected via CLI so they never touch disk.
-    # external-ip is added in docker-compose.override.yml when the server
-    # is behind NAT (install.sh generates this automatically).
-    command:
-      - --static-auth-secret=${TURN_SECRET}
-      - --realm=${TURN_DOMAIN:-localhost}
-    depends_on:
-      livekit:
-        condition: service_healthy
-
   web:
     build:
       context: .

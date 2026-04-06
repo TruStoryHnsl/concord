@@ -67,14 +67,15 @@ def _generate_turn_credentials(user_id: str) -> list[IceServer]:
 
     turn_host = os.getenv("TURN_HOST", TURN_DOMAIN)
     return [
-        # TURN relay — UDP preferred, TCP fallback for restrictive networks.
-        # Both use the same credentials and share one IceServer entry so the
-        # browser tries them as a group.
+        # TURNS (TLS) on port 443 — sslh on the host multiplexes by SNI:
+        #   turn.concorrd.com → coturn TLS (port 5349)
+        #   everything else   → npm (HTTPS)
+        # This works through any firewall since 443 is always open.
         IceServer(
             urls=[
+                f"turns:{turn_host}:443?transport=tcp",
                 f"turn:{turn_host}:3478?transport=udp",
                 f"turn:{turn_host}:3478?transport=tcp",
-                f"turn:{turn_host}:5349?transport=tcp",
             ],
             username=username,
             credential=credential,
