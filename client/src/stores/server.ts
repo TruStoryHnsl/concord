@@ -7,10 +7,12 @@ import {
   createInvite as apiCreateInvite,
   deleteServer as apiDeleteServer,
   deleteChannel as apiDeleteChannel,
+  renameChannel as apiRenameChannel,
   leaveServer as apiLeaveServer,
   listMembers as apiListMembers,
   getDefaultServer,
   joinServer as apiJoinServer,
+  rejoinServerRooms as apiRejoinServerRooms,
 } from "../api/concord";
 import { useToastStore } from "./toast";
 
@@ -37,6 +39,12 @@ interface ServerState {
   deleteChannel: (
     serverId: string,
     channelId: number,
+    accessToken: string,
+  ) => Promise<void>;
+  renameChannel: (
+    serverId: string,
+    channelId: number,
+    name: string,
     accessToken: string,
   ) => Promise<void>;
   leaveServer: (serverId: string, accessToken: string) => Promise<void>;
@@ -81,6 +89,18 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
 
     set({ servers });
+
+    // Background reconciliation: ensure the user's Matrix membership covers
+    // every channel of every server they belong to. This catches the case
+    // where a channel was created before the auto-invite code shipped and
+    // existing members never got invited to the underlying Matrix room.
+    // Idempotent: /rejoin calls /join on each room and silently no-ops if
+    // already joined. Fire-and-forget to keep loadServers fast.
+    for (const srv of servers) {
+      apiRejoinServerRooms(srv.id, accessToken).catch(() => {
+        // Best-effort — failures here just leave the user in the prior state
+      });
+    }
 
     // Auto-select: land in the lobby's #welcome channel by default
     const { activeServerId } = get();
@@ -163,6 +183,22 @@ export const useServerStore = create<ServerState>((set, get) => ({
         }),
       };
     });
+  },
+
+  renameChannel: async (serverId, channelId, name, accessToken) => {
+    const updated = await apiRenameChannel(serverId, channelId, name, accessToken);
+    set((s) => ({
+      servers: s.servers.map((srv) =>
+        srv.id === serverId
+          ? {
+              ...srv,
+              channels: srv.channels.map((c) =>
+                c.id === channelId ? { ...c, name: updated.name } : c,
+              ),
+            }
+          : srv,
+      ),
+    }));
   },
 
   leaveServer: async (serverId, accessToken) => {

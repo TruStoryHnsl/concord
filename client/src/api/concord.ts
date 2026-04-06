@@ -199,6 +199,19 @@ export async function deleteChannel(
   );
 }
 
+export async function renameChannel(
+  serverId: string,
+  channelId: number,
+  name: string,
+  accessToken: string,
+): Promise<Channel> {
+  return apiFetch(
+    `/servers/${serverId}/channels/${channelId}`,
+    { method: "PATCH", body: JSON.stringify({ name }) },
+    accessToken,
+  );
+}
+
 export async function leaveServer(
   serverId: string,
   accessToken: string,

@@ -58,6 +58,23 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* ── Mobile Horizontal Scroll Lock ──
+ * On phones the chat layout must never pan left/right at default zoom —
+ * a stray wide message, code block, or markdown table used to push the
+ * viewport sideways and the user could scroll the entire UI horizontally.
+ * `overflow-x: hidden` clips the overflow; `touch-action: pan-y pinch-zoom`
+ * tells the browser the only legal touch gestures are vertical scrolling
+ * and pinch-to-zoom — horizontal swipes are no-ops, but pinch-zoom is
+ * preserved so users can still zoom out for accessibility.
+ */
+@media (max-width: 768px) {
+  html, body, #root {
+    overflow-x: hidden;
+    max-width: 100vw;
+    touch-action: pan-y pinch-zoom;
+  }
+}
+
 body {
   font-family: "Manrope", sans-serif;
   background-color: #0c0e11;
@@ -223,6 +240,17 @@ textarea,
   overflow-wrap: anywhere;
   word-break: break-word;
   min-width: 0;
+}
+
+/* Markdown elements that can't word-wrap (tables, fenced code) must scroll
+ * inside their own box rather than push the chat layout sideways. The chat
+ * scroll container clips horizontal overflow at the parent level — without
+ * this, wide tables would just be cropped and unreadable. */
+.concord-message-body table,
+.concord-message-body pre {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* T004: ensure long unbroken usernames/server names can break on mobile */

@@ -70,21 +70,36 @@ export function useMatrixSync() {
     });
 
     // Auto-accept DM room invites so the other user can see DM messages
-    // immediately. When someone creates a DM, Matrix sends an invite to the
-    // target — we join automatically if the room is flagged as direct.
+    // immediately. Also auto-accept channel-room invites — the server
+    // fans out a Matrix invite when a new channel is created, and clients
+    // need to join the underlying Matrix room before any messages render.
+    // Federation is allowlisted at the homeserver, so the only invite
+    // sources are trusted Concord-managed rooms.
+    //
     // matrix-js-sdk types `membership` as `string | undefined`, so accept
     // the full RoomMember type and guard on the field before comparing.
     const onMembership = (_event: MatrixEvent, member: RoomMember) => {
       if (member.userId !== client.getUserId()) return;
       if (member.membership !== "invite") return;
-      const room = client.getRoom(member.roomId);
-      // Check if this invite is for a direct message room
-      const isDirect = room?.getDMInviter() != null;
-      if (isDirect) {
-        client.joinRoom(member.roomId).catch((err) => {
-          console.warn("Auto-join DM room failed:", err);
-        });
-      }
+      client.joinRoom(member.roomId).then(() => {
+        // After joining a non-DM channel invite, refresh the Concord server
+        // list so the new channel appears in the sidebar even if the user
+        // had a stale cache from before the channel was created.
+        const room = client.getRoom(member.roomId);
+        const isDirect = room?.getDMInviter() != null;
+        if (!isDirect) {
+          import("../stores/auth").then(({ useAuthStore }) => {
+            import("../stores/server").then(({ useServerStore }) => {
+              const token = useAuthStore.getState().accessToken;
+              if (token) {
+                useServerStore.getState().loadServers(token).catch(() => {});
+              }
+            });
+          });
+        }
+      }).catch((err) => {
+        console.warn("Auto-join invited room failed:", err);
+      });
     };
     client.on(RoomMemberEvent.Membership, onMembership);
 

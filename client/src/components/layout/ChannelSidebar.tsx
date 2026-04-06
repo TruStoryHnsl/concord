@@ -21,6 +21,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
   const createChannelFn = useServerStore((s) => s.createChannel);
   const deleteServerFn = useServerStore((s) => s.deleteServer);
   const deleteChannelFn = useServerStore((s) => s.deleteChannel);
+  const renameChannelFn = useServerStore((s) => s.renameChannel);
   const leaveServerFn = useServerStore((s) => s.leaveServer);
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -45,6 +46,8 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
   const [showServerMenu, setShowServerMenu] = useState(false);
   const [confirmDeleteServer, setConfirmDeleteServer] = useState(false);
   const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState<number | null>(null);
+  const [renamingChannelId, setRenamingChannelId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const openServerSettings = useSettingsStore((s) => s.openServerSettings);
   const channelNotifications = useSettingsStore((s) => s.channelNotifications);
   const setChannelNotificationLevel = useSettingsStore((s) => s.setChannelNotificationLevel);
@@ -111,6 +114,36 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
     setConfirmDeleteChannelId(null);
   };
 
+  const startRenameChannel = (channelId: number, currentName: string) => {
+    setRenamingChannelId(channelId);
+    setRenameValue(currentName);
+  };
+
+  const cancelRenameChannel = () => {
+    setRenamingChannelId(null);
+    setRenameValue("");
+  };
+
+  const submitRenameChannel = async (channelId: number) => {
+    if (!accessToken) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      cancelRenameChannel();
+      return;
+    }
+    const original = server.channels.find((c) => c.id === channelId);
+    if (!original || original.name === trimmed) {
+      cancelRenameChannel();
+      return;
+    }
+    try {
+      await renameChannelFn(server.id, channelId, trimmed, accessToken);
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to rename channel");
+    }
+    cancelRenameChannel();
+  };
+
   const handleLeaveServer = async () => {
     if (!accessToken) return;
     try {
@@ -148,71 +181,103 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
     const unread = unreadCounts.get(ch.matrix_room_id) ?? 0;
     const isActive = activeChannelId === ch.matrix_room_id;
     const notifLevel = channelNotifications[ch.matrix_room_id];
+    const isRenaming = renamingChannelId === ch.id;
     return (
       <div key={ch.id} className="group flex items-center">
-        <button
-          onClick={() => handleChannelClick(ch.matrix_room_id)}
-          className={`flex-1 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center justify-between font-body ${
-            isActive
-              ? "bg-surface-container-highest text-on-surface"
-              : unread > 0
-                ? "text-on-surface hover:bg-surface-container-high"
-                : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            {isVoice ? (
-              <span className="material-symbols-outlined text-base">volume_up</span>
-            ) : (
-              <span className="text-on-surface-variant">#</span>
-            )}
-            {ch.name}
-          </span>
-          <span className="flex items-center gap-1 ml-auto">
-            {unread > 0 && !isActive && (
-              <span className="primary-glow text-on-primary text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center font-label">
-                {unread > 99 ? "99+" : unread}
-              </span>
-            )}
-          </span>
-        </button>
+        {isRenaming ? (
+          <form
+            onSubmit={(e) => { e.preventDefault(); submitRenameChannel(ch.id); }}
+            className="flex-1 flex items-center gap-1 px-3 py-1.5"
+          >
+            <span className="text-on-surface-variant text-sm">{isVoice ? "🔊" : "#"}</span>
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={() => submitRenameChannel(ch.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { e.preventDefault(); cancelRenameChannel(); }
+              }}
+              autoFocus
+              className="flex-1 min-w-0 px-2 py-0.5 bg-surface-container rounded-lg text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 font-body"
+            />
+          </form>
+        ) : (
+          <button
+            onClick={() => handleChannelClick(ch.matrix_room_id)}
+            className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center justify-between font-body ${
+              isActive
+                ? "bg-surface-container-highest text-on-surface"
+                : unread > 0
+                  ? "text-on-surface hover:bg-surface-container-high"
+                  : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+            }`}
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              {isVoice ? (
+                <span className="material-symbols-outlined text-base flex-shrink-0">volume_up</span>
+              ) : (
+                <span className="text-on-surface-variant flex-shrink-0">#</span>
+              )}
+              <span className="truncate">{ch.name}</span>
+            </span>
+            <span className="flex items-center gap-1 ml-auto flex-shrink-0">
+              {unread > 0 && !isActive && (
+                <span className="primary-glow text-on-primary text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center font-label">
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
+            </span>
+          </button>
+        )}
         {/* Notification bell */}
-        <button
-          onClick={() => cycleNotificationLevel(ch.matrix_room_id)}
-          className={`text-xs px-0.5 transition-all ${
-            notifLevel
-              ? notifLevel === "nothing"
-                ? "text-error"
-                : notifLevel === "mentions"
-                  ? "text-primary"
-                  : "text-secondary"
-              : "text-outline opacity-0 group-hover:opacity-100"
-          }`}
-          title={bellTitle(ch.matrix_room_id)}
-        >
-          <span className="material-symbols-outlined text-sm">
-            {notifLevel === "nothing" ? "notifications_off" : "notifications"}
-          </span>
-        </button>
-        {isOwner && (
-          confirmDeleteChannelId === ch.id ? (
+        {!isRenaming && (
+          <button
+            onClick={() => cycleNotificationLevel(ch.matrix_room_id)}
+            className={`text-xs px-0.5 transition-all ${
+              notifLevel
+                ? notifLevel === "nothing"
+                  ? "text-error"
+                  : notifLevel === "mentions"
+                    ? "text-primary"
+                    : "text-secondary"
+                : "text-outline opacity-0 group-hover:opacity-100"
+            }`}
+            title={bellTitle(ch.matrix_room_id)}
+          >
+            <span className="material-symbols-outlined text-sm">
+              {notifLevel === "nothing" ? "notifications_off" : "notifications"}
+            </span>
+          </button>
+        )}
+        {isOwner && !isRenaming && (
+          <>
             <button
-              onClick={() => handleDeleteChannel(ch.id)}
-              onMouseLeave={() => setConfirmDeleteChannelId(null)}
-              className="text-error text-xs px-1 animate-pulse font-label"
-              title="Click to confirm"
+              onClick={() => startRenameChannel(ch.id, ch.name)}
+              className="text-outline hover:text-on-surface text-xs px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Rename channel"
             >
-              ?
+              <span className="material-symbols-outlined text-sm">edit</span>
             </button>
-          ) : (
-            <button
-              onClick={() => setConfirmDeleteChannelId(ch.id)}
-              className="text-outline hover:text-error text-xs px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-              title="Delete channel"
-            >
-              <span className="material-symbols-outlined text-sm">close</span>
-            </button>
-          )
+            {confirmDeleteChannelId === ch.id ? (
+              <button
+                onClick={() => handleDeleteChannel(ch.id)}
+                onMouseLeave={() => setConfirmDeleteChannelId(null)}
+                className="text-error text-xs px-1 animate-pulse font-label"
+                title="Click to confirm"
+              >
+                ?
+              </button>
+            ) : (
+              <button
+                onClick={() => setConfirmDeleteChannelId(ch.id)}
+                className="text-outline hover:text-error text-xs px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Delete channel"
+              >
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            )}
+          </>
         )}
       </div>
     );

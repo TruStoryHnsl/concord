@@ -65,6 +65,44 @@ async def join_room(access_token: str, room_id: str) -> None:
         resp.raise_for_status()
 
 
+async def invite_to_room(access_token: str, room_id: str, user_id: str) -> None:
+    """Invite a Matrix user to a room using the inviter's access token.
+
+    Best-effort: silently ignores common "already a member" responses
+    so callers can fan out invites to a member list without special-casing
+    the user who created the room.
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{MATRIX_HOMESERVER_URL}/_matrix/client/v3/rooms/{room_id}/invite",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"user_id": user_id},
+        )
+        if resp.status_code == 200:
+            return
+        # M_FORBIDDEN with "already in the room" is fine — we want idempotency
+        if resp.status_code == 403:
+            try:
+                err = resp.json().get("error", "") or ""
+            except Exception:
+                err = ""
+            if "already" in err.lower():
+                return
+            raise Exception(f"Cannot invite {user_id} to room: {err or 'forbidden'}")
+        resp.raise_for_status()
+
+
+async def set_room_name(access_token: str, room_id: str, name: str) -> None:
+    """Update the m.room.name state event on a Matrix room."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(
+            f"{MATRIX_HOMESERVER_URL}/_matrix/client/v3/rooms/{room_id}/state/m.room.name/",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"name": name},
+        )
+        resp.raise_for_status()
+
+
 async def create_dm_room(access_token: str, invite_user_id: str) -> str:
     """Create a direct-message Matrix room and return the room ID."""
     async with httpx.AsyncClient() as client:

@@ -15,7 +15,7 @@ from config import MATRIX_HOMESERVER_URL, SOUNDBOARD_DIR
 from database import get_db
 from dependencies import require_server_member, require_server_admin, require_server_owner
 from models import Server, Channel, ServerMember, ServerBan, ServerWhitelist, SoundboardClip
-from services.matrix_admin import create_matrix_room, join_room
+from services.matrix_admin import create_matrix_room, invite_to_room, join_room, set_room_name
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,10 @@ class ServerCreate(BaseModel):
 class ChannelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     channel_type: Literal["text", "voice"] = "text"
+
+
+class ChannelUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
 
 
 class ChannelOut(BaseModel):
@@ -312,7 +316,11 @@ async def create_channel(
     access_token: str = Depends(get_access_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a new channel to a server."""
+    """Add a new channel to a server.
+
+    All existing server members are invited to the new Matrix room so the
+    channel is immediately visible to everyone — not just the creator.
+    """
     await require_server_owner(server_id, user_id, db)
 
     server = await db.get(Server, server_id)
@@ -335,6 +343,64 @@ async def create_channel(
         position=position,
     )
     db.add(channel)
+    await db.commit()
+    await db.refresh(channel)
+
+    # Fan out Matrix invites to every other server member so the new channel
+    # appears in their client immediately. Best-effort — a failed invite for
+    # one user must not block channel creation. Runs concurrently to keep the
+    # request fast on servers with many members.
+    members_result = await db.execute(
+        select(ServerMember.user_id).where(ServerMember.server_id == server_id)
+    )
+    member_ids = [uid for (uid,) in members_result.all() if uid != user_id]
+    if member_ids:
+        async def _invite(uid: str) -> None:
+            try:
+                await invite_to_room(access_token, room_id, uid)
+            except Exception as e:
+                logger.warning("Failed to invite %s to new channel %s: %s", uid, room_id, e)
+
+        await asyncio.gather(*(_invite(uid) for uid in member_ids))
+
+    return channel
+
+
+@router.patch("/{server_id}/channels/{channel_id}", response_model=ChannelOut)
+async def rename_channel(
+    server_id: str,
+    channel_id: int,
+    body: ChannelUpdate,
+    user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename a channel. Owner only.
+
+    Updates both the Concord DB record and the underlying Matrix room name
+    so federated clients see the change too.
+    """
+    await require_server_owner(server_id, user_id, db)
+
+    channel = await db.get(Channel, channel_id)
+    if not channel or channel.server_id != server_id:
+        raise HTTPException(404, "Channel not found")
+
+    new_name = body.name.strip()
+    if not new_name:
+        raise HTTPException(400, "Channel name cannot be empty")
+
+    channel.name = new_name
+
+    # Update the Matrix room name too. Best-effort — if the homeserver call
+    # fails we still want the DB rename to land so the UI doesn't get stuck.
+    server = await db.get(Server, server_id)
+    display_name = f"{server.name} - {new_name}" if server else new_name
+    try:
+        await set_room_name(access_token, channel.matrix_room_id, display_name)
+    except Exception as e:
+        logger.warning("Failed to update Matrix room name for %s: %s", channel.matrix_room_id, e)
+
     await db.commit()
     await db.refresh(channel)
     return channel
