@@ -354,14 +354,26 @@ async def create_channel(
         select(ServerMember.user_id).where(ServerMember.server_id == server_id)
     )
     member_ids = [uid for (uid,) in members_result.all() if uid != user_id]
+    logger.info(
+        "create_channel: inviting %d member(s) to new channel %s (room %s)",
+        len(member_ids), body.name, room_id,
+    )
     if member_ids:
-        async def _invite(uid: str) -> None:
+        async def _invite(uid: str) -> tuple[str, bool, str]:
             try:
                 await invite_to_room(access_token, room_id, uid)
+                return (uid, True, "")
             except Exception as e:
-                logger.warning("Failed to invite %s to new channel %s: %s", uid, room_id, e)
+                return (uid, False, str(e))
 
-        await asyncio.gather(*(_invite(uid) for uid in member_ids))
+        results = await asyncio.gather(*(_invite(uid) for uid in member_ids))
+        ok = sum(1 for _, success, _ in results if success)
+        for uid, success, err in results:
+            if success:
+                logger.info("  invited %s -> OK", uid)
+            else:
+                logger.warning("  invited %s -> FAIL: %s", uid, err)
+        logger.info("create_channel: %d/%d invites succeeded", ok, len(member_ids))
 
     return channel
 
@@ -435,6 +447,40 @@ async def delete_server(
     await db.delete(server)
     await db.commit()
     return {"status": "deleted"}
+
+
+@router.get("/{server_id}/channels/{channel_id}/matrix-members")
+async def get_channel_matrix_members(
+    server_id: str,
+    channel_id: int,
+    user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Diagnostic: ask the homeserver who is actually in this channel's room.
+
+    Returns the joined-members list as seen via the requesting user's
+    access token. Useful for debugging "user X claims to be a server
+    member but doesn't appear in the channel" symptoms.
+    """
+    await require_server_member(server_id, user_id, db)
+    channel = await db.get(Channel, channel_id)
+    if not channel or channel.server_id != server_id:
+        raise HTTPException(404, "Channel not found")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{MATRIX_HOMESERVER_URL}/_matrix/client/v3/rooms/{channel.matrix_room_id}/joined_members",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    return {
+        "channel_id": channel.id,
+        "channel_name": channel.name,
+        "matrix_room_id": channel.matrix_room_id,
+        "homeserver_status": resp.status_code,
+        "homeserver_body": resp.json() if resp.status_code == 200 else resp.text,
+    }
 
 
 @router.delete("/{server_id}/channels/{channel_id}")
@@ -577,13 +623,19 @@ async def rejoin_server_rooms(
         raise HTTPException(403, "Not a member of this server")
 
     result = await db.execute(select(Channel).where(Channel.server_id == server_id))
+    channels = result.scalars().all()
     joined = 0
-    for channel in result.scalars().all():
+    failures: list[str] = []
+    for channel in channels:
         try:
             await join_room(access_token, channel.matrix_room_id)
             joined += 1
-        except Exception:
-            pass
+        except Exception as e:
+            failures.append(f"{channel.name}={e}")
+    logger.info(
+        "rejoin_server_rooms: user=%s server=%s joined=%d/%d failures=%s",
+        user_id, server_id, joined, len(channels), failures or "none",
+    )
     return {"status": "ok", "rooms_joined": joined}
 
 
