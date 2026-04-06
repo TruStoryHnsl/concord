@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { Room, MatrixEvent } from "matrix-js-sdk";
+import type { Room, MatrixEvent, RoomMember } from "matrix-js-sdk";
 import type { RoomMessageEventContent, ReactionEventContent } from "matrix-js-sdk/lib/@types/events";
 import { ClientEvent, RoomEvent, RoomMemberEvent, EventType, RelationType, type SyncState, type SyncStateData } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
@@ -72,7 +72,9 @@ export function useMatrixSync() {
     // Auto-accept DM room invites so the other user can see DM messages
     // immediately. When someone creates a DM, Matrix sends an invite to the
     // target — we join automatically if the room is flagged as direct.
-    const onMembership = (_event: MatrixEvent, member: { userId: string; membership: string; roomId: string }) => {
+    // matrix-js-sdk types `membership` as `string | undefined`, so accept
+    // the full RoomMember type and guard on the field before comparing.
+    const onMembership = (_event: MatrixEvent, member: RoomMember) => {
       if (member.userId !== client.getUserId()) return;
       if (member.membership !== "invite") return;
       const room = client.getRoom(member.roomId);
