@@ -28,6 +28,13 @@ _token_cache_lock = asyncio.Lock()
 _CACHE_TTL = 300  # 5 minutes
 _CACHE_MAX_SIZE = 1000
 
+# One-shot per-process backfill tracking. When an owner first lists their
+# servers after a deploy, we fan out invites for any channel created BEFORE
+# the auto-invite code shipped (where members were never invited). The set
+# resets on process restart, which is fine — the work is idempotent.
+_reconciled_owner_servers: set[tuple[str, str]] = set()
+_reconcile_lock = asyncio.Lock()
+
 
 class ServerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -176,6 +183,66 @@ def get_access_token(authorization: str = Header(...)) -> str:
     return authorization[7:]
 
 
+async def _backfill_channel_invites(
+    server_id: str,
+    owner_id: str,
+    owner_token: str,
+    db: AsyncSession,
+) -> None:
+    """Re-invite every server member to every channel of a server.
+
+    Used as a one-shot backfill for channels that existed before the
+    auto-invite-on-create code shipped. Runs idempotently — Matrix's
+    invite endpoint silently no-ops when the user is already a member,
+    so calling this repeatedly is safe.
+
+    Uses the OWNER's access token (PL 100 in every channel they created)
+    so it can invite anyone, regardless of whether the target user has
+    ever logged into Concord recently.
+    """
+    channels_result = await db.execute(
+        select(Channel).where(Channel.server_id == server_id)
+    )
+    channels = list(channels_result.scalars().all())
+
+    members_result = await db.execute(
+        select(ServerMember.user_id).where(ServerMember.server_id == server_id)
+    )
+    member_ids = [uid for (uid,) in members_result.all() if uid != owner_id]
+
+    if not channels or not member_ids:
+        logger.info(
+            "backfill: server=%s nothing to do (channels=%d members=%d)",
+            server_id, len(channels), len(member_ids),
+        )
+        return
+
+    logger.info(
+        "backfill: server=%s reconciling %d channel(s) x %d member(s) = %d invites",
+        server_id, len(channels), len(member_ids), len(channels) * len(member_ids),
+    )
+
+    async def _invite(ch: Channel, uid: str) -> tuple[str, str, bool, str]:
+        try:
+            await invite_to_room(owner_token, ch.matrix_room_id, uid)
+            return (ch.name, uid, True, "")
+        except Exception as e:
+            return (ch.name, uid, False, str(e))
+
+    tasks = [_invite(ch, uid) for ch in channels for uid in member_ids]
+    results = await asyncio.gather(*tasks)
+    ok = sum(1 for _, _, success, _ in results if success)
+    for ch_name, uid, success, err in results:
+        if success:
+            logger.info("  backfill %s -> %s OK", ch_name, uid)
+        else:
+            logger.warning("  backfill %s -> %s FAIL: %s", ch_name, uid, err)
+    logger.info(
+        "backfill: server=%s complete %d/%d invites succeeded",
+        server_id, ok, len(tasks),
+    )
+
+
 @router.get("", response_model=list[ServerOut])
 async def list_servers(
     user_id: str = Depends(get_user_id),
@@ -228,7 +295,42 @@ async def list_servers(
         .options(selectinload(Server.channels))
         .order_by(Server.created_at)
     )
-    return result.scalars().all()
+    servers = list(result.scalars().all())
+
+    # One-shot per-process backfill: for every server this caller owns,
+    # invite all members to every channel they aren't already in. Catches
+    # channels created before the auto-invite-on-create code shipped.
+    # Runs in the background so the response isn't blocked. The set is
+    # process-local; on restart we re-run, which is idempotent.
+    owned_to_backfill: list[str] = []
+    async with _reconcile_lock:
+        for srv in servers:
+            if srv.owner_id != user_id:
+                continue
+            key = (srv.id, user_id)
+            if key in _reconciled_owner_servers:
+                continue
+            _reconciled_owner_servers.add(key)
+            owned_to_backfill.append(srv.id)
+
+    for srv_id in owned_to_backfill:
+        # Schedule as a background task — don't block list_servers
+        asyncio.create_task(_run_backfill_safely(srv_id, user_id, access_token))
+
+    return servers
+
+
+async def _run_backfill_safely(server_id: str, owner_id: str, owner_token: str) -> None:
+    """Wrapper that opens its own DB session for the background backfill task."""
+    from database import async_session
+    try:
+        async with async_session() as session:
+            await _backfill_channel_invites(server_id, owner_id, owner_token, session)
+    except Exception as e:
+        logger.warning("backfill task failed for server=%s: %s", server_id, e)
+        # Allow retry on next list_servers call
+        async with _reconcile_lock:
+            _reconciled_owner_servers.discard((server_id, owner_id))
 
 
 @router.get("/default")
