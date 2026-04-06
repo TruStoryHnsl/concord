@@ -314,13 +314,21 @@ export function ChatLayout() {
           </SilentBoundary>
         )}
         {mobileView === "settings" && (
-          settingsOpen ? (
-            <SettingsPanel />
-          ) : serverSettingsId ? (
-            <ServerSettingsPanel serverId={serverSettingsId} />
-          ) : (
-            <SettingsPanel />
-          )
+          // Both SettingsPanel and ServerSettingsPanel use `flex-1 flex flex-col min-h-0`
+          // as their outer wrapper, which only behaves correctly inside a flex container.
+          // The parent on line 300 is a block div, so we need an explicit flex shell here
+          // (mirrors the chat branch a few lines below). Without this wrapper, the inner
+          // tab-content `flex-1 overflow-y-auto` collapses to zero height and the panel
+          // becomes unscrollable on mobile.
+          <div className="h-full flex flex-col min-h-0">
+            {settingsOpen ? (
+              <SettingsPanel />
+            ) : serverSettingsId ? (
+              <ServerSettingsPanel serverId={serverSettingsId} />
+            ) : (
+              <SettingsPanel />
+            )}
+          </div>
         )}
         {mobileView === "chat" && (
           <div className="h-full flex flex-col min-h-0">
