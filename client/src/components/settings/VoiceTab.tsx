@@ -20,10 +20,39 @@ export function VoiceTab() {
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [micLevel, setMicLevel] = useState(0);
+  // Mic test is OFF by default. Privacy: we never open the microphone unless
+  // the user explicitly presses "Test microphone" — opening Settings → Voice
+  // should not trigger a browser mic-in-use indicator. Auto-stops after 30s
+  // as a safety net so a forgotten test session doesn't leak the mic.
+  const [metering, setMetering] = useState(false);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number>(0);
+  const autoStopRef = useRef<number | null>(null);
+
+  // Centralized cleanup — release the mic stream, audio context, and any
+  // pending RAF/timer. Safe to call multiple times.
+  const releaseMic = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+    if (autoStopRef.current !== null) {
+      window.clearTimeout(autoStopRef.current);
+      autoStopRef.current = null;
+    }
+    analyserRef.current = null;
+    setMicLevel(0);
+  }, []);
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then((devices) => {
@@ -31,14 +60,9 @@ export function VoiceTab() {
     });
   }, []);
 
-  // Mic level meter — opens a temporary stream to visualize input level
+  // Open the mic and run the level meter. Only invoked when `metering` is true.
   const startMeter = useCallback(async () => {
-    // Clean up any existing stream
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-    }
-    cancelAnimationFrame(rafRef.current);
-
+    releaseMic();
     try {
       if (!navigator.mediaDevices) return;
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -52,10 +76,6 @@ export function VoiceTab() {
         },
       });
       streamRef.current = stream;
-      // Close previous AudioContext before creating a new one
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close();
-      }
       const ctx = new AudioContext();
       audioCtxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
@@ -72,30 +92,45 @@ export function VoiceTab() {
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
+
+      // Safety net: auto-stop after 30 seconds so a forgotten test never
+      // leaks the mic indefinitely.
+      autoStopRef.current = window.setTimeout(() => {
+        setMetering(false);
+      }, 30_000);
     } catch {
-      setMicLevel(0);
+      setMetering(false);
     }
   }, [
     preferredInputDeviceId,
     echoCancellation,
     noiseSuppression,
     autoGainControl,
+    releaseMic,
   ]);
 
-  // Start meter on mount, restart when device/settings change
+  // Drive the mic stream off the `metering` flag. When metering flips on,
+  // open the mic; when it flips off (user toggle, auto-stop, unmount,
+  // device/settings change while running), release immediately.
   useEffect(() => {
-    startMeter();
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close();
-        audioCtxRef.current = null;
-      }
-      cancelAnimationFrame(rafRef.current);
+    if (metering) {
+      startMeter();
+    } else {
+      releaseMic();
+    }
+    return releaseMic;
+  }, [metering, startMeter, releaseMic]);
+
+  // Belt-and-suspenders: stop metering when the page is hidden. Prevents the
+  // mic from staying open if the user backgrounds the tab mid-test.
+  useEffect(() => {
+    if (!metering) return;
+    const onVisibility = () => {
+      if (document.hidden) setMetering(false);
     };
-  }, [startMeter]);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [metering]);
 
   return (
     <div className="space-y-6">
@@ -135,16 +170,29 @@ export function VoiceTab() {
         </div>
       )}
 
-      {/* Mic level meter */}
+      {/* Mic level meter — gated behind an explicit Test button so opening
+          this tab does not trigger a browser mic-in-use indicator. */}
       <div>
-        <label className="block text-sm text-on-surface mb-1.5">
-          Mic Level
-        </label>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-sm text-on-surface">Mic Level</label>
+          <button
+            type="button"
+            onClick={() => setMetering((m) => !m)}
+            className={`text-xs font-label px-3 py-1 rounded-full transition-colors min-h-[32px] ${
+              metering
+                ? "bg-primary text-on-primary"
+                : "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest"
+            }`}
+            aria-pressed={metering}
+          >
+            {metering ? "Stop test" : "Test microphone"}
+          </button>
+        </div>
         <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-75"
             style={{
-              width: `${micLevel * 100}%`,
+              width: metering ? `${micLevel * 100}%` : "0%",
               backgroundColor:
                 micLevel > 0.8
                   ? "#ef4444"
@@ -154,6 +202,11 @@ export function VoiceTab() {
             }}
           />
         </div>
+        <p className="text-xs text-on-surface-variant mt-1.5">
+          {metering
+            ? "Mic is open — speak to test. Auto-stops after 30 seconds."
+            : "Tap Test microphone to verify your input. Mic stays off otherwise."}
+        </p>
       </div>
 
       {/* Processing toggles */}
