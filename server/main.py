@@ -1,8 +1,18 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Configure root logging once at import time so all module-level
+# `logger = logging.getLogger(__name__)` calls actually emit. Without this,
+# Python's root logger defaults to WARNING and silently drops all info-level
+# diagnostics (e.g. the create_channel auto-invite trace).
+logging.basicConfig(
+    level=os.getenv("CONCORD_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
 
 from database import init_db
 from routers import servers, invites, registration, voice, soundboard, webhooks, admin, direct_invites, stats, totp, moderation, preview, media, dms
