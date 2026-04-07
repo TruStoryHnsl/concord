@@ -137,7 +137,12 @@ export function LoginForm() {
           }`}
         >
           <div className="text-center">
-            <h1 className="text-5xl font-headline font-bold text-primary mb-3 animate-[fadeSlideUp_0.6s_ease-out]">
+            <img
+              src="/logo.png"
+              alt=""
+              className="w-24 h-24 mx-auto mb-4 object-contain animate-[fadeSlideUp_0.6s_ease-out]"
+            />
+            <h1 className="text-5xl font-headline font-bold text-primary mb-3 animate-[fadeSlideUp_0.6s_ease-out_0.1s_both]">
               {instanceName}
             </h1>
             <p className="text-on-surface-variant text-lg font-body animate-[fadeSlideUp_0.6s_ease-out_0.2s_both]">

@@ -16,6 +16,17 @@
   --color-on-surface: #f9f9fd;
   --color-on-surface-variant: #aaabaf;
 
+  /* ── Brand (Concord — reference tokens, see branding/BRAND.md).
+         Not aliased to --color-primary because the existing Electric
+         Indigo identity is load-bearing across the chat UI. Use
+         text-brand-primary / bg-brand-primary explicitly where the
+         brand mark should appear (e.g., login welcome overlay). ── */
+  --color-brand-primary: #08C838;   /* Mesh Emerald */
+  --color-brand-highlight: #08B838; /* Mesh Leaf */
+  --color-brand-accent: #088838;    /* Mesh Pine */
+  --color-brand-deep: #087838;      /* Mesh Root */
+  --color-brand-shadow: #085828;    /* Mesh Soil */
+
   /* ── Primary (Electric Indigo) ── */
   --color-primary: #a4a5ff;
   --color-primary-dim: #5e5eff;
