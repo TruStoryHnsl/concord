@@ -23,12 +23,6 @@ __pycache__/
 *.pyc
 server/.venv/
 
-# Beta mesh (Rust + Tauri)
-beta/target/
-beta/frontend/node_modules/
-beta/frontend/dist/
-beta/venv/
-
 # IDE
 .vscode/
 .idea/
