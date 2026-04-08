@@ -1,0 +1,79 @@
+# Continuous integration for concord.
+#
+# Runs on every push and pull request. Deliberately minimal — one job,
+# no matrix, no caching beyond pip's default. The goal is not "perfect
+# CI pipeline"; the goal is "a broken server PR can't merge silently".
+#
+# Rule from the project's agent memory
+# (feedback_tests_gate_pillars.md): no architectural pillar is
+# considered complete without a test. This workflow is what makes that
+# rule *enforceable* rather than aspirational — without CI, the rule is
+# only as strong as "I promise to run pytest before every commit",
+# which is exactly how projects end up with zero coverage by accident.
+#
+# Injection safety: this workflow only references `github.ref` (a
+# sanitised ref name, not user input) in the concurrency group. It
+# does NOT interpolate any `github.event.*` fields into run: blocks.
+# If future jobs need to use PR titles, commit messages, etc., route
+# them through `env:` first — see
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+#
+# Future expansions (not blocking initial merge):
+# - Client vitest once a test runner is added to client/package.json
+# - Playwright E2E smoke tests against a docker-compose'd stack
+# - License check for commercial scope compliance
+# - Ruff / mypy for server code quality
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # Cancel older runs on the same branch when new commits land, so a
+  # fast rebase doesn't waste minutes on stale commits.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-tests:
+    name: server / pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            server/requirements.txt
+            server/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        working-directory: server
+        env:
+          # conftest.py sets test-safe defaults via os.environ.setdefault,
+          # but we also provide explicit values here so anyone reading
+          # the CI log can see exactly what the server was configured
+          # with during the run.
+          CONDUWUIT_REGISTRATION_TOKEN: ci-token-do-not-use-in-prod
+          CONDUWUIT_SERVER_NAME: ci.test
+          MATRIX_HOMESERVER_URL: http://unused-in-ci.invalid
+          ADMIN_USER_IDS: "@test_admin:test.local"
+          LIVEKIT_API_KEY: ci-livekit-key
+          LIVEKIT_API_SECRET: ci-livekit-secret-at-least-32-chars
+          LIVEKIT_URL: ws://livekit.invalid:7880
+        run: pytest -v

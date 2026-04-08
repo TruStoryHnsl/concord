@@ -1,0 +1,20 @@
+# Dev-only dependencies (tests, linting, local tooling).
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+#
+# Tests live under server/tests/ and are run with:
+#     cd server && pytest
+#
+# Per the "tests gate architectural pillar completion" rule (see
+# ~/.claude/projects/.../memory/feedback_tests_gate_pillars.md): every
+# new pillar must ship with at least one test before it's considered
+# complete. These deps are the baseline that makes that possible.
+
+-r requirements.txt
+
+pytest==8.3.4
+pytest-asyncio==0.25.2
+# httpx is already transitively present via the main requirements, but
+# we pin it here explicitly because the test suite uses it as its
+# primary HTTP client via ASGI transport (no real socket, no real
+# homeserver — the app is called in-process).
+httpx==0.28.1
