@@ -55,16 +55,37 @@ export function useUnreadCounts(): Map<string, number> {
   return counts;
 }
 
-export function useSendReadReceipt(roomId: string | null) {
+/**
+ * Send read receipts for the active room.
+ *
+ * Fires on two triggers:
+ *   1. Room switch — debounced 300ms after `roomId` changes, so opening a
+ *      channel marks its latest event as read.
+ *   2. Live message arrival — debounced 500ms after new timeline events land
+ *      in the active room, so a user sitting in a channel doesn't see a
+ *      ghost unread badge for a message they were literally looking at.
+ *
+ * Both triggers gate on visibility: `document.visibilityState === "visible"`
+ * plus an optional caller-supplied `isVisible` (e.g. mobile view-switcher
+ * state — false when the user is on the channels/settings tab, not chat).
+ */
+export function useSendReadReceipt(
+  roomId: string | null,
+  isVisible: boolean = true,
+) {
   const client = useAuthStore((s) => s.client);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const switchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Room-switch read receipt — fires once 300ms after roomId changes.
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (switchDebounceRef.current) clearTimeout(switchDebounceRef.current);
 
     if (!client || !roomId) return;
+    if (!isVisible) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
-    debounceRef.current = setTimeout(() => {
+    switchDebounceRef.current = setTimeout(() => {
       const room = client.getRoom(roomId);
       if (!room) return;
       const timeline = room.getLiveTimeline().getEvents();
@@ -77,7 +98,55 @@ export function useSendReadReceipt(roomId: string | null) {
     }, 300);
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (switchDebounceRef.current) clearTimeout(switchDebounceRef.current);
     };
-  }, [client, roomId]);
+  }, [client, roomId, isVisible]);
+
+  // Live-message read receipt — listens for Timeline events in the active
+  // room and marks them read while the user is looking at the chat.
+  useEffect(() => {
+    if (!client || !roomId) return;
+
+    const onTimeline = (
+      _event: unknown,
+      room: { roomId: string } | undefined,
+      _toStartOfTimeline: boolean | undefined,
+      removed: boolean,
+      data: { liveEvent?: boolean } | undefined,
+    ) => {
+      // Ignore pagination, redactions, and non-live updates.
+      if (removed) return;
+      if (!data?.liveEvent) return;
+      if (!room || room.roomId !== roomId) return;
+
+      // Visibility gate — only mark read if the user is actually looking.
+      if (!isVisible) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+      if (liveDebounceRef.current) clearTimeout(liveDebounceRef.current);
+      liveDebounceRef.current = setTimeout(() => {
+        const activeRoom = client.getRoom(roomId);
+        if (!activeRoom) return;
+        const timeline = activeRoom.getLiveTimeline().getEvents();
+        const lastEvent = timeline[timeline.length - 1];
+        if (lastEvent) {
+          client.sendReadReceipt(lastEvent).catch(() => {
+            // Non-critical — silently ignore
+          });
+        }
+      }, 500);
+    };
+
+    // The matrix-js-sdk Timeline event signature is broader than what we
+    // need; cast through `any` at the listener boundary to keep the rest
+    // of the hook strictly typed.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    client.on(RoomEvent.Timeline, onTimeline as any);
+
+    return () => {
+      if (liveDebounceRef.current) clearTimeout(liveDebounceRef.current);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      client.removeListener(RoomEvent.Timeline, onTimeline as any);
+    };
+  }, [client, roomId, isVisible]);
 }

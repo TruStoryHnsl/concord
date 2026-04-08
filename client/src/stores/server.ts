@@ -9,6 +9,7 @@ import {
   deleteChannel as apiDeleteChannel,
   renameChannel as apiRenameChannel,
   leaveServer as apiLeaveServer,
+  reorderChannels as apiReorderChannels,
   listMembers as apiListMembers,
   getDefaultServer,
   joinServer as apiJoinServer,
@@ -45,6 +46,11 @@ interface ServerState {
     serverId: string,
     channelId: number,
     name: string,
+    accessToken: string,
+  ) => Promise<void>;
+  reorderChannels: (
+    serverId: string,
+    channelIds: number[],
     accessToken: string,
   ) => Promise<void>;
   leaveServer: (serverId: string, accessToken: string) => Promise<void>;
@@ -199,6 +205,44 @@ export const useServerStore = create<ServerState>((set, get) => ({
           : srv,
       ),
     }));
+  },
+
+  reorderChannels: async (serverId, channelIds, accessToken) => {
+    // Snapshot previous channel order so we can roll back on API failure.
+    const prevServers = get().servers;
+    const prevServer = prevServers.find((s) => s.id === serverId);
+    if (!prevServer) return;
+
+    // Optimistic reorder: sort the server's channels by the index each ID
+    // appears at in `channelIds`. Any channel not mentioned (e.g. a voice
+    // channel when we're only reordering text channels) keeps its original
+    // relative order at the end of the list, so partial reorders are safe.
+    const indexMap = new Map<number, number>();
+    channelIds.forEach((id, idx) => indexMap.set(id, idx));
+    const reordered = [...prevServer.channels].sort((a, b) => {
+      const ai = indexMap.has(a.id) ? indexMap.get(a.id)! : Number.MAX_SAFE_INTEGER;
+      const bi = indexMap.has(b.id) ? indexMap.get(b.id)! : Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      // Stable fallback for un-mentioned channels: preserve original order
+      return prevServer.channels.indexOf(a) - prevServer.channels.indexOf(b);
+    });
+
+    set((s) => ({
+      servers: s.servers.map((srv) =>
+        srv.id === serverId ? { ...srv, channels: reordered } : srv,
+      ),
+    }));
+
+    try {
+      await apiReorderChannels(serverId, channelIds, accessToken);
+    } catch (err) {
+      // Roll back the optimistic reorder and surface the error.
+      set({ servers: prevServers });
+      useToastStore.getState().addToast(
+        err instanceof Error ? err.message : "Failed to reorder channels",
+      );
+      throw err;
+    }
   },
 
   leaveServer: async (serverId, accessToken) => {

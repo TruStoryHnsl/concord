@@ -212,6 +212,18 @@ export async function renameChannel(
   );
 }
 
+export async function reorderChannels(
+  serverId: string,
+  channelIds: number[],
+  accessToken: string,
+): Promise<{ status: string }> {
+  return apiFetch(
+    `/servers/${serverId}/channels/reorder`,
+    { method: "PATCH", body: JSON.stringify({ order: channelIds }) },
+    accessToken,
+  );
+}
+
 export async function leaveServer(
   serverId: string,
   accessToken: string,

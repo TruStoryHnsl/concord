@@ -90,6 +90,16 @@ export function MessageInput({
 
   const hasContent = text.trim().length > 0 || stagedFiles.length > 0;
 
+  // INS-018: on touch devices (mobile soft keyboards) the Enter key should
+  // insert a newline instead of sending, since there's no Shift modifier
+  // available. Send is still reachable via the explicit Send button.
+  const isCoarsePointer = useMemo(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia("(pointer: coarse)").matches;
+  }, []);
+
   const handleSubmit = async (e?: React.SyntheticEvent) => {
     e?.preventDefault();
     const trimmed = text.trim();
@@ -141,6 +151,9 @@ export function MessageInput({
       onCancelEdit();
       return;
     }
+    // INS-018: on mobile/coarse-pointer devices, let Enter insert a newline.
+    // Sending is done via the explicit Send button on those devices.
+    if (isCoarsePointer) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit(e);

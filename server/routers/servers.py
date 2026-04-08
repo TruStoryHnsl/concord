@@ -51,6 +51,13 @@ class ChannelUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
 
+class ChannelReorder(BaseModel):
+    order: list[int] = Field(
+        ...,
+        description="Channel IDs in desired order. Must contain every channel of the server exactly once.",
+    )
+
+
 class ChannelOut(BaseModel):
     id: int
     name: str
@@ -296,6 +303,12 @@ async def list_servers(
         .order_by(Server.created_at)
     )
     servers = list(result.scalars().all())
+    # Sort channels in-Python by position so the client can render them
+    # in the order the owner picked via drag-and-drop reorder. Done after
+    # load rather than via a relationship order_by so we don't need to
+    # touch the model relationship definition.
+    for srv in servers:
+        srv.channels.sort(key=lambda c: c.position)
 
     # One-shot per-process backfill: for every server this caller owns,
     # invite all members to every channel they aren't already in. Catches
@@ -407,7 +420,9 @@ async def create_server(
     result = await db.execute(
         select(Server).options(selectinload(Server.channels)).where(Server.id == server.id)
     )
-    return result.scalar_one()
+    created = result.scalar_one()
+    created.channels.sort(key=lambda c: c.position)
+    return created
 
 
 @router.post("/{server_id}/channels", response_model=ChannelOut)
@@ -478,6 +493,67 @@ async def create_channel(
         logger.info("create_channel: %d/%d invites succeeded", ok, len(member_ids))
 
     return channel
+
+
+@router.patch("/{server_id}/channels/reorder", response_model=list[ChannelOut])
+async def reorder_channels(
+    server_id: str,
+    body: ChannelReorder,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist a new channel ordering for a server. Owner only.
+
+    Accepts a full list of channel IDs in the desired display order.
+    Every channel belonging to the server must appear exactly once; the
+    request is rejected with 400 otherwise so clients can never end up
+    with a partially-reordered sidebar.
+
+    Positions are re-numbered densely starting at 0 to match the
+    convention used by `create_channel` (first channel = position 0).
+    Returns the updated channel list sorted by the new position.
+    """
+    await require_server_owner(server_id, user_id, db)
+
+    server = await db.get(Server, server_id)
+    if not server:
+        raise HTTPException(404, "Server not found")
+
+    requested = body.order
+    if len(requested) != len(set(requested)):
+        raise HTTPException(400, "order contains duplicate channel ids")
+
+    # Load all channels for this server and build an id -> channel map
+    result = await db.execute(
+        select(Channel).where(Channel.server_id == server_id)
+    )
+    channels = list(result.scalars().all())
+    by_id = {c.id: c for c in channels}
+
+    existing_ids = set(by_id.keys())
+    requested_ids = set(requested)
+
+    if requested_ids - existing_ids:
+        raise HTTPException(
+            400,
+            "order contains channel ids that do not belong to this server",
+        )
+    if requested_ids != existing_ids:
+        raise HTTPException(
+            400,
+            f"order must list every channel of the server exactly once "
+            f"(expected {len(existing_ids)}, got {len(requested)})",
+        )
+
+    # Bulk-assign new positions densely from 0
+    for new_position, channel_id in enumerate(requested):
+        by_id[channel_id].position = new_position
+
+    await db.commit()
+
+    # Return the updated list in the new order
+    updated = sorted(channels, key=lambda c: c.position)
+    return updated
 
 
 @router.patch("/{server_id}/channels/{channel_id}", response_model=ChannelOut)

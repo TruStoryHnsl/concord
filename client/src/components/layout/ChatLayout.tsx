@@ -73,7 +73,6 @@ export function ChatLayout() {
   const removeReaction = useRemoveReaction(activeRoomId);
   const typingUsers = useTypingUsers(activeRoomId);
   const { onKeystroke, onStopTyping } = useSendTyping(activeRoomId);
-  useSendReadReceipt(activeRoomId);
   useNotifications();
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
@@ -147,6 +146,14 @@ export function ChatLayout() {
   const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
   const closeServerSettings = useSettingsStore((s) => s.closeServerSettings);
   const openSettings = useSettingsStore((s) => s.openSettings);
+
+  // Gate read receipts on the user actually looking at chat. On desktop,
+  // mobileView stays "chat" unless the user opens a settings view (which
+  // swaps out the main content). On mobile, switching to channels/servers/
+  // dms/settings hides the chat panel entirely. In all those cases the
+  // user is not looking at new messages, so we must not mark them read.
+  const chatVisible = mobileView === "chat" && !settingsOpen && !serverSettingsId;
+  useSendReadReceipt(activeRoomId, chatVisible);
 
   const memberCount = useMemo(() => {
     if (!client || !activeRoomId) return 0;

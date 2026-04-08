@@ -76,6 +76,7 @@ export const MessageList = memo(function MessageList({
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const prevScrollHeightRef = useRef(0);
+  const prevLastMsgIdRef = useRef<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [reactingId, setReactingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -98,17 +99,34 @@ export const MessageList = memo(function MessageList({
     return () => observer.disconnect();
   }, [bottomObserverCallback]);
 
-  // Single scroll effect: pagination-restore takes priority, then auto-scroll-to-bottom
+  // Single scroll effect: pagination-restore takes priority, then auto-scroll-to-bottom.
+  // Locally-authored sends always force scroll, even if the user was scrolled up.
   useEffect(() => {
     const container = containerRef.current;
+    const lastMsg = messages[messages.length - 1];
+    const lastMsgId = lastMsg?.id ?? null;
+    const lastMsgIsNew =
+      lastMsgId !== null && lastMsgId !== prevLastMsgIdRef.current;
+    const localSend =
+      lastMsgIsNew &&
+      currentUserId !== null &&
+      lastMsg?.sender === currentUserId;
+
     if (prevScrollHeightRef.current !== 0 && container) {
       const diff = container.scrollHeight - prevScrollHeightRef.current;
       if (diff > 0) container.scrollTop += diff;
       prevScrollHeightRef.current = 0;
+    } else if (localSend) {
+      // INS-013: the user just sent a message — always surface it, even if
+      // they were scrolled up reading history.
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      isAtBottomRef.current = true;
     } else if (isAtBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages]);
+
+    prevLastMsgIdRef.current = lastMsgId;
+  }, [messages, currentUserId]);
 
   // Top sentinel — triggers scrollback pagination
   useEffect(() => {
