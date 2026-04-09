@@ -140,6 +140,14 @@ export function useRooms() {
       if (ids !== prevIdsRef.current) {
         prevIdsRef.current = ids;
         setRooms(joined);
+        // The set of joined rooms changed — refresh the synthetic
+        // federated-room entries in the server store so newly-joined
+        // loose rooms appear in the sidebar, and rooms the user has
+        // left disappear. This is a client-side-only augmentation;
+        // the Concord API server list is unaffected.
+        import("../stores/server").then(({ useServerStore }) => {
+          useServerStore.getState().hydrateFederatedRooms(client);
+        });
       }
     };
 

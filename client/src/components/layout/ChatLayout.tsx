@@ -13,6 +13,7 @@ import type { ChatMessage } from "../../hooks/useMatrix";
 import { useTypingUsers, useSendTyping } from "../../hooks/useTyping";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
+import { useServerConfigStore } from "../../stores/serverConfig";
 import { useSendReadReceipt } from "../../hooks/useUnreadCounts";
 import { useNotifications } from "../../hooks/useNotifications";
 import { useSettingsStore } from "../../stores/settings";
@@ -404,8 +405,12 @@ export function ChatLayout() {
         {/* INS-011: Top-bar utility icons (help / stats / bug report).
             On ≥361px viewports we show all three inline plus the account icon.
             On ≤360px we collapse the three into a kebab overflow popover so
-            the row never wraps and every action stays ≤2 taps. */}
-        <div className="hidden min-[361px]:flex items-center gap-0.5 flex-shrink-0">
+            the row never wraps and every action stays ≤2 taps.
+            The ConnectedHostLabel hides entirely below the `sm` breakpoint
+            (640px) because mobile real estate is precious — it lives in the
+            account sheet on very small screens instead. */}
+        <div className="hidden min-[361px]:flex items-center gap-1 flex-shrink-0">
+          <ConnectedHostLabel compact />
           <TopBarIconButton icon="help" label="Help" onClick={() => setShowHelp(true)} />
           <TopBarIconButton icon="bar_chart" label="Your stats" onClick={() => setShowStats(true)} />
           <TopBarIconButton icon="bug_report" label="Report a bug" onClick={() => setShowBugReport(true)} />
@@ -581,11 +586,18 @@ export function ChatLayout() {
           </div>
           {/* INS-011: Top-bar utility icons (desktop). Mirrors the mobile
               top-bar icons so bug report / stats / help are reachable from
-              the same place on every viewport. */}
-          <div className="flex items-center gap-0.5 flex-shrink-0">
-            <TopBarIconButton icon="help" label="Help" onClick={() => setShowHelp(true)} />
-            <TopBarIconButton icon="bar_chart" label="Your stats" onClick={() => setShowStats(true)} />
-            <TopBarIconButton icon="bug_report" label="Report a bug" onClick={() => setShowBugReport(true)} />
+              the same place on every viewport. The ConnectedHostLabel to
+              their left shows which Concord instance this session is
+              talking to — sourced from the INS-027 serverConfig store
+              on native builds, falls back to window.location.hostname
+              on the web. */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <ConnectedHostLabel />
+            <div className="flex items-center gap-0.5">
+              <TopBarIconButton icon="help" label="Help" onClick={() => setShowHelp(true)} />
+              <TopBarIconButton icon="bar_chart" label="Your stats" onClick={() => setShowStats(true)} />
+              <TopBarIconButton icon="bug_report" label="Report a bug" onClick={() => setShowBugReport(true)} />
+            </div>
           </div>
         </div>
 
@@ -999,6 +1011,53 @@ function QuickActionButton({
       </span>
       <span className="text-sm font-label font-medium min-w-0 truncate">{label}</span>
     </button>
+  );
+}
+
+/**
+ * Small pill showing which Concord instance the client is currently
+ * connected to (INS-027 follow-up). Resolution order:
+ *
+ *   1. `serverConfig.config` — set by the first-launch server-picker
+ *      flow on native builds. Shows `instance_name` if present,
+ *      falling back to `host`.
+ *   2. `window.location.hostname` — the browser origin. This covers
+ *      the web deploy where the picker is never shown.
+ *
+ * Rendered inline in the top bar, small and unobtrusive. On mobile
+ * the label truncates at the first dot so "concorrd.com" becomes
+ * "concorrd" to save horizontal space; tapping is NOT wired to
+ * anything (purely informational for now).
+ */
+function ConnectedHostLabel({ compact = false }: { compact?: boolean }) {
+  const config = useServerConfigStore((s) => s.config);
+
+  const display = useMemo(() => {
+    if (config) {
+      return config.instance_name || config.host;
+    }
+    if (typeof window !== "undefined") {
+      return window.location.hostname || "web";
+    }
+    return "web";
+  }, [config]);
+
+  // On compact mode (mobile ≤360px), trim to the first dot so long
+  // domains don't crowd the top bar.
+  const shown = compact ? display.split(".")[0] : display;
+
+  return (
+    <span
+      className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-high/60 text-[10px] font-label font-medium text-on-surface-variant max-w-[140px] truncate"
+      title={`Connected to ${display}`}
+      aria-label={`Connected to ${display}`}
+    >
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-secondary flex-shrink-0"
+        aria-hidden="true"
+      />
+      <span className="truncate">{shown}</span>
+    </span>
   );
 }
 

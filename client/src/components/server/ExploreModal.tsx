@@ -44,6 +44,7 @@ type RoomsState =
 export function ExploreModal({ isOpen, onClose }: Props) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const loadServers = useServerStore((s) => s.loadServers);
+  const hydrateFederatedRooms = useServerStore((s) => s.hydrateFederatedRooms);
   const setActiveServer = useServerStore((s) => s.setActiveServer);
   const setActiveChannel = useServerStore((s) => s.setActiveChannel);
   const addToast = useToastStore((s) => s.addToast);
@@ -197,16 +198,21 @@ export function ExploreModal({ isOpen, onClose }: Props) {
         });
         const joinedRoomId: string = joined?.roomId ?? roomIdOrAlias;
 
-        // Refresh the Concord server list — if the joined room is part
-        // of a Concord-managed server (i.e. it shows up as a Channel
-        // under any Server), we can navigate directly to it after this
-        // call resolves. If it doesn't show up, it's a "loose" Matrix
-        // room that Concord's sidebar currently has no place for, and
-        // we surface an explicit toast rather than silently closing
-        // the modal with no visible effect.
+        // Refresh the Concord server list first (picks up any server
+        // whose channel happens to include the joined room — e.g.
+        // rejoining a room that Concord already manages).
         if (accessToken) {
           await loadServers(accessToken);
         }
+        // Then refresh the federated-rooms wrappers so the joined
+        // room appears as a synthetic server in the sidebar right
+        // away. The Room event from matrix-js-sdk will ALSO fire
+        // this shortly via useRooms → hydrateFederatedRooms, but
+        // calling it explicitly here ensures the `servers` lookup
+        // below finds the new entry without a race on the Matrix
+        // client's internal state timing.
+        hydrateFederatedRooms(client);
+
         const servers = useServerStore.getState().servers;
         const target = servers.find((s) =>
           s.channels.some((c) => c.matrix_room_id === joinedRoomId),
@@ -223,12 +229,13 @@ export function ExploreModal({ isOpen, onClose }: Props) {
           addToast(`Joined ${target.name}`, "success");
           onClose();
         } else {
-          // Loose room case: the join succeeded on the Matrix side but
-          // the joined room isn't part of any Concord server, so we
-          // have nowhere to navigate to. Tell the user explicitly
-          // rather than silently closing.
+          // Room joined on the Matrix side but hydrateFederatedRooms
+          // couldn't find it — this would happen if the client's
+          // sync state hasn't caught up yet (rare) OR the room is
+          // being treated as a DM. Acknowledge the join explicitly;
+          // the next sync tick should surface it in the sidebar.
           addToast(
-            "Joined room, but it's not part of a Concord server yet — it won't appear in the sidebar until we add loose-room support.",
+            "Joined room — it should appear in the sidebar shortly.",
             "info",
           );
           onClose();
@@ -248,6 +255,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
     [
       accessToken,
       addToast,
+      hydrateFederatedRooms,
       joiningTargets,
       loadServers,
       onClose,

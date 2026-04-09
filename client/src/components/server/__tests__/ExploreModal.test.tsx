@@ -69,12 +69,20 @@ function makeServer(overrides: Partial<Server> & { channelRoomId?: string }): Se
 
 /**
  * Build a minimal MatrixClient-like stub exposing just the methods the
- * ExploreModal touches (`publicRooms`, `joinRoom`). We do this instead of
- * instantiating a real matrix-js-sdk client so the test stays hermetic.
+ * ExploreModal touches. We do this instead of instantiating a real
+ * matrix-js-sdk client so the test stays hermetic.
+ *
+ * In addition to `publicRooms` + `joinRoom` (which the modal uses
+ * directly), the stub also implements `getRooms` and `getUserId` —
+ * those feed `hydrateFederatedRooms`, which the modal now calls on
+ * its post-join path to surface the newly-joined room as a
+ * synthetic federated-server entry in the sidebar.
  */
 function makeFakeClient(overrides?: {
   publicRooms?: ReturnType<typeof vi.fn>;
   joinRoom?: ReturnType<typeof vi.fn>;
+  getRooms?: ReturnType<typeof vi.fn>;
+  getUserId?: ReturnType<typeof vi.fn>;
 }) {
   return {
     publicRooms:
@@ -82,6 +90,12 @@ function makeFakeClient(overrides?: {
       vi.fn().mockResolvedValue({ chunk: [] }),
     joinRoom:
       overrides?.joinRoom ?? vi.fn().mockResolvedValue({ roomId: "!joined:x" }),
+    // Default: the client "knows about" no rooms. Tests that want
+    // to assert the federated-hydration path supply their own
+    // getRooms mock returning Room-like objects.
+    getRooms: overrides?.getRooms ?? vi.fn().mockReturnValue([]),
+    getUserId:
+      overrides?.getUserId ?? vi.fn().mockReturnValue("@tester:example.org"),
   };
 }
 
@@ -506,8 +520,8 @@ describe("<ExploreModal />", () => {
     );
 
     const toasts = useToastStore.getState().toasts;
-    expect(toasts.some((t) => /not part of a concord server/i.test(t.message))).toBe(
-      true,
-    );
+    expect(
+      toasts.some((t) => /should appear in the sidebar shortly/i.test(t.message)),
+    ).toBe(true);
   });
 });

@@ -17,6 +17,40 @@ import {
 } from "../api/concord";
 import { useToastStore } from "./toast";
 
+/**
+ * Synthetic server ID prefix used for federated (loose) rooms. Any
+ * Server record whose `id` starts with this prefix is a client-only
+ * wrapper around a joined Matrix room that isn't part of any
+ * Concord-managed server. The prefix lets other code cheaply
+ * distinguish real Concord servers from loose-room wrappers without
+ * having to look at the `federated` flag — useful in persistence
+ * layers and tests.
+ */
+const FEDERATED_SERVER_ID_PREFIX = "federated:";
+
+/**
+ * Minimal shape of a matrix-js-sdk MatrixClient that
+ * `hydrateFederatedRooms` depends on. We don't import the full
+ * matrix-js-sdk `MatrixClient` type here because it would pull a
+ * heavy module graph into every consumer of this store; structural
+ * typing is enough for the two methods we actually call.
+ */
+export interface FederatedRoomsClientLike {
+  getUserId(): string | null;
+  getRooms(): ReadonlyArray<{
+    roomId: string;
+    name?: string;
+    getMyMembership(): string | undefined;
+    /**
+     * matrix-js-sdk's real signature returns `string | undefined`;
+     * keeping the widest compatible form here so the real Room type
+     * is assignable to this structural slot without losing the
+     * tests' ability to return explicit nulls.
+     */
+    getDMInviter?(): string | null | undefined;
+  }>;
+}
+
 interface ServerState {
   servers: Server[];
   activeServerId: string | null;
@@ -24,6 +58,20 @@ interface ServerState {
   members: Record<string, ServerMember[]>; // keyed by server ID
 
   loadServers: (accessToken: string) => Promise<void>;
+  /**
+   * Populate (or refresh) the synthetic Server records that wrap
+   * joined Matrix rooms outside any Concord-managed server. Callers:
+   *
+   *   - `useMatrix` on every sync and membership change, so the
+   *     sidebar reflects rooms as they're joined/left.
+   *   - `ExploreModal` after a successful `client.joinRoom`, so the
+   *     newly joined room appears immediately without waiting for
+   *     the next sync tick.
+   *
+   * Idempotent — existing federated entries are replaced wholesale,
+   * real Concord servers are left untouched.
+   */
+  hydrateFederatedRooms: (client: FederatedRoomsClientLike) => void;
   createServer: (
     name: string,
     accessToken: string,
@@ -69,6 +117,62 @@ export const useServerStore = create<ServerState>((set, get) => ({
   activeChannelId: null,
   members: {},
 
+  hydrateFederatedRooms: (client) => {
+    const { servers } = get();
+    // Keep real Concord servers as-is, drop previous federated wrappers —
+    // we rebuild them from scratch from the current Matrix client state
+    // so leaves / joins are reflected correctly without merge bookkeeping.
+    const concordServers = servers.filter(
+      (s) => !s.id.startsWith(FEDERATED_SERVER_ID_PREFIX),
+    );
+
+    // Build the set of matrix_room_ids already owned by a Concord server
+    // so we don't double-render them as loose rooms.
+    const managed = new Set<string>();
+    for (const srv of concordServers) {
+      for (const ch of srv.channels) {
+        managed.add(ch.matrix_room_id);
+      }
+    }
+
+    const userId = client.getUserId() ?? "";
+    const synthetic: Server[] = [];
+    for (const room of client.getRooms()) {
+      if (room.getMyMembership() !== "join") continue;
+      if (managed.has(room.roomId)) continue;
+      // DMs live in a separate sidebar section — the DM store handles
+      // them. getDMInviter() returns the inviter's mxid when the room
+      // was originally tagged as direct via m.direct account data.
+      if (room.getDMInviter?.()) continue;
+
+      const name = room.name || room.roomId;
+      synthetic.push({
+        id: `${FEDERATED_SERVER_ID_PREFIX}${room.roomId}`,
+        name,
+        icon_url: null,
+        owner_id: userId,
+        visibility: "public",
+        abbreviation: name.charAt(0).toUpperCase() || "#",
+        media_uploads_enabled: false,
+        channels: [
+          {
+            // id=0 is a sentinel for synthetic channels — they don't
+            // have a concord-api primary key. No UI code relies on id
+            // being non-zero; room identity lives in matrix_room_id.
+            id: 0,
+            name,
+            channel_type: "text",
+            matrix_room_id: room.roomId,
+            position: 0,
+          },
+        ],
+        federated: true,
+      });
+    }
+
+    set({ servers: [...concordServers, ...synthetic] });
+  },
+
   loadServers: async (accessToken) => {
     let servers: Server[];
     try {
@@ -94,14 +198,25 @@ export const useServerStore = create<ServerState>((set, get) => ({
       }
     }
 
-    set({ servers });
+    // Preserve any previously-hydrated federated (loose) room wrappers
+    // so `loadServers` doesn't wipe them from the sidebar while we're
+    // just refreshing the Concord-managed entries. The next
+    // `hydrateFederatedRooms` pass (fired on Matrix client sync or
+    // explicitly by ExploreModal after a join) will refresh the
+    // federated list.
+    const existingFederated = get().servers.filter((s) =>
+      s.id.startsWith(FEDERATED_SERVER_ID_PREFIX),
+    );
+    set({ servers: [...servers, ...existingFederated] });
 
     // Background reconciliation: ensure the user's Matrix membership covers
     // every channel of every server they belong to. This catches the case
     // where a channel was created before the auto-invite code shipped and
     // existing members never got invited to the underlying Matrix room.
     // Idempotent: /rejoin calls /join on each room and silently no-ops if
-    // already joined. Fire-and-forget to keep loadServers fast.
+    // already joined. Fire-and-forget to keep loadServers fast. Skip
+    // federated wrappers — their "channels" aren't Concord-managed and
+    // concord-api has no server row to rejoin against.
     for (const srv of servers) {
       apiRejoinServerRooms(srv.id, accessToken).catch(() => {
         // Best-effort — failures here just leave the user in the prior state

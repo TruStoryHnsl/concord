@@ -252,10 +252,13 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     setDMActive(true);
   };
 
-  // Mobile: full-width list view
+  // Mobile: full-width list view. The outer wrapper is a flex
+  // column (not a plain block) so `mt-auto` on the Explore button
+  // can push it to the bottom of the sidebar regardless of how many
+  // servers are in the list above.
   if (mobile) {
     return (
-      <div className="h-full bg-surface-container-low overflow-y-auto p-3">
+      <div className="h-full bg-surface-container-low overflow-y-auto p-3 flex flex-col">
         <h3 className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest px-2 mb-3">
           Your Servers
         </h3>
@@ -275,6 +278,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                   (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
                 );
                 const hasOnline = onlineByServer.get(server.id) ?? false;
+                const isFederated = server.federated === true;
                 return (
                   <SortableServerRow
                     key={server.id}
@@ -283,20 +287,35 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                   >
                     <button
                       onClick={() => handleServerClick(server.id)}
+                      title={isFederated ? `${server.name} (federated)` : server.name}
                       className={`btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
                         isActive
-                          ? "bg-primary/10 text-primary"
+                          ? isFederated
+                            ? "bg-tertiary/10 text-tertiary"
+                            : "bg-primary/10 text-primary"
                           : "text-on-surface hover:bg-surface-container-high"
                       }`}
                     >
                       <div className="relative flex-shrink-0">
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-headline font-bold ${
                           isActive
-                            ? "primary-glow text-on-primary"
-                            : "bg-surface-container-highest text-on-surface-variant"
+                            ? isFederated
+                              ? "bg-tertiary text-on-tertiary"
+                              : "primary-glow text-on-primary"
+                            : isFederated
+                              ? "bg-tertiary/15 text-tertiary ring-1 ring-tertiary/40"
+                              : "bg-surface-container-highest text-on-surface-variant"
                         }`}>
                           {server.abbreviation || server.name.charAt(0).toUpperCase()}
                         </div>
+                        {isFederated && (
+                          <div
+                            className="absolute -top-1 -left-1 w-4 h-4 bg-tertiary rounded-full border-2 border-surface-container-low flex items-center justify-center"
+                            aria-label="Federated (non-local) server"
+                          >
+                            <span className="material-symbols-outlined text-tertiary-container" style={{ fontSize: "10px" }}>public</span>
+                          </div>
+                        )}
                         {hasOnline && (
                           <div
                             className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-secondary rounded-full border-2 border-surface-container-low"
@@ -305,6 +324,11 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                         )}
                       </div>
                       <span className="truncate font-body font-medium">{server.name}</span>
+                      {isFederated && (
+                        <span className="text-[10px] uppercase tracking-wider text-tertiary/80 font-label ml-1">
+                          federated
+                        </span>
+                      )}
                       {hasUnreads && (
                         <div className="w-2.5 h-2.5 rounded-full bg-primary ml-auto flex-shrink-0 node-pulse" />
                       )}
@@ -326,9 +350,13 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           <span className="font-body font-medium">Add Server</span>
         </button>
 
+        {/* Explore pinned to the bottom so the visual flow reads
+            "your servers → add one → (whitespace) → explore the
+            wider federated network". The mt-auto pushes it as far
+            down as the scroll container allows. */}
         <button
           onClick={() => setExploreOpen(true)}
-          className="btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-on-surface-variant hover:text-secondary hover:bg-secondary/5 transition-all"
+          className="btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-on-surface-variant hover:text-tertiary hover:bg-tertiary/5 transition-all mt-auto"
         >
           <div className="w-10 h-10 rounded-xl bg-surface-container-highest flex items-center justify-center flex-shrink-0">
             <span className="material-symbols-outlined text-xl">public</span>
@@ -385,6 +413,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
               (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
             );
             const hasOnline = onlineByServer.get(server.id) ?? false;
+            const isFederated = server.federated === true;
             return (
               <SortableServerRow
                 key={server.id}
@@ -392,21 +421,42 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                 orientation="icon"
               >
                 <div className="relative group">
-                  {/* Active indicator bar */}
-                  <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-primary transition-all ${
+                  {/* Active indicator bar — tertiary color for
+                      federated servers so the left rail hint matches
+                      the button fill, primary for Concord-managed
+                      servers. */}
+                  <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full transition-all ${
+                    isFederated ? "bg-tertiary" : "bg-primary"
+                  } ${
                     isActive ? "h-8" : hasUnreads ? "h-2" : "h-0 group-hover:h-5"
                   }`} />
                   <button
                     onClick={() => handleServerClick(server.id)}
-                    title={server.name}
+                    title={isFederated ? `${server.name} (federated)` : server.name}
+                    aria-label={isFederated ? `${server.name} (federated server)` : server.name}
                     className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
                       isActive
-                        ? "primary-glow text-on-primary rounded-xl"
-                        : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl hover:bg-surface-container-highest hover:text-on-surface"
+                        ? isFederated
+                          ? "bg-tertiary text-on-tertiary rounded-xl shadow-[0_0_12px_rgba(var(--tertiary-rgb,180,120,255),0.35)]"
+                          : "primary-glow text-on-primary rounded-xl"
+                        : isFederated
+                          ? "bg-tertiary/15 text-tertiary rounded-2xl hover:rounded-xl hover:bg-tertiary/25 ring-1 ring-tertiary/40"
+                          : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl hover:bg-surface-container-highest hover:text-on-surface"
                     }`}
                   >
                     {server.abbreviation || server.name.charAt(0).toUpperCase()}
                   </button>
+                  {isFederated && (
+                    /* Small globe badge at top-left marks this as a
+                       non-local (federated) room. Sits opposite the
+                       unread/presence badges so they don't collide. */
+                    <div
+                      className="absolute -top-0.5 -left-0.5 w-4 h-4 bg-tertiary rounded-full border-2 border-surface flex items-center justify-center"
+                      aria-hidden="true"
+                    >
+                      <span className="material-symbols-outlined text-on-tertiary" style={{ fontSize: "10px" }}>public</span>
+                    </div>
+                  )}
                   {hasUnreads && (
                     <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse" />
                   )}
@@ -427,7 +477,8 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         </SortableContext>
       </DndContext>
 
-      {/* Add server */}
+      {/* Add server — sits right below the server list, same as
+          before, so muscle memory is preserved. */}
       <button
         onClick={() => setShowNewServer(true)}
         title="Add Server"
@@ -436,12 +487,17 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         <span className="material-symbols-outlined text-xl">add</span>
       </button>
 
-      {/* Explore federated servers */}
+      {/* Explore federated servers — pinned to the bottom of the
+          sidebar via `mt-auto`. The parent is already a `flex
+          flex-col`, so the auto margin consumes all remaining
+          vertical space above this button, pushing it against the
+          bottom edge. Visually separates "manage your own servers"
+          from "discover the broader federated network". */}
       <button
         onClick={() => setExploreOpen(true)}
         title="Explore"
         aria-label="Explore federated servers"
-        className="btn-press w-12 h-12 rounded-2xl bg-surface-container-high text-on-surface-variant hover:bg-secondary/10 hover:text-secondary hover:rounded-xl flex items-center justify-center transition-all"
+        className="btn-press w-12 h-12 rounded-2xl bg-surface-container-high text-on-surface-variant hover:bg-tertiary/15 hover:text-tertiary hover:rounded-xl flex items-center justify-center transition-all mt-auto"
       >
         <span className="material-symbols-outlined text-xl">public</span>
       </button>

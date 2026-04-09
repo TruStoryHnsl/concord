@@ -19,6 +19,16 @@ export interface Server {
   abbreviation: string | null;
   media_uploads_enabled: boolean;
   channels: Channel[];
+  /**
+   * Client-only marker: true when this server is a synthetic wrapper
+   * around a joined federated Matrix room that is NOT part of any
+   * Concord-managed server. Populated by
+   * `useServerStore.hydrateFederatedRooms` after the Matrix client
+   * surfaces the join. The backend API never sets this field — it is
+   * stripped on the wire and exists only so the sidebar can render
+   * non-local rooms with a distinct color.
+   */
+  federated?: boolean;
 }
 
 export interface Invite {
