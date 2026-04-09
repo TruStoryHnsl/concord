@@ -18,7 +18,7 @@ logging.basicConfig(
 
 from database import init_db
 from errors import ConcordError, ErrorResponse
-from routers import servers, invites, registration, voice, soundboard, webhooks, admin, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown
+from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_bridges, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown
 
 
 @asynccontextmanager
@@ -634,6 +634,7 @@ app.include_router(voice.router)
 app.include_router(soundboard.router)
 app.include_router(webhooks.router)
 app.include_router(admin.router)
+app.include_router(admin_bridges.router)
 app.include_router(direct_invites.router)
 app.include_router(stats.router)
 app.include_router(totp.router)

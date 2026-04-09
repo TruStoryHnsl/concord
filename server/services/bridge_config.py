@@ -1,0 +1,743 @@
+"""Discord bridge (INS-024 Wave 2) configuration pipeline.
+
+This module owns the concord side of the mautrix-discord integration:
+
+* **Fresh AS registration generation** — high-entropy ``as_token`` and
+  ``hs_token`` via :func:`secrets.token_urlsafe`, serialised as a YAML
+  document whose shape matches ``ruma::api::appservice::Registration``
+  (verified in Wave 0 / ``test_tuwunel_asapi.py``).
+* **Atomic registration file writes** — tmp-file + ``os.replace`` so
+  neither the tuwunel container nor the mautrix-discord container can
+  read a partial file during an admin-triggered rotation.
+* **Idempotent tuwunel.toml injection** — the bridge needs to live
+  under the ``[global.appservice.concord_discord]`` TOML table in
+  ``config/tuwunel.toml``. This module writes that table without
+  clobbering the federation allowlist keys owned by
+  ``services/tuwunel_config.py``. Calling :func:`ensure_appservice_entry`
+  twice with the same registration is a no-op (byte-for-byte
+  idempotent) so the admin "Enable" flow is safe to retry.
+* **Token redaction for logs** — :func:`redact_for_logging` is the
+  single sink every logging call at a bridge boundary must go through.
+  Structured logs MUST NOT echo raw ``as_token`` / ``hs_token`` /
+  ``MAUTRIX_DISCORD_BOT_TOKEN`` values — they are credentials with
+  full homeserver authority. The commercial-scope logging policy
+  pins this in :doc:`/docs/bridges/discord.md` §4.2.
+
+## Threat model
+
+The bridge's secret trust domain contains three distinct credentials
+that MUST NOT leak:
+
+1. ``as_token`` — grants bearer the authority to post as any user
+   matching the AS's exclusive namespace (``@_discord_.*:<server>``)
+   with ``rate_limited: false``. A leaked ``as_token`` is effectively a
+   homeserver admin key for the bridge's namespace.
+2. ``hs_token`` — the homeserver signs outgoing txn pushes with this.
+   A leaked ``hs_token`` lets an attacker forge events "from the
+   homeserver" into the bridge, which in turn would publish them to
+   Discord under real-user attribution. Less destructive than
+   ``as_token`` but still catastrophic.
+3. ``MAUTRIX_DISCORD_BOT_TOKEN`` — the Discord-side credential. Its
+   blast radius is whatever Discord permits the bot to do; with
+   ``MESSAGE_CONTENT`` + ``MEMBERS_INTENT`` enabled, that includes
+   reading every message in every bridged guild. This credential is
+   kept in ``config/discord-bridge.env`` (mode 0600) and is NEVER
+   handled by this module — only by docker-compose env_file pointing
+   the mautrix-discord container at it.
+
+The file permissions this module sets are the second line of defence
+after the ``./config`` directory mode which the orrgate operator is
+expected to keep at 0750 corr:corr. Nothing in this file trusts the
+directory mode; every ``os.chmod`` call is explicit.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+import secrets
+import tempfile
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from services.tuwunel_config import TUWUNEL_CONFIG_PATH, _emit_toml
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------
+
+DISCORD_BRIDGE_APPSERVICE_ID = "concord_discord"
+"""The ID used for the mautrix-discord bridge inside
+``[global.appservice.<ID>]``. Must be stable across rotations so the
+TOML injection is truly idempotent — changing this ID would leave an
+orphan stale table in ``tuwunel.toml`` that tuwunel would still load."""
+
+DISCORD_BRIDGE_SENDER_LOCALPART = "_discord_bot"
+"""MXID localpart for the bridge's sender user. Matches mautrix-discord
+default (``appservice.bot_username`` in mautrix-discord's config.yaml)
+so the two sides agree without explicit config plumbing."""
+
+DISCORD_BRIDGE_USER_NAMESPACE_REGEX = r"@_discord_.*"
+"""Exclusive namespace for bridged virtual users. The leading underscore
+is the industry convention that matches mautrix-bridges upstream and
+prevents collisions with non-bridge user ids."""
+
+DISCORD_BRIDGE_ALIAS_NAMESPACE_REGEX = r"#_discord_.*"
+"""Exclusive namespace for bridged room aliases (DM rooms, guild
+channels). Same leading-underscore convention as user namespaces."""
+
+_AS_TOKEN_ENTROPY_BYTES = 32
+"""256-bit entropy for as_token / hs_token generation. Matches the
+``test_generate_registration_token_length`` assertion in
+``test_bridge_config.py`` and the ``secrets.token_urlsafe(32)`` call
+used throughout Concord's auth codepaths."""
+
+_REGISTRATION_FILE_MODE = 0o640
+"""Registration file mode: owner R/W, group R, world no access. The
+tuwunel container runs as the compose-assigned UID and mounts
+``./config`` read-only; the group R allows the docker image uid to read
+without granting global visibility. See the threat model comment at the
+top of this module."""
+
+_REGISTRATION_FILE_NAME = "registration.yaml"
+"""Name of the registration YAML under
+``config/mautrix-discord/``. Must NOT be committed to git (enforced in
+``.gitignore``) — every rotation generates fresh tokens."""
+
+_TOKEN_PREFIX_AS = "as_"
+_TOKEN_PREFIX_HS = "hs_"
+
+
+# ---------------------------------------------------------------------
+# Typed error hierarchy
+# ---------------------------------------------------------------------
+
+
+class BridgeConfigError(Exception):
+    """Base class for all bridge-config failures.
+
+    Every subclass maps to a ``ConcordError`` code on the admin-API
+    boundary (see ``routers/admin_bridges.py``). Never raise
+    :class:`BridgeConfigError` directly — raise a specific subclass so
+    the caller can branch without string matching.
+    """
+
+
+class RegistrationWriteError(BridgeConfigError):
+    """Atomic write of ``registration.yaml`` failed.
+
+    Raised when :func:`write_registration_file` cannot complete the
+    tmp-file-then-rename sequence — most commonly because the
+    containing directory is missing or the filesystem is out of space
+    or the target file is locked by another process. The partial tmp
+    file is cleaned up before the exception propagates.
+    """
+
+
+class TuwunelTomlInjectionError(BridgeConfigError):
+    """Idempotent append to ``tuwunel.toml`` failed.
+
+    Raised when :func:`ensure_appservice_entry` cannot parse, merge, or
+    write the existing ``config/tuwunel.toml``. Indicates the file is
+    either hand-edited into an unrecognised shape or the backing
+    filesystem refused the atomic rename. In either case the original
+    file is NEVER overwritten with a partial state — the on-disk file
+    is either the unchanged old version or the fully-updated new
+    version.
+    """
+
+
+# ---------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------
+
+
+def _config_dir() -> Path:
+    """Resolve the ``config/`` directory the admin router mounts.
+
+    When concord-api runs inside its compose container the directory is
+    bind-mounted at ``/etc/concord-config`` (see ``docker-compose.yml``
+    ``concord-api`` volumes). Outside the container (dev loop, tests)
+    the default is the repo root's ``config/``. Developers can override
+    via ``CONCORD_BRIDGE_CONFIG_DIR`` for sandbox testing.
+    """
+    override = os.getenv("CONCORD_BRIDGE_CONFIG_DIR", "").strip()
+    if override:
+        return Path(override)
+    # In-container default.
+    in_container = Path("/etc/concord-config")
+    if in_container.exists():
+        return in_container
+    # Dev fallback.
+    return Path(__file__).resolve().parent.parent.parent / "config"
+
+
+def bridge_config_dir() -> Path:
+    """Return the directory holding the mautrix-discord generated files.
+
+    The directory is created with mode 0750 on first call so there is
+    no bootstrap step an operator might miss. Any pre-existing
+    directory keeps its mode untouched — we never widen permissions on
+    a directory the operator chose to lock down harder.
+    """
+    d = _config_dir() / "mautrix-discord"
+    if not d.exists():
+        d.mkdir(parents=True, mode=0o750, exist_ok=True)
+    return d
+
+
+def registration_file_path() -> Path:
+    """Full path to the generated ``registration.yaml``.
+
+    Always inside :func:`bridge_config_dir`. Callers must not construct
+    alternative paths — the atomic-rename contract only holds when the
+    tmp file and the target file share a directory.
+    """
+    return bridge_config_dir() / _REGISTRATION_FILE_NAME
+
+
+# ---------------------------------------------------------------------
+# Redaction for logs
+# ---------------------------------------------------------------------
+
+
+_SECRET_KEY_PATTERN = re.compile(
+    r"(?i)(as_token|hs_token|bot_token|access_token|password|secret)"
+)
+"""Case-insensitive pattern for keys whose values must be redacted in
+structured logs. Matches as a substring so variants like
+``MAUTRIX_DISCORD_BOT_TOKEN`` and ``discord_access_token`` are both
+caught. A dedicated regex keeps the redaction policy in one place; do
+NOT inline string comparisons in individual logging calls."""
+
+
+def redact_for_logging(value: Any) -> Any:
+    """Replace secret values inside a log-shape object with ``"<redacted>"``.
+
+    Usage::
+
+        logger.info(
+            "bridge state: %s",
+            redact_for_logging({
+                "enabled": True,
+                "as_token": reg.as_token,
+                "sender": reg.sender_mxid,
+            }),
+        )
+
+    The function recurses into dicts and lists (and tuples) without
+    mutating the input — structured log handlers that receive Python
+    objects get a clean shallow clone with secrets masked. Strings that
+    look like tokens but aren't inside a recognised key are passed
+    through unchanged; log ``value: <token>`` will NOT be redacted
+    because there's no structural way to detect it. Callers that log
+    secrets as free-form strings are violating the commercial-scope
+    logging policy and the redaction module can't save them — that's
+    what the grep test in ``test_discord_bridge.py`` catches.
+
+    Accepted inputs: ``str``, ``int``, ``float``, ``bool``, ``None``,
+    ``dict``, ``list``, ``tuple``, and dataclasses (converted via
+    :func:`dataclasses.asdict`). Unknown types are returned unchanged
+    so a broken caller at least produces readable logs.
+    """
+    if isinstance(value, dict):
+        return {k: _redact_kv(k, v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        # Recurse but keep the original container type so downstream
+        # code that branches on ``isinstance(x, list)`` still works.
+        cloned = [redact_for_logging(item) for item in value]
+        return cloned if isinstance(value, list) else tuple(cloned)
+    return value
+
+
+def _redact_kv(key: str, value: Any) -> Any:
+    """Key-aware inner redactor. If the key matches
+    :data:`_SECRET_KEY_PATTERN`, the value becomes ``"<redacted>"``
+    regardless of its actual type. Otherwise the value is recursively
+    redacted so nested dicts with secret keys are still caught.
+    """
+    if isinstance(key, str) and _SECRET_KEY_PATTERN.search(key):
+        return "<redacted>"
+    return redact_for_logging(value)
+
+
+# ---------------------------------------------------------------------
+# Registration generation
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class DiscordBridgeRegistration:
+    """Materialised AS registration for the mautrix-discord bridge.
+
+    Intentionally NOT tied to any ruma Python binding (there isn't a
+    first-class Python port of ruma) — the dataclass mirrors the shape
+    verified in Wave 0 against the upstream Rust source and serialises
+    to a YAML document mautrix-discord and tuwunel can both parse.
+    """
+
+    as_token: str
+    hs_token: str
+    id: str = DISCORD_BRIDGE_APPSERVICE_ID
+    url: str = "http://concord-discord-bridge:29334"
+    sender_localpart: str = DISCORD_BRIDGE_SENDER_LOCALPART
+    user_namespace_regex: str = DISCORD_BRIDGE_USER_NAMESPACE_REGEX
+    alias_namespace_regex: str = DISCORD_BRIDGE_ALIAS_NAMESPACE_REGEX
+    rate_limited: bool = False
+    protocols: list[str] = field(default_factory=lambda: ["discord"])
+
+    def to_yaml_doc(self) -> dict[str, Any]:
+        """Produce the dict that YAML-dumps into a valid ruma Registration.
+
+        Every top-level key is present in the output (including empty
+        namespaces) because ruma's ``#[serde(default)]`` tolerance is
+        version-dependent and we would rather produce a slightly more
+        verbose YAML than risk a Wave 2 bump of mautrix-discord
+        choking on a missing ``protocols: []``.
+        """
+        return {
+            "id": self.id,
+            "url": self.url,
+            "as_token": self.as_token,
+            "hs_token": self.hs_token,
+            "sender_localpart": self.sender_localpart,
+            "namespaces": {
+                "users": [
+                    {"exclusive": True, "regex": self.user_namespace_regex}
+                ],
+                "aliases": [
+                    {"exclusive": True, "regex": self.alias_namespace_regex}
+                ],
+                "rooms": [],
+            },
+            "rate_limited": self.rate_limited,
+            "protocols": list(self.protocols),
+        }
+
+    def to_tuwunel_global_appservice_table(self) -> dict[str, Any]:
+        """Produce the dict that merges into ``[global.appservice.<id>]``.
+
+        Tuwunel's TOML shape is slightly different from ruma's YAML:
+        users / aliases / rooms are TOML array-of-tables under the same
+        section path, and there is no ``namespaces`` nesting. We build
+        both at the same time so a future Wave-2 regression can never
+        produce a YAML and TOML that disagree about the bridge's
+        identity.
+        """
+        return {
+            "url": self.url,
+            "as_token": self.as_token,
+            "hs_token": self.hs_token,
+            "sender_localpart": self.sender_localpart,
+            "rate_limited": self.rate_limited,
+            "protocols": list(self.protocols),
+            "users": [
+                {"exclusive": True, "regex": self.user_namespace_regex}
+            ],
+            "aliases": [
+                {"exclusive": True, "regex": self.alias_namespace_regex}
+            ],
+        }
+
+
+def generate_registration() -> DiscordBridgeRegistration:
+    """Generate a brand-new registration with fresh tokens.
+
+    Tokens are generated via :func:`secrets.token_urlsafe` with
+    :data:`_AS_TOKEN_ENTROPY_BYTES` bytes of underlying randomness.
+    Each call produces a distinct pair, so rotation is just "call this
+    again and persist the result".
+    """
+    return DiscordBridgeRegistration(
+        as_token=_TOKEN_PREFIX_AS + secrets.token_urlsafe(_AS_TOKEN_ENTROPY_BYTES),
+        hs_token=_TOKEN_PREFIX_HS + secrets.token_urlsafe(_AS_TOKEN_ENTROPY_BYTES),
+    )
+
+
+# ---------------------------------------------------------------------
+# Atomic write of registration.yaml
+# ---------------------------------------------------------------------
+
+
+def write_registration_file(
+    registration: DiscordBridgeRegistration,
+    *,
+    path: Path | None = None,
+) -> Path:
+    """Atomically (re)write the registration YAML file.
+
+    Target is :func:`registration_file_path` by default; pass
+    ``path=`` in tests to redirect into a tmp dir.
+
+    Sequence:
+
+    1. ``yaml.safe_dump`` the registration doc into a sibling tmp file
+       inside the same directory (so the final ``os.replace`` is an
+       atomic rename on the same filesystem, not a cross-device copy).
+    2. ``os.fsync`` the tmp file before rename so a power loss
+       immediately after rename still sees the complete payload.
+    3. ``os.chmod`` the final path to :data:`_REGISTRATION_FILE_MODE`.
+    4. ``os.replace`` to swap. The old file (if any) is garbage
+       collected by the kernel once no process has it open.
+
+    If any step fails, the tmp file is cleaned up and a
+    :class:`RegistrationWriteError` is raised. The on-disk target is
+    ALWAYS either the pre-call contents or the new contents, never a
+    partial write — callers can rely on this when coordinating with
+    the tuwunel restart inside ``admin_bridges.py``.
+    """
+    try:
+        target = path or registration_file_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RegistrationWriteError(
+            f"Cannot prepare registration target directory: {exc}"
+        ) from exc
+
+    doc = registration.to_yaml_doc()
+    body = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+
+    try:
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            prefix=".registration-",
+            suffix=".yaml.tmp",
+            dir=str(target.parent),
+        )
+    except OSError as exc:
+        raise RegistrationWriteError(
+            f"Cannot create tmp file in {target.parent}: {exc}"
+        ) from exc
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
+            tmp.write(body)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp_path, _REGISTRATION_FILE_MODE)
+        os.replace(tmp_path, target)
+    except Exception as exc:  # noqa: BLE001 — we reclassify and reraise
+        # Best-effort tmp cleanup; the exception below is the user-facing
+        # error. Swallowing the unlink failure keeps the reraise clean.
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise RegistrationWriteError(
+            f"Failed to write registration file at {target}: {exc}"
+        ) from exc
+
+    logger.info(
+        "bridge registration written: %s",
+        redact_for_logging({
+            "path": str(target),
+            "mode": oct(_REGISTRATION_FILE_MODE),
+            "as_token": registration.as_token,
+            "hs_token": registration.hs_token,
+            "id": registration.id,
+        }),
+    )
+    return target
+
+
+def read_registration_file(
+    path: Path | None = None,
+) -> DiscordBridgeRegistration | None:
+    """Read an existing registration file or return None if absent.
+
+    The admin "Status" endpoint uses this to surface whether the
+    bridge is currently configured without leaking the tokens. Returns
+    None (not a raised exception) when the file doesn't exist — the
+    absence of a registration is a legitimate "bridge disabled" state,
+    not an error condition.
+    """
+    target = path or registration_file_path()
+    if not target.exists():
+        return None
+    try:
+        doc = yaml.safe_load(target.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise RegistrationWriteError(
+            f"Registration file at {target} is not valid YAML: {exc}"
+        ) from exc
+    if not isinstance(doc, dict):
+        raise RegistrationWriteError(
+            f"Registration file at {target} does not contain a YAML mapping"
+        )
+    try:
+        users_ns = doc.get("namespaces", {}).get("users", [{}])
+        user_regex = users_ns[0].get("regex", DISCORD_BRIDGE_USER_NAMESPACE_REGEX)
+        aliases_ns = doc.get("namespaces", {}).get("aliases", [{}])
+        alias_regex = aliases_ns[0].get("regex", DISCORD_BRIDGE_ALIAS_NAMESPACE_REGEX)
+        return DiscordBridgeRegistration(
+            as_token=str(doc["as_token"]),
+            hs_token=str(doc["hs_token"]),
+            id=str(doc.get("id", DISCORD_BRIDGE_APPSERVICE_ID)),
+            url=str(doc.get("url", "http://concord-discord-bridge:29334")),
+            sender_localpart=str(
+                doc.get("sender_localpart", DISCORD_BRIDGE_SENDER_LOCALPART)
+            ),
+            user_namespace_regex=str(user_regex),
+            alias_namespace_regex=str(alias_regex),
+            rate_limited=bool(doc.get("rate_limited", False)),
+            protocols=list(doc.get("protocols", ["discord"])),
+        )
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RegistrationWriteError(
+            f"Registration file at {target} is missing a required field: {exc}"
+        ) from exc
+
+
+def delete_registration_file(path: Path | None = None) -> bool:
+    """Remove the registration file if present. Returns True when a
+    file was actually removed, False when it was already absent.
+
+    Used by the admin "Disable" flow to wipe the on-disk tokens before
+    asking the bridge container to stop. The function does NOT delete
+    the ``config/mautrix-discord/`` directory itself — the directory
+    is part of the committed config tree and persists across enable
+    cycles.
+    """
+    target = path or registration_file_path()
+    if not target.exists():
+        return False
+    target.unlink()
+    logger.info("bridge registration file removed: %s", target)
+    return True
+
+
+# ---------------------------------------------------------------------
+# Idempotent tuwunel.toml appservice entry
+# ---------------------------------------------------------------------
+
+
+def ensure_appservice_entry(
+    registration: DiscordBridgeRegistration,
+    *,
+    tuwunel_toml_path: Path | None = None,
+) -> Path:
+    """Inject the ``[global.appservice.concord_discord]`` entry idempotently.
+
+    Reads ``config/tuwunel.toml`` (the one
+    ``services.tuwunel_config`` already manages), merges in the bridge
+    appservice table, and atomically rewrites the file. Every other
+    ``[global]`` key — ``allow_federation``, ``allowed_remote_server_names``,
+    ``forbidden_remote_server_names``, plus any hand-edited extras — is
+    preserved byte-for-byte when possible and byte-equivalent otherwise.
+
+    Called twice in a row with the same registration, this is a byte-
+    level no-op after the first call: same ``_emit_toml`` output, same
+    file contents, ``os.replace`` swaps the tmp file over an identical
+    target. Callers can safely retry without worrying about drift.
+
+    On any failure the original file is left untouched — no partial
+    writes, no tmp file left behind.
+    """
+    path = tuwunel_toml_path or TUWUNEL_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load the existing file (if any) so we can preserve its [global]
+    # content. If the file is missing, start from an empty global table.
+    if path.exists():
+        try:
+            existing = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise TuwunelTomlInjectionError(
+                f"Cannot parse existing {path}: {exc}"
+            ) from exc
+    else:
+        existing = {}
+
+    global_table = dict(existing.get("global", {}))
+    appservice_table = dict(global_table.get("appservice", {}))
+    appservice_table[registration.id] = registration.to_tuwunel_global_appservice_table()
+    global_table["appservice"] = appservice_table
+
+    body = _emit_bridge_tuwunel_toml(global_table)
+
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        prefix=".tuwunel-",
+        suffix=".toml.tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
+            tmp.write(body)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, path)
+    except Exception as exc:  # noqa: BLE001 — reraise as typed error
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise TuwunelTomlInjectionError(
+            f"Failed to write tuwunel.toml at {path}: {exc}"
+        ) from exc
+
+    logger.info(
+        "tuwunel.toml updated with bridge appservice entry: %s",
+        redact_for_logging({
+            "path": str(path),
+            "bridge_id": registration.id,
+            "as_token": registration.as_token,
+            "hs_token": registration.hs_token,
+        }),
+    )
+    return path
+
+
+def remove_appservice_entry(
+    bridge_id: str = DISCORD_BRIDGE_APPSERVICE_ID,
+    *,
+    tuwunel_toml_path: Path | None = None,
+) -> bool:
+    """Drop the bridge's ``[global.appservice.<id>]`` table.
+
+    Used by the "Disable" admin flow to clean up the tuwunel-side
+    registration. Preserves every other key. Returns True when the
+    entry was actually removed, False when it was already absent.
+    Never errors on "already missing" — disable must be idempotent.
+    """
+    path = tuwunel_toml_path or TUWUNEL_CONFIG_PATH
+    if not path.exists():
+        return False
+    try:
+        existing = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise TuwunelTomlInjectionError(
+            f"Cannot parse existing {path}: {exc}"
+        ) from exc
+
+    global_table = dict(existing.get("global", {}))
+    appservice_table = dict(global_table.get("appservice", {}))
+    if bridge_id not in appservice_table:
+        return False
+    del appservice_table[bridge_id]
+    if appservice_table:
+        global_table["appservice"] = appservice_table
+    else:
+        global_table.pop("appservice", None)
+
+    body = _emit_bridge_tuwunel_toml(global_table)
+
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        prefix=".tuwunel-",
+        suffix=".toml.tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
+            tmp.write(body)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, path)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise TuwunelTomlInjectionError(
+            f"Failed to write tuwunel.toml at {path}: {exc}"
+        ) from exc
+
+    logger.info("removed bridge appservice entry %s from %s", bridge_id, path)
+    return True
+
+
+def _emit_bridge_tuwunel_toml(global_table: dict[str, Any]) -> str:
+    """Serialise a ``{[global]: ...}`` table including appservice subtables.
+
+    Extends the narrow ``_emit_toml`` helper in
+    ``services.tuwunel_config`` (which only knows about bool, str,
+    int, list-of-str) with the additional shape we need:
+    ``appservice`` is a dict whose values are themselves dicts with
+    arrays of namespace tables. The narrow helper cannot handle that,
+    so we generate the ``[global.appservice.<id>]`` and
+    ``[[global.appservice.<id>.users]]`` subtables manually while still
+    delegating the scalar keys back to the shared emitter.
+    """
+    from services.tuwunel_config import _emit_kv as _emit_scalar_kv  # noqa: PLC0415
+
+    header = [
+        "# Tuwunel runtime configuration — Concord-managed.",
+        "# Federation keys are owned by server/services/tuwunel_config.py.",
+        "# Appservice tables are owned by server/services/bridge_config.py.",
+        "# Hand edits to managed keys will be overwritten on the next update.",
+        "",
+        "[global]",
+    ]
+
+    # Copy scalar + list-of-str keys first, preserving the order
+    # services/tuwunel_config.py uses so a clean concord install produces
+    # a stable diff on the existing federation bits.
+    appservice = global_table.pop("appservice", None)
+
+    # Emit federation-managed scalars in the established order, then any
+    # remaining plain scalars the admin may have added by hand.
+    managed_order = (
+        "allow_federation",
+        "forbidden_remote_server_names",
+        "allowed_remote_server_names",
+    )
+    seen: set[str] = set()
+    body: list[str] = list(header)
+    for key in managed_order:
+        if key in global_table:
+            body.append(_emit_scalar_kv(key, global_table[key]))
+            seen.add(key)
+    for key in sorted(global_table):
+        if key in seen:
+            continue
+        value = global_table[key]
+        # Our narrow emitter only handles bool/str/int/list[str] — skip
+        # dict/list[dict] entries we don't understand. In practice
+        # tuwunel.toml doesn't carry any such entries in this table.
+        if isinstance(value, (bool, str, int)) or (
+            isinstance(value, list) and all(isinstance(v, (str, int)) for v in value)
+        ):
+            body.append(_emit_scalar_kv(key, value))
+
+    # Now emit each [global.appservice.<id>] subtable and its nested
+    # [[global.appservice.<id>.users/aliases/rooms]] arrays-of-tables.
+    if appservice:
+        for bridge_id in sorted(appservice):
+            entry = dict(appservice[bridge_id])
+            users = entry.pop("users", []) or []
+            aliases = entry.pop("aliases", []) or []
+            rooms = entry.pop("rooms", []) or []
+            body.append("")
+            body.append(f"[global.appservice.{bridge_id}]")
+            for key in sorted(entry):
+                value = entry[key]
+                if isinstance(value, (bool, str, int)):
+                    body.append(_emit_scalar_kv(key, value))
+                elif isinstance(value, list) and all(
+                    isinstance(v, str) for v in value
+                ):
+                    body.append(_emit_scalar_kv(key, value))
+            for namespace_key, namespace_values in (
+                ("users", users),
+                ("aliases", aliases),
+                ("rooms", rooms),
+            ):
+                for ns in namespace_values:
+                    body.append("")
+                    body.append(f"[[global.appservice.{bridge_id}.{namespace_key}]]")
+                    for inner_key in sorted(ns):
+                        inner_value = ns[inner_key]
+                        if isinstance(inner_value, (bool, str, int)):
+                            body.append(_emit_scalar_kv(inner_key, inner_value))
+
+    return "\n".join(body) + "\n"
