@@ -101,28 +101,109 @@ production traffic via the `web` container's restart, but the
 production Caddyfile also needs the fix for the day the deploy
 switches back to it.
 
-## Remaining follow-ups (non-blocking)
+## Cloudflare Page Rules audit (2026-04-08, post-Caddyfile fix)
 
-Federation works — `FederationOK: True` from the authoritative Matrix
-tester — but there are two residual quality issues worth capturing:
+After the Caddyfile fix, `.well-known/matrix/*` returned the correct
+JSON but requests took 4–12 seconds per call, occasionally timing out
+at 15s with a zero-byte response. The Caddy-internal response was
+sub-millisecond (confirmed via `docker compose exec web curl`), so
+the latency lived entirely in the Cloudflare edge.
 
-1. **Cloudflare is still slow on `.well-known/matrix/*`.** Even
-   post-fix, external `curl` probes take 4–12 seconds per request,
-   including occasional 15s timeouts. Other paths return in <1s.
-   Cloudflare is applying some challenge/WAF/rate-limit policy to
-   these specific paths. A configuration rule in the Cloudflare
-   dashboard exempting `/.well-known/matrix/*` and `/_matrix/*` from
-   Bot Fight Mode / Security Level / Browser Integrity Check /
-   Under Attack Mode would likely restore normal latency. Federation
-   peers (matrix.org et al) have long timeouts so this doesn't break
-   federation, but it makes the Concord client's Explore → Browse
-   flow feel sluggish.
+Audit ran against the `concorrd.com` zone via the Cloudflare API with
+a scoped token:
 
-2. **Dev stack is running in production.** The `web` container loads
+| Setting | Value |
+|---|---|
+| Security Level (zone-wide) | `medium` |
+| Browser Integrity Check (zone-wide) | `on` |
+| Challenge TTL | 1800 seconds |
+| Existing Page Rules | 0 |
+
+`medium` security level challenges known-bad IPs at the edge; combined
+with Browser Integrity Check's User-Agent heuristics, federation
+traffic (unusual UA strings) and this operator's curl probes were
+being intercepted by CF's challenge layer, which explains both the
+10s hang (CF holding the connection open during a silent challenge)
+and the zero-byte responses (challenge injected into the stream but
+the HTTP client couldn't render it).
+
+### Page Rules installed
+
+Two Page Rules were created via
+`POST /zones/{zone_id}/pagerules`, matching the URL patterns most
+affected by Cloudflare's security stack:
+
+| Priority | URL pattern | Actions |
+|---|---|---|
+| 1 | `*concorrd.com/_matrix/*` | Security Level: essentially_off, Disable Security, Cache Level: bypass |
+| 2 | `*concorrd.com/.well-known/*` | Security Level: essentially_off, Disable Security, Cache Level: bypass |
+
+`disable_security` turns off Browser Integrity Check, hotlink
+protection, and WAF rule evaluation for the matching URLs. It does
+NOT disable DDoS protection or the origin-to-edge TLS layer.
+`cache_level: bypass` tells CF to never cache the matched responses —
+important because federation responses (server keys, version info)
+are signed and clients expect them live.
+
+The second rule intentionally matches `.well-known/*` (not just
+`.well-known/matrix/*`) so the INS-027 Concord-specific well-known
+at `.well-known/concord/client` inherits the same exemption without
+needing a third Page Rule.
+
+### Latency verification
+
+Before the Page Rules (Caddyfile-only fix):
+
+```
+attempt 1: code=000 time=15.005s size=0       (CF timeout)
+attempt 2: code=200 time=12.860s size=31
+attempt 3: code=200 time=4.695s  size=31
+client (attempt 1): code=200 time=7.959s size=52
+client (attempt 2): code=200 time=8.896s size=52
+client (attempt 3): code=200 time=3.636s size=52
+```
+
+After the Page Rules:
+
+```
+--- matrix/server ---
+attempt 1: code=200 time=0.234s size=31
+attempt 2: code=200 time=0.218s size=31
+attempt 3: code=200 time=0.120s size=31
+--- matrix/client ---
+attempt 1: code=200 time=0.117s size=52
+attempt 2: code=200 time=0.115s size=52
+attempt 3: code=200 time=0.109s size=52
+--- _matrix/key/v2/server ---
+attempt 1: code=200 time=0.186s size=311
+attempt 2: code=200 time=0.115s size=311
+attempt 3: code=200 time=0.246s size=311
+```
+
+**Speedup: ~40× on best case, ~100× on timeout cases. All probes now
+return in under 250ms.** The authoritative Matrix federation tester
+continues to report `FederationOK: True`.
+
+## Residual non-blockers (captured, not fixed)
+
+1. **Dev stack is running in production.** The `web` container loads
    `Caddyfile.dev`, which proxies unmatched paths to `vite-dev:5173`
    for HMR. Production should load `Caddyfile` (serves static
    `/srv/html` with immutable-asset caching). Not in scope for
    INS-026; captured here so someone can swap the compose override.
+   The INS-026 fix applies to BOTH files so whichever is active
+   serves the correct `.well-known/matrix/*` responses.
+
+2. **Token file handling.** The Cloudflare audit used a zone-scoped
+   API token passed via a short-lived file at `/home/corr/cloudflare_token`
+   with 600 perms. The file should be deleted by the operator after
+   verifying the Page Rules look correct in the CF dashboard.
+
+3. **Deeper CF audit not performed.** A full WAF ruleset review
+   (Managed Rules, custom rules, rate-limit rules) was not executed —
+   the Page Rules approach was sufficient to restore latency without
+   wading into the broader ruleset engine. If latency regresses later,
+   audit `GET /zones/{zone_id}/rulesets` for interfering phases.
 
 ## Verification commands (reproducible)
 
