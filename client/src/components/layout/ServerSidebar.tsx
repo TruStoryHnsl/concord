@@ -503,6 +503,13 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           <span className="font-body font-medium">Add Server</span>
         </button>
 
+        {/* Flex spacer — pushes the federated search, federated
+            stack, and Explore button to the bottom of the mobile
+            column, mirroring the desktop sidebar's "explore at
+            bottom" layout. Collapses to zero when content overflows
+            so scrolling still behaves naturally. */}
+        <div className="flex-grow min-h-0" aria-hidden="true" />
+
         {/* Federated search input: inline text field that filters
             both live and placeholder federated tiles by name or
             host. Empty query shows everything. Mobile has room for
@@ -747,6 +754,18 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
       >
         <span className="material-symbols-outlined text-xl">add</span>
       </button>
+
+      {/* Flex spacer — pushes the federated stack + Explore button to
+          the bottom of the column. This restores the original
+          "explore-at-bottom" layout from commit 9180ecc which had
+          regressed at some point: without the spacer, the federated
+          and Explore rows bunch up directly under the `+` icon on
+          accounts with few Concord servers, instead of sitting at the
+          natural bottom of the sidebar. `min-h-0` lets the spacer
+          collapse to zero when the content overflows so scrolling
+          behaves naturally — `flex-grow` only activates when there's
+          slack space to push into. */}
+      <div className="flex-grow min-h-0" aria-hidden="true" />
 
       {/* Federated (non-local) servers, stacked upward from Explore.
           Rendered in reverse order so the OLDEST federated join sits
