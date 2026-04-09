@@ -70,4 +70,5 @@ PROVENANCE_REPORT.md
 .bugfix-ledger.md
 .bugfix-analysis.md
 mempalace.yaml
+.mempalace-aliases
 entities.json
