@@ -260,6 +260,47 @@ The `[target.'cfg(target_os = "android")'.dependencies]` section in
 `src-tauri/Cargo.toml` is reserved for Android-only crates (e.g. JNI helpers)
 when servitude grows real platform integration.
 
+### 7a. Google TV / Android TV variant
+
+Google TV and Android TV share the Tauri Android target — no new
+Rust shell, no new APK track. The same `cargo tauri android build`
+output installs on both phones and TVs provided the generated
+`AndroidManifest.xml` includes leanback + touchscreen-optional
+feature flags and a TV banner.
+
+**Source-of-truth checklist**: `src-tauri/gen/android/AndroidManifest.xml.template`.
+After `cargo tauri android init` runs on orrion, the porting step
+must copy the keys from this template into the generated
+`src-tauri/gen/android/app/src/main/AndroidManifest.xml`. The key
+additions Tauri's default init does NOT include:
+
+- `<uses-feature android:name="android.software.leanback" android:required="false"/>` — allows install on TVs without excluding phones
+- `<uses-feature android:name="android.hardware.touchscreen" android:required="false"/>` — required before Play Store ships the APK to TVs
+- A second `<intent-filter>` under the MainActivity with `android.intent.category.LEANBACK_LAUNCHER` so the TV launcher grid shows the app
+- `android:banner="@drawable/tv_banner"` on the `<application>` tag — mandatory for Google TV
+
+**TV banner asset**: the 320x180 PNG spec and drop path are documented
+in `src-tauri/gen/android/tv-banner-README.md`. The Play Store will
+accept a placeholder banner for v0.1 — the branding pass is tracked
+as a downstream task.
+
+**Sideload to a Google TV / Android TV device**: the same APK that
+installs on phones via `adb install concord.apk` installs on TVs the
+exact same way. Enable Developer Options on the TV (Settings → System
+→ About → press Build Number 7x) and turn on USB debugging, then
+connect over the LAN:
+
+```bash
+adb connect <tv-ip>:5555
+adb -s <tv-ip>:5555 install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+**DPAD navigation**: the React client detects TV mode at runtime via
+the `usePlatform()` hook (TV detection = large screen + no pointer,
+or UA contains "TV") and enables roving-tabindex focus navigation
+through the `useDpadNav()` hook. Both hooks ship with unit tests in
+`client/src/hooks/__tests__/`.
+
 ---
 
 ## 8. iOS scaffolding (one-time, on orrpheus)
@@ -286,17 +327,51 @@ cargo tauri ios init
 ```
 
 After init succeeds, port the **already-validated entitlements** from the
-2026-03-28 iOS pipeline proof-of-concept (the original Tauri v2 iOS PoC
-recorded in `PLAN.md` Recent Changes — the proof lives at
-`concord_beta/src-tauri` if you need to reference it). Required entitlements:
+2026-03-28 iOS pipeline proof-of-concept into the generated Xcode
+project. The porting step reads from two committed template files:
 
-- **Multicast networking** (`com.apple.developer.networking.multicast`)
-- **Bonjour services** (`NSBonjourServices` in `Info.plist`)
-- **Local network usage** (`NSLocalNetworkUsageDescription`)
-- **Microphone usage** (`NSMicrophoneUsageDescription`)
-- **Camera usage** (`NSCameraUsageDescription`)
-- **Bluetooth** (`NSBluetoothAlwaysUsageDescription`)
-- **Background audio** mode (`UIBackgroundModes` → `audio`)
+- `src-tauri/gen/apple/ios-entitlements.plist` — entitlements checklist
+- `src-tauri/gen/apple/Info.plist.template` — Info.plist checklist,
+  including the critical `UIDeviceFamily = [1, 2]` iPad enablement key
+
+Both are plutil-validated and meant to be copied from — they are NOT
+the files Xcode reads at build time. The generated
+`src-tauri/gen/apple/concord_iOS/Info.plist` and
+`concord_iOS.entitlements` must end up containing the union of
+Tauri's default output and these template keys.
+
+Required entitlements (all in `ios-entitlements.plist`):
+
+- **Multicast networking** (`com.apple.developer.networking.multicast`) — needs Apple Developer Program approval
+- **Wi-Fi information** (`com.apple.developer.networking.wifi-info`)
+- **Keychain access group** — team-prefixed `com.concord.chat` group
+
+Required Info.plist keys (all in `Info.plist.template`):
+
+- **UIDeviceFamily = [1, 2]** — enables iPhone + iPad on the same build
+- **NSLocalNetworkUsageDescription** — required for any multicast/Bonjour call
+- **NSBonjourServices** — whitelist matching servitude's advertised types
+- **NSMicrophoneUsageDescription** — voice channels
+- **NSCameraUsageDescription** — video channels
+- **NSBluetoothAlwaysUsageDescription** — future mesh BLE fallback
+- **UIBackgroundModes → audio** — keep voice running when backgrounded
+
+### iPad support (INS-020 acceptance)
+
+iPad uses the **same Tauri target and same entitlements** as iPhone.
+The split is declared entirely in the Info.plist — `UIDeviceFamily =
+[1, 2]` tells iOS the app supports both devices. No separate Rust
+target, no separate Xcode scheme, no second build command.
+
+The React client adapts to iPad via CSS breakpoints at 768 px
+(portrait) and 1024 px (landscape) plus the `usePlatform()` hook's
+`isIPad` detection, which lets hooks and components branch on the
+device without relying on viewport width alone (Mac-Safari-reported
+iPad is otherwise indistinguishable).
+
+`UISupportedInterfaceOrientations~ipad` allows all four orientations
+on iPad; iPhone stays portrait + landscape-left/right. `UIRequiresFullScreen`
+is `false` so iPad Split View and Slide Over work out of the box.
 
 > **MVP scope:** servitude on iOS runs **foreground-only** for v0.1. The
 > VoIP background entitlement (which would allow servitude to keep hosting

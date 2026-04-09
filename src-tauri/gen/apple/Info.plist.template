@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Concord iOS / iPadOS Info.plist template.
+
+  This is a CHECKLIST, not the live Info.plist. The live file is
+  generated under src-tauri/gen/apple/concord_iOS/Info.plist by
+  `cargo tauri ios init` on orrpheus. When that init runs, the
+  porting step described in client/NATIVE_BUILD.md §8 must copy the
+  keys below into the generated file.
+
+  Universal binary: this single template covers iPhone, iPad, and
+  iPad-on-Mac (Apple Silicon only). The device family is declared
+  with UIDeviceFamily = [1, 2]. The same Rust target (aarch64-apple-ios)
+  builds all three — see Cargo.toml `[target.'cfg(target_os = "ios")']`.
+
+  Keys required by validated entitlements:
+
+    - NSLocalNetworkUsageDescription — human-readable reason shown on
+      first local-network access prompt. Required by iOS 14+ before
+      any multicast / Bonjour / link-local connection will succeed.
+    - NSBonjourServices — whitelist of Bonjour service types the app
+      will advertise or browse. Must exactly match the _service._proto
+      strings servitude registers with MultipeerConnectivity.
+    - NSMicrophoneUsageDescription — voice channels.
+    - NSCameraUsageDescription — video channels (stub module today,
+      wired in the future).
+    - NSBluetoothAlwaysUsageDescription — mesh BLE peer discovery
+      (future). Safe to keep in v0.1 even though the module isn't
+      wired yet — iOS only prompts on first use.
+    - UIBackgroundModes — "audio" so LiveKit voice keeps running while
+      the app is backgrounded. "voip" is stretch goal, see entitlements.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Universal (iPhone + iPad) device family. This is the critical
+      iPad-enablement key — Tauri's default init generates iPhone-only
+      (UIDeviceFamily = [1]) and the porting step MUST override to [1, 2].
+      Value 1 = iPhone, 2 = iPad.
+    -->
+    <key>UIDeviceFamily</key>
+    <array>
+        <integer>1</integer>
+        <integer>2</integer>
+    </array>
+
+    <!--
+      Required device capabilities. arm64 only — covers iPhone 5s and
+      newer, iPad Air 1st gen and newer. No 32-bit support (iOS 11+
+      already dropped it).
+    -->
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+    </array>
+
+    <!--
+      Minimum OS. Matches tauri.conf.json bundle.iOS.minimumSystemVersion.
+      iOS 15 is the oldest version that supports Apple Silicon iPad
+      multitasking + WKWebView features Concord relies on.
+    -->
+    <key>MinimumOSVersion</key>
+    <string>15.0</string>
+
+    <!-- Supported interface orientations: all four on iPad, portrait-first on iPhone. -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <!-- Enable iPad multitasking (Split View / Slide Over). -->
+    <key>UIRequiresFullScreen</key>
+    <false/>
+
+    <!-- Privacy descriptions (all required for App Store review). -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Concord discovers other people on the same Wi-Fi network so you can chat without a server.</string>
+
+    <key>NSBonjourServices</key>
+    <array>
+        <!-- Keep in sync with the service types servitude advertises. -->
+        <string>_concord._tcp</string>
+        <string>_concord._udp</string>
+    </array>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Concord needs microphone access to use voice channels.</string>
+
+    <key>NSCameraUsageDescription</key>
+    <string>Concord needs camera access to use video channels.</string>
+
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Concord can use Bluetooth to discover nearby peers when Wi-Fi is unavailable.</string>
+
+    <!-- Background modes — "audio" for voice; "voip" remains a stretch goal. -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
+
+    <!--
+      Launch screen — Tauri generates a default storyboard. The
+      porting step may replace it with a custom one, but the
+      UILaunchStoryboardName key MUST remain referenced from the
+      generated Info.plist or the app launches on a black screen.
+    -->
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+</dict>
+</plist>

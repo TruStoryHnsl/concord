@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Concord AndroidManifest template.
+
+  This is the SOURCE-OF-TRUTH CHECKLIST the orrion porting step reads
+  from after `cargo tauri android init` generates
+  src-tauri/gen/android/app/src/main/AndroidManifest.xml. The generated
+  file MUST end up with the union of whatever Tauri writes by default
+  and the keys below.
+
+  Two-in-one target: this single manifest enables a single release APK
+  to install AND launch on BOTH phones (normal launcher) AND on Google
+  TV / Android TV (leanback launcher). That's done by:
+
+    1. Declaring the main MainActivity with both the phone and the
+       leanback intent filters (android.intent.category.LAUNCHER +
+       android.intent.category.LEANBACK_LAUNCHER).
+    2. Making touchscreen a non-required feature so the Play Store
+       does not filter the app out on TV devices.
+    3. Declaring android.software.leanback as a non-required feature
+       so the Play Store still ships the APK to phones.
+    4. Providing an android:banner attribute on the leanback activity
+       — Google TV's app grid refuses to show apps without one.
+
+  The banner art is at res/drawable-xhdpi/tv_banner.png; see
+  tv-banner-README.md in this directory for the spec.
+
+  Permissions required by servitude and the voice module:
+    - INTERNET                      (HTTP/WebSocket to the homeserver)
+    - ACCESS_NETWORK_STATE          (diagnose offline / Wi-Fi state)
+    - CHANGE_WIFI_MULTICAST_STATE   (mDNS/Bonjour on LAN)
+    - ACCESS_WIFI_STATE             (needed with multicast)
+    - RECORD_AUDIO                  (voice channels)
+    - CAMERA                        (video channels, future)
+    - BLUETOOTH_CONNECT             (mesh BLE discovery, future; API 31+)
+    - FOREGROUND_SERVICE            (keep servitude alive while backgrounded)
+    - FOREGROUND_SERVICE_MEDIA_PLAYBACK (voice stays audible; API 34+)
+    - POST_NOTIFICATIONS            (notifications channel; API 33+)
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.concord.chat">
+
+    <!-- Core network access -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- mDNS / Bonjour on LAN needs multicast locks -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <!-- Voice / video capture -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Mesh peer discovery fallback (future) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+
+    <!-- Foreground servitude + voice keep-alive -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- Notifications (API 33+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Feature declarations controlling Play Store filtering.
+
+      touchscreen required=false            — allows install on TVs.
+      android.software.leanback required=false — allows install on phones.
+      The combination means: ship ONE APK to both surfaces.
+    -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:banner="@drawable/tv_banner"
+        android:theme="@style/Theme.Concord"
+        android:supportsRtl="true"
+        android:allowBackup="false">
+
+        <!--
+          MainActivity carries BOTH the phone launcher intent filter
+          and the Google TV leanback launcher intent filter. A single
+          activity with a single banner lands the app in both launchers
+          without needing a separate TV activity.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:theme="@style/Theme.Concord.NoActionBarLaunch">
+
+            <!-- Phone launcher -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Google TV / Android TV leanback launcher -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

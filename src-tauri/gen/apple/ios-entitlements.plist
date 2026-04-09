@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Concord iOS / iPadOS entitlements template.
+
+  This file is COMMITTED BEFORE `cargo tauri ios init` has been run on
+  orrpheus. Once Tauri generates the full Xcode project at
+  src-tauri/gen/apple/concord_iOS/concord_iOS.entitlements, port these
+  keys into the generated file — do NOT check the generated copy in
+  separately. This file is the source-of-truth checklist the porting
+  step reads from, not the file Xcode signs against.
+
+  The keys below are the same set validated by the 2026-03-28 Tauri v2
+  iOS proof-of-concept (see PLAN.md "Recent Changes" and NATIVE_BUILD.md
+  §8). They MUST all be present for the Concord mobile build to pass
+  Apple code signing with the Concord team ID.
+
+  iPad support: iPad uses the SAME target (aarch64-apple-ios) and the
+  SAME entitlements file as iPhone. The device family split is declared
+  in Info.plist (UIDeviceFamily = [1, 2]), not here.
+
+  MVP scope (v0.1): servitude runs foreground-only on iOS. The VoIP
+  background-mode entitlement that would allow background hosting is
+  a stretch goal for a later release — it is documented below but
+  intentionally commented out.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Multicast networking — required for mDNS / Bonjour peer discovery
+      on the local network. This is the one entitlement that requires
+      explicit Apple Developer Program approval to use in production.
+      Approval was pending as of the 2026-04-08 PLAN.md snapshot.
+    -->
+    <key>com.apple.developer.networking.multicast</key>
+    <true/>
+
+    <!--
+      Wi-Fi information — lets servitude identify which SSID it is on
+      so it can distinguish LAN mesh peers from WAN peers. Only active
+      in foreground.
+    -->
+    <key>com.apple.developer.networking.wifi-info</key>
+    <true/>
+
+    <!--
+      Application groups — placeholder. The Concord app does not yet
+      split into multiple bundle targets (main app + widget + share
+      extension). If we add a widget later it MUST be in this group.
+      Left empty for v0.1; porting step should leave this empty unless
+      a concrete widget target exists.
+    -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <!-- e.g. <string>group.com.concord.chat</string> -->
+    </array>
+
+    <!--
+      Keychain access group — lets the main app share persisted access
+      tokens with any future extensions (e.g. a push-notification
+      service extension). Pinned to the team-prefixed app group.
+      Porting step must substitute the real team ID.
+    -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.concord.chat</string>
+    </array>
+
+    <!--
+      VoIP background entitlement — STRETCH GOAL. Would let the
+      servitude module keep hosting / relaying media while the app is
+      suspended. Apple review risk and additional battery-impact
+      disclosure required. Leave commented out for v0.1.
+    -->
+    <!--
+    <key>com.apple.developer.push-notification-background-mode</key>
+    <array>
+        <string>voip</string>
+    </array>
+    -->
+</dict>
+</plist>
