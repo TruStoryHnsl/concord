@@ -35,20 +35,46 @@ const FEDERATED_SERVER_ID_PREFIX = "federated:";
  * heavy module graph into every consumer of this store; structural
  * typing is enough for the two methods we actually call.
  */
+/**
+ * Minimal Room-like shape the store's federation helpers rely on.
+ * Structurally compatible with matrix-js-sdk's real `Room` type; the
+ * optional space-related methods (`getType`, `currentState`) let the
+ * store classify joined rooms as either spaces, space children, or
+ * standalone rooms when building the sidebar.
+ */
+export interface FederatedRoomLike {
+  roomId: string;
+  name?: string;
+  getMyMembership(): string | undefined;
+  /**
+   * matrix-js-sdk's real signature returns `string | undefined`;
+   * keeping the widest compatible form here so the real Room type
+   * is assignable to this structural slot without losing the
+   * tests' ability to return explicit nulls.
+   */
+  getDMInviter?(): string | null | undefined;
+  /**
+   * Returns `"m.space"` for space rooms, `undefined` (or another
+   * room type) for regular rooms. Optional in the interface so
+   * test fixtures don't have to implement it — rooms without
+   * `getType` are treated as regular rooms by the hydrator.
+   */
+  getType?(): string | undefined;
+  /**
+   * Subset of matrix-js-sdk's `RoomState` surface that the store
+   * consumes. Only `getStateEvents` is needed, to read
+   * `m.space.child` pointer events from a space room's state.
+   */
+  currentState?: {
+    getStateEvents(eventType: string): ReadonlyArray<{
+      getStateKey(): string | undefined;
+    }>;
+  };
+}
+
 export interface FederatedRoomsClientLike {
   getUserId(): string | null;
-  getRooms(): ReadonlyArray<{
-    roomId: string;
-    name?: string;
-    getMyMembership(): string | undefined;
-    /**
-     * matrix-js-sdk's real signature returns `string | undefined`;
-     * keeping the widest compatible form here so the real Room type
-     * is assignable to this structural slot without losing the
-     * tests' ability to return explicit nulls.
-     */
-    getDMInviter?(): string | null | undefined;
-  }>;
+  getRooms(): ReadonlyArray<FederatedRoomLike>;
   /**
    * Leave a room on the Matrix side. Used by
    * `leaveOrphanRooms` to clean up ghosts left behind when a
@@ -176,21 +202,118 @@ export const useServerStore = create<ServerState>((set, get) => ({
     // match the local domain.
     const localDomain = userId.includes(":") ? userId.split(":")[1] : "";
 
-    const synthetic: Server[] = [];
+    // -----------------------------------------------------------------
+    // Pass 1: classify every joined federated room as either a SPACE
+    // (Matrix room type `m.space`) or a regular room. Spaces in Matrix
+    // are the container unit for groups of related rooms — Mozilla's
+    // "Mozilla" space contains #firefox, #rust, #servo, etc., each as
+    // its own child room. Before this pass, hydrateFederatedRooms was
+    // rendering each child room as its own sidebar entry, which
+    // flooded the UI with "servers" that were really just channels of
+    // the same space. Now we collapse spaces into a single Concord
+    // "server" whose channels ARE the space's children, matching how
+    // Matrix itself models the hierarchy.
+    // -----------------------------------------------------------------
+    const joinedFederated: FederatedRoomLike[] = [];
     for (const room of client.getRooms()) {
       if (room.getMyMembership() !== "join") continue;
       if (managed.has(room.roomId)) continue;
-      // DMs live in a separate sidebar section — the DM store handles
-      // them. getDMInviter() returns the inviter's mxid when the room
-      // was originally tagged as direct via m.direct account data.
       if (room.getDMInviter?.()) continue;
+      if (localDomain && room.roomId.endsWith(`:${localDomain}`)) continue;
+      joinedFederated.push(room);
+    }
 
-      // Skip anything on the local homeserver — see the localDomain
-      // comment above. Room ids are formatted `!opaqueId:domain`,
-      // so splitting on the last colon gives us the hosting domain.
-      if (localDomain && room.roomId.endsWith(`:${localDomain}`)) {
-        continue;
+    const spaces: FederatedRoomLike[] = [];
+    const regularRooms: FederatedRoomLike[] = [];
+    for (const room of joinedFederated) {
+      if (room.getType?.() === "m.space") {
+        spaces.push(room);
+      } else {
+        regularRooms.push(room);
       }
+    }
+
+    // -----------------------------------------------------------------
+    // Pass 2: read `m.space.child` state events from each space so we
+    // know which federated rooms belong where. A room may appear as a
+    // child of multiple spaces in theory; in practice the first space
+    // claim wins because our sidebar shows one entry per room.
+    // -----------------------------------------------------------------
+    const roomById = new Map<string, FederatedRoomLike>();
+    for (const room of joinedFederated) {
+      roomById.set(room.roomId, room);
+    }
+
+    const childrenOfSpaces = new Set<string>();
+    const spaceChildIds = new Map<string, string[]>();
+    for (const space of spaces) {
+      const childEvents = space.currentState?.getStateEvents("m.space.child") ?? [];
+      const childIds: string[] = [];
+      for (const event of childEvents) {
+        const childId = event.getStateKey?.();
+        if (typeof childId === "string" && childId.length > 0) {
+          childIds.push(childId);
+          childrenOfSpaces.add(childId);
+        }
+      }
+      spaceChildIds.set(space.roomId, childIds);
+    }
+
+    // -----------------------------------------------------------------
+    // Pass 3: build synthetic Server records.
+    //
+    // - One server per SPACE, with channels = the space's child rooms
+    //   the user has actually joined. Spaces with zero joined children
+    //   are skipped (an empty sidebar entry would confuse more than
+    //   help).
+    //
+    // - One server per standalone federated room — a room the user
+    //   joined directly that isn't a child of any joined space.
+    // -----------------------------------------------------------------
+    const synthetic: Server[] = [];
+
+    for (const space of spaces) {
+      const childIds = spaceChildIds.get(space.roomId) ?? [];
+      const channels: Channel[] = [];
+      let position = 0;
+      for (const childId of childIds) {
+        const childRoom = roomById.get(childId);
+        if (!childRoom) continue; // user isn't joined to this child, skip
+        const channelName = childRoom.name || childId;
+        channels.push({
+          // id=0 + unique position is a sentinel for synthetic channels.
+          // No UI code keys off `Channel.id` for federated entries;
+          // identity lives in `matrix_room_id`.
+          id: 0,
+          name: channelName,
+          channel_type: "text",
+          matrix_room_id: childId,
+          position,
+        });
+        position++;
+      }
+      // Skip empty spaces — the user is joined to the container but
+      // none of its child rooms, so there's nothing to render.
+      if (channels.length === 0) continue;
+
+      const name = space.name || space.roomId;
+      synthetic.push({
+        id: `${FEDERATED_SERVER_ID_PREFIX}${space.roomId}`,
+        name,
+        icon_url: null,
+        owner_id: userId,
+        visibility: "public",
+        abbreviation: name.charAt(0).toUpperCase() || "#",
+        media_uploads_enabled: false,
+        channels,
+        federated: true,
+      });
+    }
+
+    for (const room of regularRooms) {
+      // If this room is already displayed as a channel under a space,
+      // don't also render it as a standalone entry.
+      if (childrenOfSpaces.has(room.roomId)) continue;
 
       const name = room.name || room.roomId;
       synthetic.push({
@@ -203,9 +326,6 @@ export const useServerStore = create<ServerState>((set, get) => ({
         media_uploads_enabled: false,
         channels: [
           {
-            // id=0 is a sentinel for synthetic channels — they don't
-            // have a concord-api primary key. No UI code relies on id
-            // being non-zero; room identity lives in matrix_room_id.
             id: 0,
             name,
             channel_type: "text",

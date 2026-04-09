@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useServerStore, type FederatedRoomsClientLike } from "../server";
+import {
+  useServerStore,
+  type FederatedRoomsClientLike,
+  type FederatedRoomLike,
+} from "../server";
 import type { Server } from "../../api/concord";
 
 /**
@@ -36,19 +40,41 @@ interface FakeRoomConfig {
   name?: string;
   membership?: string;
   dmInviter?: string | null;
+  /**
+   * Matrix room type. Set to `"m.space"` to mark this room as a
+   * Matrix space (container for child rooms). Undefined / omitted
+   * means a regular room.
+   */
+  type?: string;
+  /**
+   * For space rooms: the list of child room IDs this space
+   * advertises via `m.space.child` state events. The helper below
+   * synthesizes a getStateEvents() return value from this list.
+   */
+  spaceChildren?: string[];
 }
 
 /**
- * Build a Room-like object satisfying the {@link FederatedRoomsClientLike}
- * shape. Individual tests override membership + dmInviter to exercise
- * the filter branches.
+ * Build a Room-like object satisfying the {@link FederatedRoomLike}
+ * shape. Individual tests override membership + dmInviter + type +
+ * spaceChildren to exercise the classifier branches.
  */
-function fakeRoom(config: FakeRoomConfig) {
+function fakeRoom(config: FakeRoomConfig): FederatedRoomLike {
+  const childStateEvents = (config.spaceChildren ?? []).map((childId) => ({
+    getStateKey: () => childId,
+  }));
   return {
     roomId: config.roomId,
     name: config.name,
     getMyMembership: () => config.membership ?? "join",
     getDMInviter: () => (config.dmInviter ?? null),
+    getType: () => config.type,
+    currentState: {
+      getStateEvents: (eventType: string) => {
+        if (eventType === "m.space.child") return childStateEvents;
+        return [];
+      },
+    },
   };
 }
 
@@ -269,6 +295,150 @@ describe("useServerStore.hydrateFederatedRooms", () => {
     expect(servers).toHaveLength(1);
     expect(servers[0].name).toBe("!unnamed:remote.example");
     expect(servers[0].abbreviation).toBe("!");
+  });
+
+  it("collapses a space + its joined children into ONE synthetic server with the children as channels", () => {
+    // Simulate joining Mozilla's space: one m.space room with three
+    // child rooms (#firefox, #rust, #servo). Before the space-aware
+    // classifier, this would render as FOUR sidebar entries (the
+    // space itself + each child as its own "server"). After the
+    // classifier, it should collapse into ONE synthetic server named
+    // after the space with three channels under it.
+    const rooms = [
+      fakeRoom({
+        roomId: "!mozspace:mozilla.org",
+        name: "Mozilla",
+        type: "m.space",
+        spaceChildren: [
+          "!firefox:mozilla.org",
+          "!rust:mozilla.org",
+          "!servo:mozilla.org",
+        ],
+      }),
+      fakeRoom({ roomId: "!firefox:mozilla.org", name: "Firefox" }),
+      fakeRoom({ roomId: "!rust:mozilla.org", name: "Rust" }),
+      fakeRoom({ roomId: "!servo:mozilla.org", name: "Servo" }),
+    ];
+    useServerStore.getState().hydrateFederatedRooms(fakeClient(rooms));
+
+    const servers = useServerStore.getState().servers;
+    expect(servers).toHaveLength(1);
+    const space = servers[0];
+    expect(space.id).toBe("federated:!mozspace:mozilla.org");
+    expect(space.name).toBe("Mozilla");
+    expect(space.federated).toBe(true);
+    expect(space.channels).toHaveLength(3);
+    expect(space.channels.map((c) => c.name)).toEqual([
+      "Firefox",
+      "Rust",
+      "Servo",
+    ]);
+    expect(space.channels.map((c) => c.matrix_room_id)).toEqual([
+      "!firefox:mozilla.org",
+      "!rust:mozilla.org",
+      "!servo:mozilla.org",
+    ]);
+    // Positions are monotonic so ChannelSidebar can render them in
+    // the intended order.
+    expect(space.channels.map((c) => c.position)).toEqual([0, 1, 2]);
+  });
+
+  it("skips a space whose child rooms the user isn't joined to", () => {
+    // User joined the container but none of the child rooms — an
+    // empty space wrapper in the sidebar would be confusing. The
+    // hydrator must skip these entirely.
+    const rooms = [
+      fakeRoom({
+        roomId: "!emptyspace:remote.example",
+        name: "Empty Space",
+        type: "m.space",
+        spaceChildren: [
+          "!child1:remote.example",
+          "!child2:remote.example",
+        ],
+      }),
+      // The child rooms are referenced in m.space.child but the user
+      // hasn't joined them — they don't appear in getRooms().
+    ];
+    useServerStore.getState().hydrateFederatedRooms(fakeClient(rooms));
+
+    const servers = useServerStore.getState().servers;
+    expect(servers).toHaveLength(0);
+  });
+
+  it("renders a space with only SOME joined children and drops the non-joined ones", () => {
+    const rooms = [
+      fakeRoom({
+        roomId: "!space:remote.example",
+        name: "Partial Space",
+        type: "m.space",
+        spaceChildren: [
+          "!joined1:remote.example",
+          "!notjoined:remote.example",
+          "!joined2:remote.example",
+        ],
+      }),
+      fakeRoom({ roomId: "!joined1:remote.example", name: "Channel A" }),
+      fakeRoom({ roomId: "!joined2:remote.example", name: "Channel B" }),
+      // !notjoined:remote.example is referenced in m.space.child but
+      // not in the joined-rooms list — user isn't a member.
+    ];
+    useServerStore.getState().hydrateFederatedRooms(fakeClient(rooms));
+
+    const servers = useServerStore.getState().servers;
+    expect(servers).toHaveLength(1);
+    expect(servers[0].channels).toHaveLength(2);
+    expect(servers[0].channels.map((c) => c.name)).toEqual([
+      "Channel A",
+      "Channel B",
+    ]);
+  });
+
+  it("does NOT double-render a child room as both a space channel and a standalone entry", () => {
+    // A room that's both in getRooms() AND listed as a space.child
+    // must appear exactly once, under its parent space.
+    const rooms = [
+      fakeRoom({
+        roomId: "!parent:remote.example",
+        name: "Parent Space",
+        type: "m.space",
+        spaceChildren: ["!child:remote.example"],
+      }),
+      fakeRoom({ roomId: "!child:remote.example", name: "Child Room" }),
+    ];
+    useServerStore.getState().hydrateFederatedRooms(fakeClient(rooms));
+
+    const servers = useServerStore.getState().servers;
+    expect(servers).toHaveLength(1);
+    expect(servers[0].id).toBe("federated:!parent:remote.example");
+    // The child is NOT ALSO rendered as a top-level federated entry.
+    const hasStandaloneChild = servers.some(
+      (s) => s.id === "federated:!child:remote.example",
+    );
+    expect(hasStandaloneChild).toBe(false);
+  });
+
+  it("renders a standalone room that is NOT a child of any joined space as its own server", () => {
+    const rooms = [
+      fakeRoom({
+        roomId: "!space:remote.example",
+        name: "Space",
+        type: "m.space",
+        spaceChildren: ["!child:remote.example"],
+      }),
+      fakeRoom({ roomId: "!child:remote.example", name: "Child" }),
+      // Independent room not in any space.
+      fakeRoom({ roomId: "!loose:other.example", name: "Loose Room" }),
+    ];
+    useServerStore.getState().hydrateFederatedRooms(fakeClient(rooms));
+
+    const servers = useServerStore.getState().servers;
+    // The space gives us one entry, the loose room gives us another.
+    expect(servers).toHaveLength(2);
+    expect(servers.map((s) => s.id).sort()).toEqual([
+      "federated:!loose:other.example",
+      "federated:!space:remote.example",
+    ]);
   });
 });
 
