@@ -167,7 +167,28 @@ export function useMatrixSync() {
       clearInterval(trimInterval);
       client.removeListener(ClientEvent.Sync, onSync);
       client.removeListener(RoomMemberEvent.Membership, onMembership);
-      client.stopClient();
+      // NOTE: do NOT call client.stopClient() here.
+      //
+      // React StrictMode in dev mode runs this effect twice in
+      // quick succession (mount → cleanup → re-mount). matrix-js-sdk
+      // 41.0.0-rc.0 has a bug where stopClient() sets
+      // `callEventHandler = undefined` but the internal sync-listener
+      // that's supposed to call `callEventHandler.start()` stays
+      // attached. On the second mount, the re-run of startClient()
+      // does NOT re-initialize callEventHandler (the constructor did
+      // that, once, at creation time) — so the next sync fires
+      // `this.callEventHandler!.start()` on undefined and the whole
+      // sync loop aborts with:
+      //
+      //   TypeError: Can't access property "start",
+      //   this.callEventHandler is undefined
+      //
+      // Leaving stopClient() out of the cleanup path means the
+      // client keeps syncing across the StrictMode double-effect,
+      // which is what we actually want — there's no point stopping
+      // and restarting a fresh client. Actual logout is handled by
+      // `useAuthStore.logout()` which calls `stopClient()` at the
+      // real end of the session.
     };
   }, [client]);
 
