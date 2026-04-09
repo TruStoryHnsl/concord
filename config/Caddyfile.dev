@@ -40,6 +40,15 @@
         respond `{"m.homeserver":{"base_url":"https://concorrd.com"}}` 200
     }
 
+    # Concord-specific well-known (INS-027) — dynamic endpoint served
+    # by the Concord API container. See Caddyfile (production) for the
+    # full rationale.
+    handle /.well-known/concord/* {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+
     # Concord API
     handle /api/* {
         reverse_proxy concord-api:8000 {
