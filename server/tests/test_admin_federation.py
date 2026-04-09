@@ -152,9 +152,12 @@ def test_read_federation_returns_defaults_when_file_missing(tmp_path, monkeypatc
     settings = read_federation()
     assert settings.allow_federation is True
     assert settings.allowed_remote_server_names == []
-    # Default forbidden list is ".*" — i.e. "deny everything not
-    # explicitly allowed". This is the closed-by-default stance.
-    assert settings.forbidden_remote_server_names == [".*"]
+    # Default forbidden list is EMPTY. An earlier default of [".*"]
+    # tried to implement "deny everything not explicitly allowed", but
+    # conduwuit's banned_room_check enforces the forbidden regex without
+    # consulting the allowlist, so ".*" also rejects the local server's
+    # own rooms. Populate allowed_remote_server_names to gate federation.
+    assert settings.forbidden_remote_server_names == []
 
 
 def test_write_and_read_federation_round_trip(tmp_path, monkeypatch):

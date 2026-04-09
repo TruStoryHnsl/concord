@@ -40,10 +40,21 @@ _HOSTNAME_RE = re.compile(
 
 @dataclass
 class FederationSettings:
-    """Plain-data container for the three federation keys."""
+    """Plain-data container for the three federation keys.
+
+    ``forbidden_remote_server_names`` defaults to an empty list, NOT
+    ``[".*"]``. The "deny-all then allowlist exceptions" pattern looks
+    tempting but is broken: conduwuit's ``banned_room_check`` enforces
+    the forbidden regex without consulting the allowlist, so ``".*"``
+    rejects every room whose server-part matches — including the LOCAL
+    server, which silently breaks all local room joins the moment
+    conduwuit reloads its config. When you want a restrictive posture,
+    populate ``allowed_remote_server_names`` only; a non-empty allowlist
+    is conduwuit's intended whitelist mechanism.
+    """
 
     allow_federation: bool = True
-    forbidden_remote_server_names: list[str] = field(default_factory=lambda: [".*"])
+    forbidden_remote_server_names: list[str] = field(default_factory=list)
     allowed_remote_server_names: list[str] = field(default_factory=list)
 
 
@@ -144,7 +155,7 @@ def read_federation() -> FederationSettings:
     return FederationSettings(
         allow_federation=bool(g.get("allow_federation", True)),
         forbidden_remote_server_names=list(
-            g.get("forbidden_remote_server_names", [".*"])
+            g.get("forbidden_remote_server_names", [])
         ),
         allowed_remote_server_names=list(
             g.get("allowed_remote_server_names", [])

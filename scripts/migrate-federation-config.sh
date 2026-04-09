@@ -78,10 +78,16 @@ if [ -z "${OLD_ALLOW}${OLD_FORBIDDEN}${OLD_ALLOWED}" ]; then
   # the repo default.
   if [ ! -f "${TOML_FILE}" ]; then
     warn "config/tuwunel.toml missing — creating with defaults"
+    # NOTE: forbidden_remote_server_names is intentionally empty. An
+    # earlier default of [".*"] was meant as "deny all, allowlist
+    # exceptions", but conduwuit's banned_room_check enforces the
+    # forbidden regex without consulting the allowlist — so ".*" rejects
+    # every local room and breaks the instance. Leave forbidden empty;
+    # populate allowed_remote_server_names when you want to gate federation.
     cat > "${TOML_FILE}" <<'TOMLEOF'
 [global]
 allow_federation = true
-forbidden_remote_server_names = [".*"]
+forbidden_remote_server_names = []
 allowed_remote_server_names = []
 TOMLEOF
     ok "Wrote default config/tuwunel.toml"
