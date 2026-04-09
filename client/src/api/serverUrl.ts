@@ -6,7 +6,15 @@
  *
  * The server URL is the base for both the Concord API (/api/*) and
  * the Matrix homeserver (/_matrix/*) since Caddy proxies both.
+ *
+ * INS-027 note: this module now consults the `serverConfig` Zustand
+ * store inside `getApiBase()`. The store is the source of truth for
+ * the first-launch server-picker flow; the legacy `_serverUrl`
+ * module-var path remains as a fallback for Tauri builds that haven't
+ * been through the picker yet and for the web deployment.
  */
+
+import { useServerConfigStore } from "../stores/serverConfig";
 
 // Detect Tauri environment
 const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
@@ -61,9 +69,37 @@ export function getServerUrl(): string {
 
 /**
  * Get the API base URL for Concord API calls.
- * Web: "/api", Desktop: "https://server.example.com/api"
+ *
+ * Resolution order (INS-027):
+ *   1. `serverConfig` Zustand store — source of truth for native
+ *      apps that have been through the first-launch server picker.
+ *      Returns the `api_base` discovered via `.well-known/concord/client`.
+ *   2. Legacy `_serverUrl` module-var — set by `initServerUrl()` /
+ *      `setServerUrl()` from the Tauri-side plugin-store. Still used
+ *      by pre-INS-027 Tauri builds and by code paths that call
+ *      `setServerUrl()` directly.
+ *   3. Origin fallback — returns `/api` so the browser build keeps
+ *      working without any config at all (Caddy on the same origin
+ *      proxies `/api/*` to `concord-api`).
+ *
+ * The signature is synchronous and unchanged from its pre-INS-027
+ * version. The ~50 `apiFetch` call sites across the client continue
+ * to work without modification — the resolution is entirely internal.
  */
 export function getApiBase(): string {
+  // Read from the INS-027 store first. Dynamic state access (not a
+  // subscription) keeps this function side-effect-free and callable
+  // from non-React contexts.
+  try {
+    const cfg = useServerConfigStore.getState().config;
+    if (cfg?.api_base) {
+      return cfg.api_base;
+    }
+  } catch {
+    // Store hasn't hydrated yet (unlikely in practice; persist
+    // middleware hydrates synchronously from localStorage). Fall
+    // through to the legacy path.
+  }
   return _serverUrl ? `${_serverUrl}/api` : "/api";
 }
 

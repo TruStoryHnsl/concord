@@ -66,6 +66,18 @@
         respond `{"m.homeserver":{"base_url":"https://concorrd.com"}}` 200
     }
 
+    # Concord-specific well-known (INS-027) — dynamic endpoint, served
+    # by the Concord API container rather than inline, because the
+    # response body is derived from env vars (instance name, LiveKit
+    # URL, advertised features) that only the Python service knows.
+    # Unauthenticated by design: native clients hit this BEFORE they
+    # have any credentials. See `server/routers/wellknown.py`.
+    handle /.well-known/concord/* {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+
     # Matrix Server-Server (federation) API
     handle /_matrix/federation/* {
         reverse_proxy conduwuit:6167 {

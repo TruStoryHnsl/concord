@@ -5,11 +5,12 @@ import { useServerStore } from "./stores/server";
 import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
+import { useServerConfigStore } from "./stores/serverConfig";
 import { isDesktopMode, hasServerUrl } from "./api/serverUrl";
 import { redeemInvite } from "./api/concord";
 import { getVoiceToken } from "./api/livekit";
 import { LoginForm } from "./components/auth/LoginForm";
-import { ServerConnect } from "./components/auth/ServerConnect";
+import { ServerPickerScreen } from "./components/auth/ServerPickerScreen";
 import { SubmitPage } from "./components/public/SubmitPage";
 import { ChatLayout } from "./components/layout/ChatLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -30,8 +31,17 @@ if (initialInviteToken) {
 export { INVITE_STORAGE_KEY };
 
 export default function App() {
-  // Desktop mode: require server URL before anything else
-  const [serverConnected, setServerConnected] = useState(!isDesktopMode() || hasServerUrl());
+  // Desktop/native mode: require a server picker pass before anything
+  // else. INS-027 landed the `serverConfig` store + ServerPickerScreen
+  // as the modern first-launch flow; the picker is skipped when the
+  // store already has a config, OR when the legacy `_serverUrl` is set
+  // (for Tauri users who configured a server before INS-027 shipped —
+  // their existing URL keeps working without being kicked through the
+  // picker again).
+  const hasNewConfig = useServerConfigStore((s) => s.config !== null);
+  const [serverConnected, setServerConnected] = useState(
+    !isDesktopMode() || hasNewConfig || hasServerUrl(),
+  );
 
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -166,9 +176,10 @@ export default function App() {
     })();
   }, [isLoggedIn, accessToken, voiceConnected, voiceConnect]);
 
-  // Desktop mode: show server connection screen if no URL configured
+  // Native mode: show the first-launch server picker when no
+  // HomeserverConfig has been selected yet.
   if (!serverConnected) {
-    return <ServerConnect onConnected={() => setServerConnected(true)} />;
+    return <ServerPickerScreen onConnected={() => setServerConnected(true)} />;
   }
 
   // Public submit page — no auth required
