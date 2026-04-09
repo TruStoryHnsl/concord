@@ -1,3 +1,18 @@
+/**
+ * MessageContent — the single rendering entry point for every Matrix `m.text`
+ * body in every room type.
+ *
+ * INVARIANT: All chat surfaces — channels, DMs, threads, soundboard chat,
+ * admin — render text messages via `<MessageContent message={...} />` in
+ * `MessageList.tsx`. No component should re-implement markdown parsing or
+ * render `content.body` directly. If a new chat surface is added, route its
+ * text through this component (not through a private renderer) so markdown,
+ * sanitization, link previews, and chart attachments stay consistent.
+ *
+ * This invariant is enforced by convention and was re-audited under INS-009
+ * (2026-04-08): a repo-wide grep confirmed no alternative `m.text` renderer
+ * exists outside of MessageList → MessageContent.
+ */
 import { useState, useEffect, useMemo, Component, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
