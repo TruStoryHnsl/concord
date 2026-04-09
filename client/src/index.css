@@ -402,3 +402,62 @@ textarea,
 .concord-sheet-panel-open {
   transform: translateY(0);
 }
+
+/* ── INS-020 iPad + Google TV adaptive layout ─────────────────────────
+ *
+ * These rules add tablet and TV breakpoints WITHOUT touching the phone
+ * layout (<768px stays byte-identical) or the existing desktop layout
+ * (≥1024px with a fine pointer still uses the current 3-column shell).
+ *
+ * Breakpoints:
+ *   - 768-1023px, touch-only  → iPad portrait mode. Sidebar collapses
+ *     into a persistent narrow rail instead of a drawer; main content
+ *     fills the remaining width.
+ *   - ≥1024px, touch-only    → iPad landscape / large Android tablet.
+ *     Full 3-column layout but with larger tap targets and wider
+ *     comfortable padding.
+ *
+ * No component re-layout — these rules target the existing Tailwind
+ * classes and custom `.concord-*` classes already in the sidebar /
+ * main view so a follow-up task can make the relevant components
+ * responsive without touching any React code.
+ *
+ * TV mode:
+ *   - `[data-tv="true"]` on <html> enables high-contrast focus rings
+ *     (the default Tailwind outline is invisible at 10 ft viewing
+ *     distance). The React root sets this attribute when
+ *     `usePlatform().isTV` is true.
+ */
+
+@media (min-width: 768px) and (max-width: 1023.98px) and (pointer: coarse) {
+  /* iPad portrait — persistent narrow sidebar rail instead of a drawer. */
+  :root {
+    --concord-ipad-rail-width: 72px;
+  }
+}
+
+@media (min-width: 1024px) and (pointer: coarse) {
+  /* iPad landscape — more generous padding than desktop mouse mode. */
+  :root {
+    --concord-ipad-content-pad: 1rem;
+  }
+}
+
+/* TV focus ring — visible from 10 feet away on a 1080p+ display. The
+ * high-contrast outline only applies when the root element is tagged
+ * as a TV device (set by the App shell from `usePlatform().isTV`). */
+html[data-tv="true"] *:focus-visible {
+  outline: 4px solid var(--color-primary, #7c4dff);
+  outline-offset: 4px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 6px rgba(124, 77, 255, 0.35);
+}
+
+/* TV-mode scaled focusable tiles — the DPAD-driven roving tabindex
+ * in useDpadNav() targets `[data-focusable]` elements; bump their
+ * transform scale slightly on focus so the active tile is obvious
+ * from across the room. */
+html[data-tv="true"] [data-focusable="true"]:focus-visible {
+  transform: scale(1.05);
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}

@@ -7,6 +7,8 @@ import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession } from 
 import { useSettingsStore } from "./stores/settings";
 import { useServerConfigStore } from "./stores/serverConfig";
 import { isDesktopMode, hasServerUrl } from "./api/serverUrl";
+import { usePlatform } from "./hooks/usePlatform";
+import { computeInitialServerConnected } from "./serverPickerGate";
 import { redeemInvite } from "./api/concord";
 import { getVoiceToken } from "./api/livekit";
 import { LoginForm } from "./components/auth/LoginForm";
@@ -38,9 +40,20 @@ export default function App() {
   // (for Tauri users who configured a server before INS-027 shipped —
   // their existing URL keeps working without being kicked through the
   // picker again).
+  //
+  // INS-020 extension: native mobile Tauri builds AND mobile browsers
+  // also need the picker on first launch because they have no
+  // implicit origin-based server to fall back to. The decision is
+  // extracted into `computeInitialServerConnected` for unit testing.
   const hasNewConfig = useServerConfigStore((s) => s.config !== null);
-  const [serverConnected, setServerConnected] = useState(
-    !isDesktopMode() || hasNewConfig || hasServerUrl(),
+  const { isMobile } = usePlatform();
+  const [serverConnected, setServerConnected] = useState(() =>
+    computeInitialServerConnected({
+      isDesktop: isDesktopMode(),
+      isMobile,
+      hasNewConfig,
+      hasLegacyUrl: hasServerUrl(),
+    }),
   );
 
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
