@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -445,7 +446,12 @@ async def admin_get_federation(
     require_admin(user_id)
     import os as _os
 
-    settings = read_federation()
+    # ``read_federation`` opens tuwunel.toml under an fcntl exclusive lock —
+    # synchronous blocking I/O that stalls the FastAPI event loop. Offload
+    # it to the default thread-pool executor, matching the pattern in
+    # routers/explore.py:74.
+    loop = asyncio.get_event_loop()
+    settings = await loop.run_in_executor(None, read_federation)
     return {
         "enabled": settings.allow_federation,
         "server_name": _os.getenv("CONDUWUIT_SERVER_NAME", "unknown"),
@@ -507,10 +513,13 @@ async def admin_update_federation_allowlist(
     regex_patterns = server_names_to_regex_patterns(cleaned)
 
     # Read + overlay + write atomically so the conduwuit container never
-    # sees a torn config on its next read.
-    current = read_federation()
+    # sees a torn config on its next read. Both sides of the round-trip
+    # are offloaded to the thread-pool executor to avoid stalling the
+    # async event loop while holding the fcntl lock.
+    loop = asyncio.get_event_loop()
+    current = await loop.run_in_executor(None, read_federation)
     current.allowed_remote_server_names = regex_patterns
-    write_federation(current)
+    await loop.run_in_executor(None, write_federation, current)
 
     logger.info(
         "Federation allowlist edited by %s: %s (apply pending — restart required)",
