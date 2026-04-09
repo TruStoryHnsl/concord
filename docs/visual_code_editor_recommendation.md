@@ -1,19 +1,41 @@
 # Visual Code Editor Framework Recommendation
 
-**Status:** Draft 2026-04-08 · TASK 30 · For user review
+**Status:** Resolved 2026-04-08 · TASK 30 · **Primary (Blockly) accepted by user 2026-04-08**
 **Scope:** Foundational decision for `concord-game-maker` (Game Center planned sub-app)
 **Stack target:** Tauri v2 + React 18/19 + TypeScript + Rust backend
-**Project scope:** `commercial` (retagged 2026-04-08 — license compatibility is a hard gate)
+**Project posture:** FoSS (source open) with donation-only mobile monetization (see `client/MONETIZATION_PROPOSAL.md`). `.scope=commercial` continues to govern rigor (tests, CI, security), but no paid tier or closed-source distribution is planned.
+
+---
+
+## Distribution context (added 2026-04-08 after user decision)
+
+The original draft was written under a "the project is commercial, so every license is a hard gate" lens. The user has since clarified the distribution model:
+
+- **The project is FoSS.** The source will be open. There is no closed-source build.
+- **The only monetized surface is the native mobile apps**, and **their monetization is donation-only** (pay-what-you-want or nothing at all, no feature gating, full feature parity regardless of payment).
+- **There is no paid tier and never will be.** Donations do not unlock anything.
+
+This relaxes — but does not eliminate — the license analysis below:
+
+- **Permissive licenses (MIT, Apache-2.0, BSD)** are unambiguously fine. Blockly and Rete.js core both sit here. No change.
+- **AGPLv3** (Flyde's editor UI) is **still a concern, but less absolute than before**. Under FoSS-only distribution it would be workable in principle — AGPLv3 compels source release of derivative works, which we were going to do anyway. The practical hesitation is that AGPLv3 is copyleft on the NETWORK boundary: any user reached over a network interacts with the covered code, which means every Concord place hosting a `concord-game-maker` instance inherits AGPLv3 obligations for anything it touches. That propagation is still awkward even when the intent is FoSS. **Flyde is not being switched in** — the user has confirmed Blockly as primary — but the "absolute blocker" framing is relaxed to "still-not-recommended, but now for propagation reasons rather than commercial-license incompatibility."
+- **Non-commercial licenses (CC BY-NC-SA 4.0)** — Rete Studio — are **still blocked**. The NC (non-commercial) clause prohibits commercial use, and Apple/Google app-store distribution of a donation-accepting app is legally a commercial use under most interpretations of CC-NC regardless of the underlying source being FoSS. Even if the source were pure FoSS, shipping through a store that processes payments on our behalf crosses the line.
+
+### User-confirmed direction (2026-04-08)
+
+> "I like that primary recommendation. This is all going to be FoSS so I'm not too worried about that. The only thing I am considering monetizing is the mobile apps. And even that will be a donations based pay-what-you-want model."
+
+**Decision:** Blockly is accepted as the primary pick. Rete.js core remains the fallback. The text↔visual round-trip gap is acknowledged and accepted — `concord-game-maker` will author games in a Blockly-defined DSL, with generated code as a read-only export. §6's "Reality check" options remain available if future requirements reopen the round-trip question.
 
 ---
 
 ## Executive Summary
 
-**No candidate fully satisfies the user's three requirements** (multi-language output, text↔visual dual representation, commercial-safe Tauri v2 native compatibility). The ecosystem state is honest about this gap — visual coding libraries either do one-way block→code generation, or they do text↔visual round-trip but under non-commercial licenses.
+**No candidate fully satisfies all three original requirements** (multi-language output, text↔visual dual representation, permissive-licensed Tauri v2 native compatibility). The ecosystem state is honest about this gap — visual coding libraries either do one-way block→code generation, or they do text↔visual round-trip but under non-commercial licenses.
 
-- **Primary recommendation: Blockly** (Apache-2.0, Raspberry Pi Foundation). Multi-language output is its strongest feature — five built-in generators (JavaScript, Python, Lua, Dart, PHP). Mature React wrapper (`react-blockly` v7). Commercial-safe. **Accepts the compromise:** `concord-game-maker` authors games in a **Blockly-defined DSL** that compiles to JS/Python/Lua; it does NOT support editing existing arbitrary TypeScript source code visually. For game authoring specifically, this compromise is reasonable because games are authored from scratch in the editor, not imported from external codebases.
+- **Primary recommendation: Blockly** (Apache-2.0, Raspberry Pi Foundation) — **ACCEPTED 2026-04-08**. Multi-language output is its strongest feature — five built-in generators (JavaScript, Python, Lua, Dart, PHP). Mature React wrapper (`react-blockly` v7). Permissively licensed. **Accepts the compromise:** `concord-game-maker` authors games in a **Blockly-defined DSL** that compiles to JS/Python/Lua; it does NOT support editing existing arbitrary TypeScript source code visually. For game authoring specifically, this compromise is reasonable because games are authored from scratch in the editor, not imported from external codebases.
 - **Fallback recommendation: Rete.js core** (MIT). More flexible node-graph UX, TypeScript-first, first-class React plugin (`rete-react-plugin`). No built-in multi-language codegen and no built-in round-trip — both would be engineering work on top. Pick this if Blockly's block-based aesthetic feels too juvenile for Concord's target audience.
-- **The text↔visual round-trip requirement is substantially unmet.** The closest match (**Rete Studio**) does exactly what the user asked for — transforms JavaScript text into a Rete graph and back — but it's licensed CC BY-NC-SA 4.0 (non-commercial), which is a hard blocker for Concord's commercial scope. See §6 "Reality check" below for the long-term options if the user insists on this feature.
+- **The text↔visual round-trip requirement remains substantially unmet.** The closest match (**Rete Studio**) does exactly what the user asked for — transforms JavaScript text into a Rete graph and back — but it's licensed CC BY-NC-SA 4.0 (non-commercial), which remains a blocker for store-distributed apps even under a FoSS + donation model (see Distribution Context above). See §6 "Reality check" below for the long-term options if the requirement is reopened.
 
 ---
 
@@ -354,4 +376,4 @@ Research conducted 2026-04-08 via WebFetch + WebSearch (Cluster 9 agent initiall
 
 ---
 
-*Recommendation draft — awaiting user decision. The honest answer is that no candidate is perfect; Blockly is the least-bad commercial-safe pick for a DSL-based game authoring workflow. The user's text↔visual round-trip requirement is largely unmet by the ecosystem and will need a separate conversation before `concord-game-maker` scaffolding begins.*
+*Recommendation resolved 2026-04-08. Blockly is the primary pick; Rete.js core is the fallback. The user's text↔visual round-trip requirement is acknowledged as largely unmet by the ecosystem and is explicitly deferred — `concord-game-maker` will ship a DSL-based authoring workflow on top of Blockly, with §6's four options remaining available if the round-trip requirement is ever reopened. FoSS + donation-only mobile monetization (see `client/MONETIZATION_PROPOSAL.md`) relaxes the commercial-license framing but does not change the primary pick.*
