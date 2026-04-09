@@ -1,4 +1,22 @@
 services:
+  # concord-api with live reload on Python source changes.
+  #
+  # Bind-mounts ./server into /app so edits on the host (via Syncthing)
+  # propagate into the container, then runs uvicorn with --reload so
+  # the worker restarts on any .py change under /app. The existing
+  # ./data and ./config mounts from the base compose are preserved
+  # because Compose merges volume lists across override files.
+  #
+  # Without this override, changing a Python file requires a full
+  # `docker compose build concord-api && docker compose up -d
+  # concord-api` cycle (~15 seconds). With it, uvicorn's file-watcher
+  # reloads the app in about a second and the next request hits the
+  # new code.
+  concord-api:
+    volumes:
+      - ./server:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app
+
   # Vite dev server with HMR.
   #
   # Source is bind-mounted (ro) for live editing.

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuthStore } from "../../stores/auth";
+import { useServerStore } from "../../stores/server";
 import { useToastStore } from "../../stores/toast";
 import { listExploreServers } from "../../api/concord";
 import type { ExploreServerEntry } from "../../api/concord";
@@ -42,6 +43,9 @@ type RoomsState =
 
 export function ExploreModal({ isOpen, onClose }: Props) {
   const accessToken = useAuthStore((s) => s.accessToken);
+  const loadServers = useServerStore((s) => s.loadServers);
+  const setActiveServer = useServerStore((s) => s.setActiveServer);
+  const setActiveChannel = useServerStore((s) => s.setActiveChannel);
   const addToast = useToastStore((s) => s.addToast);
   const [state, setState] = useState<LoadState>({ status: "idle" });
   // The domain whose public-rooms directory is currently expanded, or null.
@@ -51,6 +55,15 @@ export function ExploreModal({ isOpen, onClose }: Props) {
   const [roomsByDomain, setRoomsByDomain] = useState<
     Record<string, RoomsState>
   >({});
+  // Set of room IDs/aliases whose join is currently in flight. Used to show
+  // a per-room "Joining…" state and to disable the button so the user can't
+  // fire a second join while the first is still working. Federation joins
+  // against remote homeservers can take 20–30+ seconds (make_join → fast_join
+  // → state fetch → event parsing), and without this the button looks idle
+  // during the entire window and users double-click it.
+  const [joiningTargets, setJoiningTargets] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Close on Escape — mirrors the convention used by NewServerModal /
   // InviteModal so keyboard behavior stays consistent across the app.
@@ -90,6 +103,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
       setState({ status: "idle" });
       setExpandedDomain(null);
       setRoomsByDomain({});
+      setJoiningTargets(new Set());
     }
   }, [isOpen, load]);
 
@@ -156,21 +170,90 @@ export function ExploreModal({ isOpen, onClose }: Props) {
         addToast("Not signed in", "error");
         return;
       }
+      // Guard against double-click — if the same target is already
+      // joining, do nothing.
+      if (joiningTargets.has(roomIdOrAlias)) return;
+
+      setJoiningTargets((prev) => {
+        const next = new Set(prev);
+        next.add(roomIdOrAlias);
+        return next;
+      });
+
       try {
         // Pass the remote server as a via hint so the homeserver knows
         // which server to ask for the join. This is how joining a room
         // over federation works when the room is not yet in our local
         // state.
-        await client.joinRoom(roomIdOrAlias, { viaServers: [domain] });
-        addToast("Joined room", "success");
-        onClose();
+        //
+        // matrix-js-sdk's `joinRoom` returns the joined Room object,
+        // whose `.roomId` is the canonical matrix room id. Even when
+        // `roomIdOrAlias` is an alias (e.g. `#welcome:mozilla.org`),
+        // the resolved roomId is what Concord stores in
+        // `Channel.matrix_room_id`, so that's the key we use for
+        // sidebar navigation below.
+        const joined = await client.joinRoom(roomIdOrAlias, {
+          viaServers: [domain],
+        });
+        const joinedRoomId: string = joined?.roomId ?? roomIdOrAlias;
+
+        // Refresh the Concord server list — if the joined room is part
+        // of a Concord-managed server (i.e. it shows up as a Channel
+        // under any Server), we can navigate directly to it after this
+        // call resolves. If it doesn't show up, it's a "loose" Matrix
+        // room that Concord's sidebar currently has no place for, and
+        // we surface an explicit toast rather than silently closing
+        // the modal with no visible effect.
+        if (accessToken) {
+          await loadServers(accessToken);
+        }
+        const servers = useServerStore.getState().servers;
+        const target = servers.find((s) =>
+          s.channels.some((c) => c.matrix_room_id === joinedRoomId),
+        );
+
+        if (target) {
+          const channel = target.channels.find(
+            (c) => c.matrix_room_id === joinedRoomId,
+          );
+          setActiveServer(target.id);
+          if (channel) {
+            setActiveChannel(channel.matrix_room_id);
+          }
+          addToast(`Joined ${target.name}`, "success");
+          onClose();
+        } else {
+          // Loose room case: the join succeeded on the Matrix side but
+          // the joined room isn't part of any Concord server, so we
+          // have nowhere to navigate to. Tell the user explicitly
+          // rather than silently closing.
+          addToast(
+            "Joined room, but it's not part of a Concord server yet — it won't appear in the sidebar until we add loose-room support.",
+            "info",
+          );
+          onClose();
+        }
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to join room";
         addToast(message, "error");
+      } finally {
+        setJoiningTargets((prev) => {
+          const next = new Set(prev);
+          next.delete(roomIdOrAlias);
+          return next;
+        });
       }
     },
-    [addToast, onClose],
+    [
+      accessToken,
+      addToast,
+      joiningTargets,
+      loadServers,
+      onClose,
+      setActiveChannel,
+      setActiveServer,
+    ],
   );
 
   if (!isOpen) return null;
@@ -219,6 +302,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
             roomsByDomain={roomsByDomain}
             onToggleRooms={toggleRooms}
             onJoinRoom={joinRoom}
+            joiningTargets={joiningTargets}
           />
         </div>
 
@@ -242,6 +326,7 @@ function ExploreBody({
   roomsByDomain,
   onToggleRooms,
   onJoinRoom,
+  joiningTargets,
 }: {
   state: LoadState;
   onRetry: () => void;
@@ -249,6 +334,7 @@ function ExploreBody({
   roomsByDomain: Record<string, RoomsState>;
   onToggleRooms: (domain: string) => void;
   onJoinRoom: (roomIdOrAlias: string, domain: string) => void;
+  joiningTargets: Set<string>;
 }) {
   if (state.status === "loading" || state.status === "idle") {
     return (
@@ -331,6 +417,7 @@ function ExploreBody({
                   rooms={rooms}
                   domain={entry.domain}
                   onJoin={onJoinRoom}
+                  joiningTargets={joiningTargets}
                 />
               </div>
             )}
@@ -345,10 +432,12 @@ function PublicRoomsBody({
   rooms,
   domain,
   onJoin,
+  joiningTargets,
 }: {
   rooms: RoomsState | undefined;
   domain: string;
   onJoin: (roomIdOrAlias: string, domain: string) => void;
+  joiningTargets: Set<string>;
 }) {
   if (!rooms || rooms.status === "idle" || rooms.status === "loading") {
     return (
@@ -379,6 +468,7 @@ function PublicRoomsBody({
       {rooms.rooms.map((room) => {
         const label = room.name || room.canonical_alias || room.room_id;
         const joinTarget = room.canonical_alias || room.room_id;
+        const isJoining = joiningTargets.has(joinTarget);
         return (
           <li
             key={room.room_id}
@@ -399,9 +489,18 @@ function PublicRoomsBody({
             <button
               type="button"
               onClick={() => onJoin(joinTarget, domain)}
-              className="text-[11px] px-2 py-1 primary-glow hover:brightness-110 text-on-surface rounded transition-colors flex-shrink-0"
+              disabled={isJoining}
+              aria-busy={isJoining}
+              data-testid={`explore-join-${room.room_id}`}
+              className="text-[11px] px-2 py-1 primary-glow hover:brightness-110 text-on-surface rounded transition-colors flex-shrink-0 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
             >
-              Join
+              {isJoining && (
+                <span
+                  className="inline-block w-3 h-3 border-[1.5px] border-on-surface/40 border-t-on-surface rounded-full animate-spin"
+                  aria-hidden="true"
+                />
+              )}
+              {isJoining ? "Joining…" : "Join"}
             </button>
           </li>
         );
