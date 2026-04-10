@@ -39,7 +39,18 @@ export function SettingsPanel() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const userId = useAuthStore((s) => s.userId);
   const [isAdmin, setIsAdmin] = useState(false);
-  const { isTauri, isMobile } = usePlatform();
+  const { isTauri, isMobile, isTV } = usePlatform();
+
+  // TV mode (INS-023): every tab button + the Logout button get
+  // DPAD focus attributes so the shared `useDpadNav({ group: "tv-main" })`
+  // handler registered in ChatLayout can traverse the settings shell.
+  // Helper stays local so the JSX stays compact.
+  const tvFocusProps = isTV
+    ? ({
+        "data-focusable": "true",
+        "data-focus-group": "tv-main",
+      } as const)
+    : ({} as const);
 
   // Server context for server settings group
   const servers = useServerStore((s) => s.servers);
@@ -127,6 +138,7 @@ export function SettingsPanel() {
             <button
               key={tab.key}
               onClick={() => setTab(tab.key as typeof activeTab)}
+              {...tvFocusProps}
               className={`btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-all font-label ${
                 activeTab === tab.key
                   ? "bg-surface-container-highest text-on-surface"
@@ -145,6 +157,7 @@ export function SettingsPanel() {
           {adminTab && (
             <button
               onClick={() => setTab("admin")}
+              {...tvFocusProps}
               className={`btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-all font-label ${
                 activeTab === "admin"
                   ? "bg-surface-container-highest text-on-surface"
@@ -179,6 +192,7 @@ export function SettingsPanel() {
                 <button
                   key={tab.key}
                   onClick={() => setTab(tab.key as typeof activeTab)}
+                  {...tvFocusProps}
                   className={`btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-all font-label ${
                     activeTab === tab.key
                       ? "bg-surface-container-highest text-on-surface"
@@ -224,6 +238,7 @@ export function SettingsPanel() {
         <div className="mt-8 pt-6 border-t border-outline-variant/15 flex justify-start">
           <button
             onClick={() => useAuthStore.getState().logout()}
+            {...tvFocusProps}
             className="text-error border border-error/30 rounded px-4 py-2 hover:bg-error/10 transition-colors text-sm font-label font-medium min-h-[44px]"
           >
             Logout
