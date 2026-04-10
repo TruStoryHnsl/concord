@@ -1,58 +1,59 @@
 // WebViewHost.swift
-// Concord tvOS — WKWebView host view.
+// Concord tvOS — web content host view.
 //
-// Wraps a full-screen WKWebView that loads the Concord client bundle.
-// On tvOS the webview receives DPAD focus events bridged from the
-// native UIFocus system via the JSBridge.
+// Hosts the Concord client UI on Apple TV. The tvOS SDK does NOT
+// include WebKit.framework (WKWebView is API_UNAVAILABLE(tvos)),
+// so the production path will either:
+//   (a) use JavaScriptCore + TVMLKit for a TVML-based shell, or
+//   (b) use a native SwiftUI frontend that talks directly to the
+//       Concord server API (no webview at all).
 //
-// Implementation status: SCAFFOLD ONLY — structure and protocol
-// defined, actual WKWebView instantiation deferred to post-v0.3.
+// The feasibility study (docs/native-apps/appletv-feasibility.md)
+// assumed WKWebView was available on tvOS — this scaffold corrects
+// that assumption. Path C is revised: SwiftUI-native frontend
+// backed by URLSession against the Concord API, not a webview shell.
+//
+// Implementation status: SCAFFOLD ONLY — placeholder UI committed,
+// real implementation deferred to post-v0.3.
 
 import SwiftUI
-import WebKit
 
-/// SwiftUI view that hosts the WKWebView for the Concord client.
+/// SwiftUI view that will host the Concord client UI on Apple TV.
 ///
 /// The view is responsible for:
-///   1. Creating and configuring the WKWebView with the JS bridge
-///   2. Loading the client/dist bundle (either from app resources or
-///      from a server URL resolved via the server picker)
-///   3. Translating tvOS UIFocus events into JS bridge calls so the
-///      web bundle's `useDpadNav` hook receives DOM focus events
+///   1. Presenting the server picker on first launch
+///   2. Rendering chat channels, messages, and settings natively
+///   3. Handling tvOS focus/DPAD navigation via the UIFocus system
+///
+/// Since WebKit is unavailable on tvOS, this will be a native SwiftUI
+/// frontend — not a webview wrapper. The JS bridge protocol in
+/// JSBridge.swift is retained as the interface contract for the
+/// TypeScript side (tvOSHost.ts), which will be adapted to use
+/// URLSession-backed native calls instead of postMessage.
 struct WebViewHost: View {
     var body: some View {
-        // TODO(post-v0.3): Replace with UIViewRepresentable wrapping
-        // a WKWebView configured with the ConcordJSBridge handlers.
-        Text("Concord tvOS — WebView host placeholder")
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(red: 0x12/255, green: 0x12/255, blue: 0x14/255))
+        // TODO(post-v0.3): Replace with the native SwiftUI Concord
+        // client (server picker → channel list → message view).
+        VStack(spacing: 16) {
+            Image(systemName: "tv")
+                .font(.system(size: 80))
+                .foregroundColor(Color(red: 0x7C/255, green: 0x4D/255, blue: 0xFF/255))
+            Text("Concord")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+            Text("Apple TV")
+                .font(.headline)
+                .foregroundColor(.gray)
+            Text("Connect to a server to get started.")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+                .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(red: 0x12/255, green: 0x12/255, blue: 0x14/255))
     }
 }
-
-// MARK: - WKWebView Configuration (deferred)
-
-/// Creates a WKWebViewConfiguration with the Concord JS bridge
-/// message handlers installed.
-///
-/// Call this when instantiating the WKWebView to register the 4
-/// bridge functions that `client/src/api/tvOSHost.ts` expects:
-///   - concordSetServerConfig
-///   - concordGetServerConfig
-///   - concordFocusChanged
-///   - concordOpenAuthURL
-///
-/// TODO(post-v0.3): Implement this function.
-// func makeConcordWebViewConfig() -> WKWebViewConfiguration {
-//     let config = WKWebViewConfiguration()
-//     let bridge = ConcordJSBridge()
-//     let controller = config.userContentController
-//     controller.add(bridge, name: "concordSetServerConfig")
-//     controller.add(bridge, name: "concordGetServerConfig")
-//     controller.add(bridge, name: "concordFocusChanged")
-//     controller.add(bridge, name: "concordOpenAuthURL")
-//     return config
-// }
 
 #if DEBUG
 #Preview {
