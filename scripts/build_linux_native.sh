@@ -90,6 +90,25 @@ if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
     warn "  Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf"
 fi
 
+# Bubblewrap is required for the sandboxed Discord bridge. Auto-install
+# if missing — it's a runtime dependency, not a build-time one, but we
+# want the build to produce a fully functional bundle.
+if ! command -v bwrap >/dev/null 2>&1; then
+    log "bubblewrap (bwrap) not found — installing..."
+    if command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm --needed bubblewrap \
+            || die "failed to install bubblewrap via pacman" 1
+    elif command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get install -y bubblewrap \
+            || die "failed to install bubblewrap via apt" 1
+    else
+        die "bubblewrap (bwrap) is required for the Discord bridge sandbox. Install it manually." 1
+    fi
+    log "bubblewrap installed: $(bwrap --version 2>&1 || echo 'ok')"
+else
+    log "bwrap:       $(bwrap --version 2>&1 || echo 'present')"
+fi
+
 log "cargo:       $(cargo --version)"
 log "rustc:       $(rustc --version)"
 log "tauri-cli:   $(cargo tauri --version)"

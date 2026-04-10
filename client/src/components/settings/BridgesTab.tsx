@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "../../api/servitude";
 import {
   discordBridgeSetBotToken,
-  discordBridgeEnable,
   discordBridgeDisable,
   discordBridgeStatus,
   discordBridgeEnableAndStart,
@@ -338,20 +337,15 @@ export function BridgesTab() {
                 <DependencyCheck
                   label="bubblewrap sandbox"
                   ready={status?.bwrap_available ?? false}
-                  hint="Install: sudo pacman -S bubblewrap"
+                  hint="Will auto-install on enable"
                 />
               </div>
               {!status?.bwrap_available && (
-                <div className="mt-2 rounded bg-error/10 px-3 py-2 border border-error/20">
-                  <p className="text-xs text-error font-medium">
-                    Sandbox required
+                <div className="mt-2 rounded bg-surface-container-high/60 px-3 py-2 border border-outline-variant/20">
+                  <p className="text-xs text-on-surface-variant">
+                    The sandbox will be installed automatically when you click Enable
+                    (you'll see a password prompt).
                   </p>
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    Install bubblewrap before enabling:
-                  </p>
-                  <code className="block text-xs bg-surface-container-highest px-2 py-1 rounded mt-1 text-on-surface select-all">
-                    sudo pacman -S bubblewrap
-                  </code>
                 </div>
               )}
             </StepBlock>

@@ -700,7 +700,7 @@ async fn write_file_0600(path: &Path, contents: &[u8]) -> Result<(), TransportEr
 /// Minimal `which` implementation — walks `PATH` looking for an
 /// executable with the given name. Duplicated from `matrix_federation.rs`
 /// intentionally to keep the transport modules self-contained.
-fn which_in_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn which_in_path(name: &str) -> Option<PathBuf> {
     let path_env = env::var_os("PATH")?;
     for dir in env::split_paths(&path_env) {
         let candidate = dir.join(name);

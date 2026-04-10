@@ -39,6 +39,78 @@ fn mautrix_discord_download_url() -> String {
     )
 }
 
+/// Attempt to install bubblewrap via the system package manager.
+/// Uses `pkexec` for graphical privilege escalation so the user gets
+/// a native password prompt instead of a terminal sudo prompt.
+#[cfg(target_os = "linux")]
+async fn install_bwrap() -> Result<(), BridgeCommandError> {
+    use tokio::process::Command;
+
+    // Detect package manager and build the install command.
+    let (installer, args) = if which_in_path("pacman").is_some() {
+        ("pacman", vec!["-S", "--noconfirm", "--needed", "bubblewrap"])
+    } else if which_in_path("apt-get").is_some() {
+        ("apt-get", vec!["install", "-y", "bubblewrap"])
+    } else {
+        return Err(BridgeCommandError::Transport(
+            crate::servitude::transport::TransportError::BinaryNotFound(
+                "Cannot auto-install bubblewrap: no supported package manager found (pacman or apt-get). \
+                 Install bubblewrap manually and retry."
+                    .to_string(),
+            ),
+        ));
+    };
+
+    // Use pkexec for graphical privilege escalation.
+    let status = Command::new("pkexec")
+        .arg(installer)
+        .args(&args)
+        .status()
+        .await
+        .map_err(|e| {
+            BridgeCommandError::Transport(
+                crate::servitude::transport::TransportError::StartFailed(format!(
+                    "failed to run pkexec {}: {}",
+                    installer, e
+                )),
+            )
+        })?;
+
+    if !status.success() {
+        return Err(BridgeCommandError::Transport(
+            crate::servitude::transport::TransportError::StartFailed(format!(
+                "bubblewrap installation failed (exit code: {:?}). \
+                 Install manually: sudo {} {}",
+                status.code(),
+                installer,
+                args.join(" ")
+            )),
+        ));
+    }
+
+    log::info!(
+        target: "concord::bridge",
+        "bubblewrap installed successfully via {}",
+        installer
+    );
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn install_bwrap() -> Result<(), BridgeCommandError> {
+    Err(BridgeCommandError::Transport(
+        crate::servitude::transport::TransportError::NotImplemented(
+            "bubblewrap auto-install is Linux-only".to_string(),
+        ),
+    ))
+}
+
+/// Check if a binary exists on PATH (used by install_bwrap).
+fn which_in_path(name: &str) -> Option<std::path::PathBuf> {
+    crate::servitude::transport::discord_bridge::which_in_path(name)
+}
+
 // -----------------------------------------------------------------------
 // INS-024 Wave 5 — Typed error hierarchy for bridge operations
 // -----------------------------------------------------------------------
@@ -624,8 +696,16 @@ async fn enable_and_start_inner(
     // Step 1: Ensure the mautrix-discord binary is available.
     ensure_binary_inner().await?;
 
-    // Step 2: Check bwrap (fail with clear error if missing).
-    DiscordBridgeTransport::resolve_bwrap().map_err(BridgeCommandError::Transport)?;
+    // Step 2: Check bwrap — auto-install if missing.
+    if DiscordBridgeTransport::resolve_bwrap().is_err() {
+        log::info!(
+            target: "concord::bridge",
+            "bwrap not found — attempting auto-install"
+        );
+        install_bwrap().await?;
+        // Verify it's now available.
+        DiscordBridgeTransport::resolve_bwrap().map_err(BridgeCommandError::Transport)?;
+    }
 
     // Step 3: Update config to include DiscordBridge.
     let mut config = ServitudeConfig::from_store(&app)
