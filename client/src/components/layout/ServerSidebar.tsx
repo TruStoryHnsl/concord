@@ -18,6 +18,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useServerStore } from "../../stores/server";
+import { useSourcesStore } from "../../stores/sources";
+import { useServerConfigStore } from "../../stores/serverConfig";
 import {
   useFederatedInstanceStore,
   filterInstances,
@@ -162,13 +164,45 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // user's mental model ("another Concord server is still one of
   // my servers"). Moving them into the main list lets the user
   // drag them wherever they want in their personal ordering.
+  // INS-020: Source-based filtering. On native, servers only show if
+  // their source is enabled. The primary instance host comes from
+  // serverConfig; federated servers are matched by their hostname
+  // (extracted from the synthetic server id or room id).
+  const isNative = typeof window !== "undefined" && "__TAURI__" in window;
+  const allSources = useSourcesStore((s) => s.sources);
+  const primaryHost = useServerConfigStore((s) => s.config?.host ?? "");
+  const enabledHosts = useMemo(() => {
+    if (!isNative) return null; // web: no source filtering
+    const hosts = new Set<string>();
+    for (const src of allSources) {
+      if (src.enabled) hosts.add(src.host.toLowerCase());
+    }
+    return hosts;
+  }, [isNative, allSources]);
+
+  // Is the primary Concord instance enabled?
+  const primaryEnabled = !enabledHosts || enabledHosts.has(primaryHost.toLowerCase());
+
   const localServers = useMemo(
-    () => servers.filter((s) => s.federated !== true),
-    [servers],
+    () => {
+      const all = servers.filter((s) => s.federated !== true);
+      return primaryEnabled ? all : [];
+    },
+    [servers, primaryEnabled],
   );
   const federatedServers = useMemo(
-    () => servers.filter((s) => s.federated === true),
-    [servers],
+    () => {
+      const all = servers.filter((s) => s.federated === true);
+      if (!enabledHosts) return all; // web: show all
+      return all.filter((s) => {
+        // Extract hostname from the server's first channel room_id
+        // format: "!xxx:hostname" → hostname
+        const roomId = s.channels?.[0]?.matrix_room_id ?? "";
+        const hostPart = roomId.split(":")[1]?.toLowerCase() ?? "";
+        return enabledHosts.has(hostPart);
+      });
+    },
+    [servers, enabledHosts],
   );
 
   // Persistent federated-instance catalog drives three features the
@@ -206,8 +240,13 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // in the bottom stack until their live entry materializes — they
   //'re a transient page-load state and the flicker window is brief.
   const concordFederatedLive = useMemo(
-    () => liveFederatedEntries.filter((e) => e.isConcord),
-    [liveFederatedEntries],
+    () => liveFederatedEntries.filter((e) => {
+      if (!e.isConcord) return false;
+      // INS-020: also filter by enabled sources
+      if (!enabledHosts) return true;
+      return enabledHosts.has(e.host.toLowerCase());
+    }),
+    [liveFederatedEntries, enabledHosts],
   );
 
   // Set of ids for servers that came from Concord-on-Concord
@@ -336,7 +375,12 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     const base = [
       ...filteredLive.map((e) => ({ ...e, placeholder: false as const })),
       ...filteredPlaceholders,
-    ];
+    ].filter((e) => {
+      // INS-020: filter by enabled sources — toggled-off sources'
+      // federated tiles also vanish. Only Explore stays always visible.
+      if (!enabledHosts) return true; // web: show all
+      return enabledHosts.has(e.host.toLowerCase());
+    });
     if (!preferredMatrixOrder || preferredMatrixOrder.length === 0) {
       return base.slice().reverse();
     }
@@ -500,7 +544,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
             items={orderedServers.map((s) => s.id)}
             strategy={verticalListSortingStrategy}
           >
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {orderedServers.map((server) => {
                 const isActive = !dmActive && activeServerId === server.id;
                 const hasUnreads = !isActive && server.channels.some(
@@ -512,6 +556,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                 // Vanilla Matrix federation is still pushed to the
                 // bottom stack below and doesn't reach this branch.
                 const isFromConcordFederation = concordFederatedIds.has(server.id);
+                const isDiscordBridge = server.bridgeType === "discord";
                 const isDisconnected = !syncing;
                 // Dot precedence: disconnected (red) > needs attention
                 // (yellow) > unread (primary). Only one dot at a time so
@@ -534,33 +579,54 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                       title={
                         isDisconnected
                           ? `${server.name} (disconnected)`
-                          : isFromConcordFederation
-                            ? `${server.name} — another Concord instance`
-                            : server.name
+                          : isDiscordBridge
+                            ? `${server.name} — Discord bridge`
+                            : isFromConcordFederation
+                              ? `${server.name} — another Concord instance`
+                              : server.name
                       }
-                      className={`btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
+                      className={`btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl transition-all ${
                         isDisconnected ? "opacity-50 grayscale" : ""
                       } ${
                         isActive
-                          ? isFromConcordFederation
-                            ? "bg-secondary/10 text-secondary"
-                            : "bg-primary/10 text-primary"
+                          ? isDiscordBridge
+                            ? "bg-[#5865F2]/10 text-[#5865F2]"
+                            : isFromConcordFederation
+                              ? "bg-secondary/10 text-secondary"
+                              : "bg-primary/10 text-primary"
                           : "text-on-surface hover:bg-surface-container-high"
                       }`}
                     >
                       <div className="relative flex-shrink-0">
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-headline font-bold ${
                           isActive
-                            ? isFromConcordFederation
-                              ? "bg-secondary text-on-secondary"
-                              : "primary-glow text-on-primary"
-                            : isFromConcordFederation
-                              ? "bg-secondary/15 text-secondary ring-1 ring-secondary/40"
-                              : "bg-surface-container-highest text-on-surface-variant"
+                            ? isDiscordBridge
+                              ? "bg-[#5865F2] text-white"
+                              : isFromConcordFederation
+                                ? "bg-secondary text-on-secondary"
+                                : "primary-glow text-on-primary"
+                            : isDiscordBridge
+                              ? "bg-[#5865F2]/15 text-[#5865F2] ring-1 ring-[#5865F2]/40"
+                              : isFromConcordFederation
+                                ? "bg-secondary/15 text-secondary ring-1 ring-secondary/40"
+                                : "bg-surface-container-highest text-on-surface-variant"
                         }`}>
                           {server.abbreviation || server.name.charAt(0).toUpperCase()}
                         </div>
-                        {isFromConcordFederation && (
+                        {isDiscordBridge && (
+                          <div
+                            className="absolute -top-1 -left-1 w-4 h-4 bg-[#5865F2] rounded-full border-2 border-surface-container-low flex items-center justify-center"
+                            aria-label="Discord bridge"
+                          >
+                            <span
+                              className="font-headline font-bold text-white"
+                              style={{ fontSize: "8px", lineHeight: 1 }}
+                            >
+                              D
+                            </span>
+                          </div>
+                        )}
+                        {isFromConcordFederation && !isDiscordBridge && (
                           <div
                             className="absolute -top-1 -left-1 w-4 h-4 bg-secondary rounded-full border-2 border-surface-container-low flex items-center justify-center"
                             aria-label="Another Concord instance (federated)"
@@ -575,7 +641,12 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                         )}
                       </div>
                       <span className="truncate font-body font-medium">{server.name}</span>
-                      {isFromConcordFederation && (
+                      {isDiscordBridge && (
+                        <span className="text-[10px] uppercase tracking-wider text-[#5865F2]/80 font-label ml-1">
+                          discord
+                        </span>
+                      )}
+                      {isFromConcordFederation && !isDiscordBridge && (
                         <span className="text-[10px] uppercase tracking-wider text-secondary/80 font-label ml-1">
                           concord federated
                         </span>
@@ -915,16 +986,8 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
       </button>
 
       {/* Flex spacer — pushes the federated stack + Explore button to
-          the bottom of the column. This restores the original
-          "explore-at-bottom" layout from commit 9180ecc which had
-          regressed at some point: without the spacer, the federated
-          and Explore rows bunch up directly under the `+` icon on
-          accounts with few Concord servers, instead of sitting at the
-          natural bottom of the sidebar. `min-h-0` lets the spacer
-          collapse to zero when the content overflows so scrolling
-          behaves naturally — `flex-grow` only activates when there's
-          slack space to push into. */}
-      <div className="flex-grow min-h-0" aria-hidden="true" />
+          the bottom of the column. */}
+      <div className="flex-grow" />
 
       {/* Vanilla Matrix federated stack, stacked upward from Explore.
           Now draggable so users can reorder their federated rooms —
