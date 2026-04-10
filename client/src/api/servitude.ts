@@ -39,6 +39,16 @@ export type ServitudeState =
   | "stopping";
 
 /**
+ * Full status response from `servitude_status` (INS-024 Wave 4).
+ * Contains the lifecycle state plus the degraded transports map from
+ * Wave 3's partial-failure surface.
+ */
+export interface ServitudeStatusResponse {
+  state: ServitudeState;
+  degraded_transports: Record<string, string>;
+}
+
+/**
  * Type guard for the four known lifecycle states. Anything else coming off
  * the wire is treated as an unknown/invalid state at the call site.
  */
@@ -80,26 +90,48 @@ export async function servitudeStop(): Promise<void> {
 }
 
 /**
- * Poll the current lifecycle state. Returns `"stopped"` in the browser
- * build — the "no Tauri runtime" case is indistinguishable from the
- * "handle not yet constructed" case on the Rust side, which also reports
- * stopped, so the UI can render a single Stopped view regardless.
+ * Poll the current lifecycle state and degraded transports map.
+ *
+ * INS-024 Wave 4: the return shape is now a `ServitudeStatusResponse`
+ * with `state` (lifecycle string) and `degraded_transports` (map of
+ * transport name -> failure reason). Browser mode returns a default
+ * "stopped" response with an empty degraded map.
  */
-export async function servitudeStatus(): Promise<ServitudeState> {
+export async function servitudeStatus(): Promise<ServitudeStatusResponse> {
   if (!isTauri()) {
-    return "stopped";
+    return { state: "stopped", degraded_transports: {} };
   }
   const { invoke } = await import("@tauri-apps/api/core");
   const raw = await invoke<string>("servitude_status");
-  // The Rust side returns a JSON-serialized string, e.g. `"running"`.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     throw new Error(`servitude_status returned non-JSON payload: ${raw}`);
   }
-  if (!isServitudeState(parsed)) {
-    throw new Error(`servitude_status returned unknown state: ${raw}`);
+
+  // Support both the new object format and the legacy bare-string format
+  // for backward compatibility during the Wave 4 rollout.
+  if (typeof parsed === "string" && isServitudeState(parsed)) {
+    return { state: parsed, degraded_transports: {} };
   }
-  return parsed;
+
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "state" in parsed
+  ) {
+    const obj = parsed as Record<string, unknown>;
+    const state = obj.state;
+    if (typeof state === "string" && isServitudeState(state)) {
+      const degraded =
+        typeof obj.degraded_transports === "object" &&
+        obj.degraded_transports !== null
+          ? (obj.degraded_transports as Record<string, string>)
+          : {};
+      return { state, degraded_transports: degraded };
+    }
+  }
+
+  throw new Error(`servitude_status returned unknown payload: ${raw}`);
 }

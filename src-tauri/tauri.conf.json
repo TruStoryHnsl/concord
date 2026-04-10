@@ -23,7 +23,8 @@
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' https: wss: http: ws:; img-src 'self' https: data: blob:; media-src 'self' https: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
@@ -57,7 +58,7 @@
       }
     },
     "iOS": {
-      "developmentTeam": null,
+      "developmentTeam": "827D323V6Z",
       "minimumSystemVersion": "15.0",
       "frameworks": []
     },
@@ -65,5 +66,9 @@
       "minSdkVersion": 24
     }
   },
-  "plugins": {}
+  "plugins": {
+    "stronghold": {
+      "salt": "concord-stronghold-salt-v1"
+    }
+  }
 }

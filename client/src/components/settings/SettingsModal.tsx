@@ -8,6 +8,7 @@ import { NotificationsTab } from "./NotificationsTab";
 import { ProfileTab } from "./ProfileTab";
 import { AppearanceTab } from "./AppearanceTab";
 import { NodeHostingTab } from "./NodeHostingTab";
+import { BridgesTab } from "./BridgesTab";
 import { AboutTab } from "./AboutTab";
 import { AdminTab } from "./AdminTab";
 
@@ -18,6 +19,7 @@ const baseTabs = [
   { key: "profile" as const, label: "Profile", icon: "person" },
   { key: "appearance" as const, label: "Appearance", icon: "palette" },
   { key: "node" as const, label: "Node", icon: "dns" },
+  { key: "bridges" as const, label: "Bridges", icon: "hub" },
   { key: "about" as const, label: "About", icon: "info" },
 ];
 
@@ -82,6 +84,7 @@ export function SettingsPanel() {
         {activeTab === "profile" && <ProfileTab />}
         {activeTab === "appearance" && <AppearanceTab />}
         {activeTab === "node" && <NodeHostingTab />}
+        {activeTab === "bridges" && <BridgesTab />}
         {activeTab === "about" && <AboutTab />}
         {activeTab === "admin" && isAdmin && <AdminTab />}
 

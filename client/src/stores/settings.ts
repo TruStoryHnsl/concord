@@ -46,7 +46,7 @@ interface SettingsState {
 
   // UI (not persisted)
   settingsOpen: boolean;
-  settingsTab: "audio" | "voice" | "notifications" | "profile" | "appearance" | "node" | "about" | "admin";
+  settingsTab: "audio" | "voice" | "notifications" | "profile" | "appearance" | "node" | "bridges" | "about" | "admin";
   serverSettingsId: string | null;
 
   // Actions

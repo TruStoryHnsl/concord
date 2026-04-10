@@ -47,6 +47,7 @@
 		E6A798D136A97989A150F8B3 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		EC8BFB86100BF5E86D35EA61 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		EF808EDB41D816F57F13468F /* concord_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = concord_iOS.entitlements; sourceTree = "<group>"; };
+		F9C2EEEB226C44D0028FF61F /* discord_bridge.rs */ = {isa = PBXFileReference; path = discord_bridge.rs; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +182,7 @@
 		F00B3A884C7D2FA2E6F2D1D1 /* transport */ = {
 			isa = PBXGroup;
 			children = (
+				F9C2EEEB226C44D0028FF61F /* discord_bridge.rs */,
 				005D18B1AEFDBD8C97F5D19E /* matrix_federation.rs */,
 				EC8BFB86100BF5E86D35EA61 /* mod.rs */,
 			);
@@ -195,7 +197,7 @@
 			path = arm64;
 			sourceTree = "<group>";
 		};
-		"TEMP_8390E9C4-5419-4D61-82D0-9773FA34939B" /* x86_64 */ = {
+		"TEMP_99CDDFCE-4104-4693-9435-34F22340F4EA" /* x86_64 */ = {
 			isa = PBXGroup;
 			children = (
 			);
@@ -234,6 +236,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					E652CBA2FCA4A3C93D9B5548 = {
+						DevelopmentTeam = 827D323V6Z;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 2248858012B13225239FAAE3 /* Build configuration list for PBXProject "concord" */;
@@ -377,7 +383,9 @@
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = concord_iOS/concord_iOS.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "827D323V6Z";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -408,7 +416,9 @@
 				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = concord_iOS/concord_iOS.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "827D323V6Z";
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (

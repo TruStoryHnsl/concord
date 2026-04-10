@@ -1,6 +1,8 @@
+use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
+pub mod bridge_commands;
 pub mod servitude;
 
 use servitude::{LifecycleState, ServitudeConfig, ServitudeHandle};
@@ -96,18 +98,30 @@ async fn servitude_stop(state: tauri::State<'_, ServitudeState>) -> Result<(), S
 
 /// Report the current lifecycle state of the embedded servitude.
 ///
-/// Returns a JSON string (e.g. `"stopped"`, `"running"`) so the JS bridge
-/// can render it without needing a separate TypeScript enum definition.
-/// If no handle exists yet (never started), returns the JSON string
-/// `"stopped"` to match the expected "inactive" user-facing state.
+/// INS-024 Wave 4: Returns a JSON object with `state` (lifecycle string)
+/// and `degraded_transports` (map of transport name -> failure reason).
+/// The previous return shape was a bare JSON string; the new shape is
+/// backward-compatible at the TypeScript level because the frontend
+/// parses the response structurally.
+///
+/// If no handle exists yet (never started), returns `"stopped"` with
+/// an empty degraded map.
 #[tauri::command]
 async fn servitude_status(state: tauri::State<'_, ServitudeState>) -> Result<String, String> {
     let guard = state.0.lock().await;
-    let state_value = match guard.as_ref() {
-        Some(handle) => handle.status(),
-        None => LifecycleState::Stopped,
+    let (state_value, degraded) = match guard.as_ref() {
+        Some(handle) => (
+            handle.status(),
+            handle.degraded_transports().clone(),
+        ),
+        None => (LifecycleState::Stopped, std::collections::HashMap::new()),
     };
-    serde_json::to_string(&state_value).map_err(|e| e.to_string())
+
+    let response = serde_json::json!({
+        "state": state_value,
+        "degraded_transports": degraded,
+    });
+    serde_json::to_string(&response).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -123,6 +137,19 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Stronghold vault for credential storage (INS-024 Wave 4).
+            // Uses argon2 KDF with a salt file persisted alongside the
+            // vault. The salt file is auto-created on first run.
+            let salt_path = app
+                .path()
+                .app_local_data_dir()
+                .expect("could not resolve app local data path")
+                .join("stronghold-salt.txt");
+            app.handle().plugin(
+                tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build(),
+            )?;
+
             // Ensure settings store exists
             let _ = app.handle().store("settings.json");
             Ok(())
@@ -133,6 +160,10 @@ pub fn run() {
             servitude_start,
             servitude_stop,
             servitude_status,
+            bridge_commands::discord_bridge_set_bot_token,
+            bridge_commands::discord_bridge_enable,
+            bridge_commands::discord_bridge_disable,
+            bridge_commands::discord_bridge_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

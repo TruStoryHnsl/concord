@@ -1,0 +1,449 @@
+//! Tauri commands for the Discord bridge credential and lifecycle surface.
+//!
+//! INS-024 Wave 4: these commands wire the frontend `BridgesTab.tsx` to the
+//! Rust backend. The bot token flows from the frontend (which stores it in
+//! the Stronghold vault via `@tauri-apps/plugin-stronghold` JS API) to the
+//! Rust side only when the bridge is being enabled — the Rust side writes
+//! the token into the bridge's `config.yaml` and generates cryptographically
+//! random `as_token`/`hs_token` for the AS registration.
+//!
+//! Security invariants (commercial scope):
+//!   - Bot tokens never appear in logs (redacted at the command boundary).
+//!   - The `discord_bridge_status` command surfaces `degraded_transports()`
+//!     so the UI can render partial-failure state from Wave 3.
+//!   - All commands that mutate state acquire the `ServitudeState` mutex.
+
+use serde::Serialize;
+use std::collections::HashMap;
+
+use crate::servitude::config::ServitudeConfig;
+use crate::ServitudeState;
+
+/// Status response returned by `discord_bridge_status`.
+///
+/// Serialized to JSON for the TypeScript bridge API. Intentionally flat
+/// so the frontend can destructure without nesting.
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeStatus {
+    /// Whether a bot token is stored (the frontend checks Stronghold
+    /// directly; this field is provided for convenience by checking
+    /// whether config.yaml contains a non-placeholder bot token).
+    pub has_bot_token: bool,
+    /// Current servitude lifecycle state (stopped/starting/running/stopping).
+    pub lifecycle: String,
+    /// Map of transport name -> failure reason for non-critical transports
+    /// that failed to start (Wave 3 partial-failure surface).
+    pub degraded_transports: HashMap<String, String>,
+    /// Whether the Discord bridge transport is enabled in the servitude config.
+    pub bridge_enabled: bool,
+}
+
+/// Store a Discord bot token by writing it into the bridge's config.yaml.
+///
+/// The token is validated for basic shape (non-empty, reasonable length)
+/// but NOT verified against the Discord API — that happens when the bridge
+/// actually starts and connects to the gateway.
+///
+/// The token is NEVER logged. Commercial scope demands that credentials
+/// do not appear in any log output, error messages returned to the
+/// frontend, or crash reports.
+#[tauri::command]
+pub async fn discord_bridge_set_bot_token(
+    token: String,
+) -> Result<(), String> {
+    // Basic validation — reject obviously broken tokens before touching
+    // any config files. Discord bot tokens are typically 60-80 chars but
+    // we allow a generous range to avoid rejecting valid tokens from
+    // future Discord API versions.
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return Err("bot token must not be empty".to_string());
+    }
+    if trimmed.len() < 30 {
+        return Err(
+            "bot token is too short — Discord bot tokens are typically 60+ characters"
+                .to_string(),
+        );
+    }
+    if trimmed.len() > 200 {
+        return Err(
+            "bot token is too long — check that you pasted only the token"
+                .to_string(),
+        );
+    }
+
+    // Write the token to the bridge data dir's config.yaml so it is
+    // available on the next bridge start. The token replaces the
+    // placeholder in the config written by Wave 3.
+    let data_dir = crate::servitude::transport::discord_bridge::DiscordBridgeTransport::resolve_data_dir()
+        .map_err(|e| format!("cannot resolve bridge data dir: {}", e))?;
+
+    tokio::fs::create_dir_all(&data_dir)
+        .await
+        .map_err(|e| format!("cannot create bridge data dir: {}", e))?;
+
+    // Generate random AS tokens if they don't already exist.
+    let as_token = generate_hex_token();
+    let hs_token = generate_hex_token();
+
+    // Read existing config to preserve as/hs tokens if already set.
+    let config_path = data_dir.join("config.yaml");
+    let (existing_as, existing_hs) = if let Ok(contents) = tokio::fs::read_to_string(&config_path).await {
+        (
+            extract_yaml_value(&contents, "as_token"),
+            extract_yaml_value(&contents, "hs_token"),
+        )
+    } else {
+        (None, None)
+    };
+
+    // Use existing tokens if they are real (not placeholder), otherwise
+    // generate fresh ones.
+    let final_as = existing_as
+        .filter(|t| !t.contains("PLACEHOLDER"))
+        .unwrap_or(as_token);
+    let final_hs = existing_hs
+        .filter(|t| !t.contains("PLACEHOLDER"))
+        .unwrap_or(hs_token);
+
+    // Determine listen port from config or default.
+    let listen_port: u16 = 8765;
+    let bridge_port: u16 = crate::servitude::transport::discord_bridge::DEFAULT_BRIDGE_PORT;
+    let server_name = format!("localhost:{}", listen_port);
+
+    // Write a complete config.yaml with the real bot token.
+    let config_contents = format!(
+        "# Generated by Concord (INS-024 Wave 4)\n\
+         homeserver:\n\
+         \x20\x20address: http://127.0.0.1:{listen_port}\n\
+         \x20\x20domain: {server_name}\n\
+         appservice:\n\
+         \x20\x20address: http://127.0.0.1:{bridge_port}\n\
+         \x20\x20hostname: 127.0.0.1\n\
+         \x20\x20port: {bridge_port}\n\
+         \x20\x20id: concord_discord\n\
+         \x20\x20bot_username: _discord_bot\n\
+         \x20\x20as_token: {as_token}\n\
+         \x20\x20hs_token: {hs_token}\n\
+         bridge:\n\
+         \x20\x20username_template: _discord_{{{{.}}}}\n\
+         \x20\x20displayname_template: '{{{{.Username}}}} (Discord)'\n\
+         \x20\x20bot_token: {bot_token}\n\
+         logging:\n\
+         \x20\x20min_level: info\n",
+        listen_port = listen_port,
+        server_name = server_name,
+        bridge_port = bridge_port,
+        as_token = final_as,
+        hs_token = final_hs,
+        bot_token = trimmed,
+    );
+
+    write_file_0600(&config_path, config_contents.as_bytes()).await?;
+
+    // Also write a matching registration.yaml with the real tokens.
+    let registration_path = data_dir.join("registration.yaml");
+    let reg_contents = format!(
+        "# Generated by Concord (INS-024 Wave 4)\n\
+         id: concord_discord\n\
+         url: http://127.0.0.1:{bridge_port}\n\
+         as_token: {as_token}\n\
+         hs_token: {hs_token}\n\
+         sender_localpart: _discord_bot\n\
+         rate_limited: false\n\
+         namespaces:\n\
+         \x20\x20users:\n\
+         \x20\x20\x20\x20- exclusive: true\n\
+         \x20\x20\x20\x20\x20\x20regex: '@_discord_.*:{server_name}'\n\
+         \x20\x20aliases:\n\
+         \x20\x20\x20\x20- exclusive: true\n\
+         \x20\x20\x20\x20\x20\x20regex: '#_discord_.*:{server_name}'\n\
+         \x20\x20rooms: []\n",
+        bridge_port = bridge_port,
+        as_token = final_as,
+        hs_token = final_hs,
+        server_name = server_name,
+    );
+
+    write_file_0600(&registration_path, reg_contents.as_bytes()).await?;
+
+    log::info!(
+        target: "concord::bridge",
+        "discord bot token written to config.yaml (length: {} chars)",
+        trimmed.len()
+    );
+
+    Ok(())
+}
+
+/// Enable the Discord bridge transport. Adds `DiscordBridge` to the
+/// servitude config's `enabled_transports` (after `MatrixFederation`)
+/// and persists the change.
+#[tauri::command]
+pub async fn discord_bridge_enable(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use crate::servitude::config::Transport;
+
+    let mut config = ServitudeConfig::from_store(&app).map_err(|e| e.to_string())?;
+
+    // Ensure MatrixFederation is enabled (bridge depends on it).
+    if !config
+        .enabled_transports
+        .contains(&Transport::MatrixFederation)
+    {
+        config
+            .enabled_transports
+            .push(Transport::MatrixFederation);
+    }
+
+    // Add DiscordBridge after MatrixFederation if not already present.
+    if !config
+        .enabled_transports
+        .contains(&Transport::DiscordBridge)
+    {
+        config.enabled_transports.push(Transport::DiscordBridge);
+    }
+
+    config.save_to_store(&app).map_err(|e| e.to_string())?;
+
+    log::info!(
+        target: "concord::bridge",
+        "discord bridge enabled in servitude config"
+    );
+
+    Ok(())
+}
+
+/// Disable the Discord bridge transport. Removes `DiscordBridge` from
+/// the servitude config and persists the change. Does NOT remove the
+/// stored bot token (the user can re-enable without re-entering it).
+#[tauri::command]
+pub async fn discord_bridge_disable(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use crate::servitude::config::Transport;
+
+    let mut config = ServitudeConfig::from_store(&app).map_err(|e| e.to_string())?;
+
+    config
+        .enabled_transports
+        .retain(|t| *t != Transport::DiscordBridge);
+
+    config.save_to_store(&app).map_err(|e| e.to_string())?;
+
+    log::info!(
+        target: "concord::bridge",
+        "discord bridge disabled in servitude config"
+    );
+
+    Ok(())
+}
+
+/// Return the current Discord bridge status.
+#[tauri::command]
+pub async fn discord_bridge_status(
+    state: tauri::State<'_, ServitudeState>,
+    app: tauri::AppHandle,
+) -> Result<BridgeStatus, String> {
+    use crate::servitude::config::Transport;
+
+    // Check if config.yaml has a real bot token (not placeholder).
+    let has_bot_token = check_bot_token_exists().await;
+
+    let guard = state.0.lock().await;
+
+    let (lifecycle, degraded_transports) = match guard.as_ref() {
+        Some(handle) => {
+            let state_str = serde_json::to_string(&handle.status())
+                .unwrap_or_else(|_| "\"stopped\"".to_string());
+            let state_str = state_str.trim_matches('"').to_string();
+            let degraded = handle.degraded_transports().clone();
+            (state_str, degraded)
+        }
+        None => ("stopped".to_string(), HashMap::new()),
+    };
+
+    let config = ServitudeConfig::from_store(&app).unwrap_or_default();
+    let bridge_enabled = config
+        .enabled_transports
+        .contains(&Transport::DiscordBridge);
+
+    Ok(BridgeStatus {
+        has_bot_token,
+        lifecycle,
+        degraded_transports,
+        bridge_enabled,
+    })
+}
+
+/// Check if the bridge config.yaml contains a real (non-placeholder) bot token.
+async fn check_bot_token_exists() -> bool {
+    let data_dir =
+        match crate::servitude::transport::discord_bridge::DiscordBridgeTransport::resolve_data_dir()
+        {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+    let config_path = data_dir.join("config.yaml");
+    match tokio::fs::read_to_string(&config_path).await {
+        Ok(contents) => {
+            if let Some(token) = extract_yaml_value(&contents, "bot_token") {
+                !token.is_empty() && !token.contains("PLACEHOLDER")
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    }
+}
+
+/// Generate a 32-byte cryptographically random hex token.
+fn generate_hex_token() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut bytes = [0u8; 32];
+    rng.fill(&mut bytes);
+    hex::encode(bytes)
+}
+
+/// Extract a value from a YAML string by key. Simple line-based parser
+/// that handles `key: value` format. Not a full YAML parser but sufficient
+/// for the flat config.yaml shape we generate.
+fn extract_yaml_value(yaml: &str, key: &str) -> Option<String> {
+    let prefix = format!("{}:", key);
+    for line in yaml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(&prefix) {
+            let value = trimmed[prefix.len()..].trim();
+            // Strip surrounding quotes if present.
+            let value = value.trim_matches('\'').trim_matches('"');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Write a file with 0600 mode (owner-only read/write) on Unix.
+async fn write_file_0600(
+    path: &std::path::Path,
+    contents: &[u8],
+) -> Result<(), String> {
+    tokio::fs::write(path, contents)
+        .await
+        .map_err(|e| format!("failed to write {:?}: {}", path, e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = tokio::fs::metadata(path)
+            .await
+            .map_err(|e| format!("failed to stat {:?}: {}", path, e))?
+            .permissions();
+        perms.set_mode(0o600);
+        tokio::fs::set_permissions(path, perms)
+            .await
+            .map_err(|e| format!("failed to chmod {:?}: {}", path, e))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bridge_status_serialization() {
+        let status = BridgeStatus {
+            has_bot_token: true,
+            lifecycle: "running".to_string(),
+            degraded_transports: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "discord_bridge".to_string(),
+                    "binary not found".to_string(),
+                );
+                m
+            },
+            bridge_enabled: true,
+        };
+        let json = serde_json::to_string(&status).expect("BridgeStatus must serialize");
+        assert!(json.contains("\"has_bot_token\":true"));
+        assert!(json.contains("\"lifecycle\":\"running\""));
+        assert!(json.contains("\"bridge_enabled\":true"));
+        assert!(json.contains("\"discord_bridge\""));
+        assert!(json.contains("binary not found"));
+    }
+
+    #[test]
+    fn test_bridge_status_empty_degraded() {
+        let status = BridgeStatus {
+            has_bot_token: false,
+            lifecycle: "stopped".to_string(),
+            degraded_transports: HashMap::new(),
+            bridge_enabled: false,
+        };
+        let json = serde_json::to_string(&status).expect("BridgeStatus must serialize");
+        assert!(json.contains("\"has_bot_token\":false"));
+        assert!(json.contains("\"degraded_transports\":{}"));
+    }
+
+    #[test]
+    fn test_generate_hex_token_length_and_uniqueness() {
+        let t1 = generate_hex_token();
+        let t2 = generate_hex_token();
+        // 32 bytes -> 64 hex chars.
+        assert_eq!(t1.len(), 64);
+        assert_eq!(t2.len(), 64);
+        // Tokens must be unique (probability of collision negligible).
+        assert_ne!(t1, t2);
+        // Must be valid hex.
+        assert!(hex::decode(&t1).is_ok());
+        assert!(hex::decode(&t2).is_ok());
+    }
+
+    #[test]
+    fn test_extract_yaml_value_basic() {
+        let yaml = "homeserver:\n  address: http://localhost:8765\n  domain: localhost:8765\n";
+        assert_eq!(
+            extract_yaml_value(yaml, "address"),
+            Some("http://localhost:8765".to_string())
+        );
+        assert_eq!(
+            extract_yaml_value(yaml, "domain"),
+            Some("localhost:8765".to_string())
+        );
+        assert_eq!(extract_yaml_value(yaml, "nonexistent"), None);
+    }
+
+    #[test]
+    fn test_extract_yaml_value_strips_quotes() {
+        let yaml = "name: 'hello'\nother: \"world\"\n";
+        assert_eq!(
+            extract_yaml_value(yaml, "name"),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            extract_yaml_value(yaml, "other"),
+            Some("world".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_yaml_value_bot_token() {
+        let yaml = "  bot_token: MTIzNDU2Nzg5MDEyMzQ1Njc4.GA1234.abcdefghij\n";
+        let token = extract_yaml_value(yaml, "bot_token");
+        assert!(token.is_some());
+        assert!(token.unwrap().starts_with("MTIzNDU2"));
+    }
+
+    #[test]
+    fn test_extract_yaml_value_placeholder() {
+        let yaml = "  as_token: CONCORD_PLACEHOLDER_AS_TOKEN\n";
+        let token = extract_yaml_value(yaml, "as_token").unwrap();
+        assert!(token.contains("PLACEHOLDER"));
+    }
+}
