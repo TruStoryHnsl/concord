@@ -5,6 +5,7 @@ import {
   discordBridgeEnable,
   discordBridgeDisable,
   discordBridgeStatus,
+  discordBridgeEnableAndStart,
   type BridgeStatus,
 } from "../../api/bridges";
 import { DiscordTosModal } from "./DiscordTosModal";
@@ -85,7 +86,9 @@ export function BridgesTab() {
     setBusy(true);
     setError(null);
     try {
-      await discordBridgeEnable();
+      // One-click flow: downloads binary if needed, checks bwrap,
+      // enables the transport, and restarts servitude.
+      await discordBridgeEnableAndStart();
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -322,10 +325,35 @@ export function BridgesTab() {
               done={bridgeEnabled}
             >
               <p className="text-xs text-on-surface-variant">
-                Everything is configured. Click the <strong>Enable</strong> button
-                above to start the Discord bridge. The bridge will connect to
-                Discord and begin relaying messages.
+                Click <strong>Enable</strong> above to start the Discord bridge.
+                {!status?.binary_available && " The bridge binary will be downloaded automatically (~20 MB)."}
               </p>
+              {/* Dependency readiness */}
+              <div className="mt-2 space-y-1">
+                <DependencyCheck
+                  label="mautrix-discord"
+                  ready={status?.binary_available ?? false}
+                  hint="Will auto-download on enable"
+                />
+                <DependencyCheck
+                  label="bubblewrap sandbox"
+                  ready={status?.bwrap_available ?? false}
+                  hint="Install: sudo pacman -S bubblewrap"
+                />
+              </div>
+              {!status?.bwrap_available && (
+                <div className="mt-2 rounded bg-error/10 px-3 py-2 border border-error/20">
+                  <p className="text-xs text-error font-medium">
+                    Sandbox required
+                  </p>
+                  <p className="text-xs text-on-surface-variant mt-0.5">
+                    Install bubblewrap before enabling:
+                  </p>
+                  <code className="block text-xs bg-surface-container-highest px-2 py-1 rounded mt-1 text-on-surface select-all">
+                    sudo pacman -S bubblewrap
+                  </code>
+                </div>
+              )}
             </StepBlock>
           </div>
         )}
@@ -416,6 +444,33 @@ function StepBlock({
         <h5 className="text-sm font-medium text-on-surface">{title}</h5>
       </div>
       {(active || done) && <div className="mt-2 pl-7">{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * Dependency readiness indicator.
+ */
+function DependencyCheck({
+  label,
+  ready,
+  hint,
+}: {
+  label: string;
+  ready: boolean;
+  hint: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className={ready ? "text-primary" : "text-on-surface-variant/50"}>
+        {ready ? "✓" : "○"}
+      </span>
+      <span className={ready ? "text-on-surface" : "text-on-surface-variant/60"}>
+        {label}
+      </span>
+      {!ready && (
+        <span className="text-on-surface-variant/40 italic">— {hint}</span>
+      )}
     </div>
   );
 }

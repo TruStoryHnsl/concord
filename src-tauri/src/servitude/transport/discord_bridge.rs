@@ -175,7 +175,15 @@ impl DiscordBridgeTransport {
             }
         }
 
-        // 4. PATH lookup fallback.
+        // 4. Data directory (runtime download location).
+        if let Ok(data_dir) = Self::resolve_data_dir() {
+            let data_bin = data_dir.join("mautrix-discord");
+            if data_bin.is_file() {
+                return Ok(data_bin);
+            }
+        }
+
+        // 5. PATH lookup fallback.
         if let Some(path_hit) = which_in_path("mautrix-discord") {
             return Ok(path_hit);
         }

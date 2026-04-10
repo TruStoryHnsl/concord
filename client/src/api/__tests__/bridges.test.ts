@@ -62,6 +62,8 @@ describe("bridges.ts API", () => {
         lifecycle: "stopped",
         degraded_transports: {},
         bridge_enabled: false,
+        binary_available: false,
+        bwrap_available: false,
       });
     });
   });

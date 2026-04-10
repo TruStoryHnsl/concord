@@ -18,6 +18,8 @@ export interface BridgeStatus {
   lifecycle: string;
   degraded_transports: Record<string, string>;
   bridge_enabled: boolean;
+  binary_available: boolean;
+  bwrap_available: boolean;
 }
 
 /**
@@ -71,8 +73,35 @@ export async function discordBridgeStatus(): Promise<BridgeStatus> {
       lifecycle: "stopped",
       degraded_transports: {},
       bridge_enabled: false,
+      binary_available: false,
+      bwrap_available: false,
     };
   }
   const { invoke } = await import("@tauri-apps/api/core");
   return await invoke<BridgeStatus>("discord_bridge_status");
+}
+
+/**
+ * Download the mautrix-discord binary from GitHub releases if not
+ * already available. Returns the path to the binary.
+ */
+export async function discordBridgeEnsureBinary(): Promise<string> {
+  if (!isTauri()) {
+    throw new Error("not-in-tauri");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<string>("discord_bridge_ensure_binary");
+}
+
+/**
+ * Enable the Discord bridge AND restart servitude so it actually starts.
+ * One-click flow: downloads binary if needed, checks bwrap, enables
+ * the transport, and restarts servitude.
+ */
+export async function discordBridgeEnableAndStart(): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("not-in-tauri");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("discord_bridge_enable_and_start");
 }

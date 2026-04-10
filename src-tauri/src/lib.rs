@@ -164,6 +164,8 @@ pub fn run() {
             bridge_commands::discord_bridge_enable,
             bridge_commands::discord_bridge_disable,
             bridge_commands::discord_bridge_status,
+            bridge_commands::discord_bridge_ensure_binary,
+            bridge_commands::discord_bridge_enable_and_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

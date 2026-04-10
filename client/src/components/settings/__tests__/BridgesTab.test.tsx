@@ -35,12 +35,14 @@ vi.mock("../../../api/bridges", async (importOriginal) => {
     discordBridgeEnable: vi.fn(),
     discordBridgeDisable: vi.fn(),
     discordBridgeStatus: vi.fn(),
+    discordBridgeEnableAndStart: vi.fn(),
   };
 });
 
 const mockedIsTauri = vi.mocked(servitudeApi.isTauri);
 const mockedSetToken = vi.mocked(bridgesApi.discordBridgeSetBotToken);
 const mockedEnable = vi.mocked(bridgesApi.discordBridgeEnable);
+const mockedEnableAndStart = vi.mocked(bridgesApi.discordBridgeEnableAndStart);
 const mockedDisable = vi.mocked(bridgesApi.discordBridgeDisable);
 const mockedStatus = vi.mocked(bridgesApi.discordBridgeStatus);
 
@@ -49,6 +51,8 @@ const defaultStatus: bridgesApi.BridgeStatus = {
   lifecycle: "stopped",
   degraded_transports: {},
   bridge_enabled: false,
+  binary_available: true,
+  bwrap_available: true,
 };
 
 describe("<BridgesTab />", () => {
@@ -56,6 +60,7 @@ describe("<BridgesTab />", () => {
     mockedIsTauri.mockReset();
     mockedSetToken.mockReset();
     mockedEnable.mockReset();
+    mockedEnableAndStart.mockReset();
     mockedDisable.mockReset();
     mockedStatus.mockReset();
     // Clear localStorage for ToS state.
@@ -148,7 +153,7 @@ describe("<BridgesTab />", () => {
       ...defaultStatus,
       has_bot_token: true,
     });
-    mockedEnable.mockResolvedValue();
+    mockedEnableAndStart.mockResolvedValue();
 
     const user = userEvent.setup();
     render(<BridgesTab />);
@@ -167,7 +172,7 @@ describe("<BridgesTab />", () => {
     await user.click(screen.getByTestId("bridge-enable-btn"));
 
     await waitFor(() => {
-      expect(mockedEnable).toHaveBeenCalledTimes(1);
+      expect(mockedEnableAndStart).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -202,6 +207,8 @@ describe("<BridgesTab />", () => {
       lifecycle: "running",
       degraded_transports: { discord_bridge: "binary not found" },
       bridge_enabled: true,
+      binary_available: true,
+      bwrap_available: true,
     });
 
     render(<BridgesTab />);

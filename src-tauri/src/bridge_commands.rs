@@ -20,7 +20,24 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::servitude::config::ServitudeConfig;
+use crate::servitude::transport::discord_bridge::DiscordBridgeTransport;
 use crate::ServitudeState;
+
+/// Pinned mautrix-discord version for auto-download. Must match the
+/// version in `scripts/build_linux_native.sh` so build-time and
+/// runtime binaries stay in sync.
+const MAUTRIX_DISCORD_VERSION: &str = "v0.7.2";
+
+/// GitHub release asset name for Linux amd64.
+const MAUTRIX_DISCORD_ASSET: &str = "mautrix-discord-linux-amd64";
+
+/// Full download URL constructed from version + asset name.
+fn mautrix_discord_download_url() -> String {
+    format!(
+        "https://github.com/mautrix/discord/releases/download/{}/{}",
+        MAUTRIX_DISCORD_VERSION, MAUTRIX_DISCORD_ASSET
+    )
+}
 
 // -----------------------------------------------------------------------
 // INS-024 Wave 5 — Typed error hierarchy for bridge operations
@@ -108,6 +125,10 @@ pub struct BridgeStatus {
     pub degraded_transports: HashMap<String, String>,
     /// Whether the Discord bridge transport is enabled in the servitude config.
     pub bridge_enabled: bool,
+    /// Whether the mautrix-discord binary is available on disk.
+    pub binary_available: bool,
+    /// Whether bubblewrap (bwrap) is installed on the host.
+    pub bwrap_available: bool,
 }
 
 /// Store a Discord bot token by writing it into the bridge's config.yaml.
@@ -363,11 +384,16 @@ pub async fn discord_bridge_status(
         .enabled_transports
         .contains(&Transport::DiscordBridge);
 
+    let binary_available = DiscordBridgeTransport::resolve_binary().is_ok();
+    let bwrap_available = DiscordBridgeTransport::resolve_bwrap().is_ok();
+
     Ok(BridgeStatus {
         has_bot_token,
         lifecycle,
         degraded_transports,
         bridge_enabled,
+        binary_available,
+        bwrap_available,
     })
 }
 
@@ -451,6 +477,224 @@ async fn write_file_0600(
     Ok(())
 }
 
+/// Download the mautrix-discord binary from GitHub releases to the
+/// bridge data directory. Returns the path to the downloaded binary.
+///
+/// This is the runtime counterpart of `stage_mautrix_discord_binary`
+/// in `scripts/build_linux_native.sh` — same version, same binary,
+/// but fetched on-demand instead of at build time.
+///
+/// The binary lands at `$XDG_DATA_HOME/concord/discord-bridge/mautrix-discord`
+/// which is position 4 in `DiscordBridgeTransport::resolve_binary()`'s
+/// search order, so once downloaded it will be found on subsequent runs.
+#[tauri::command]
+pub async fn discord_bridge_ensure_binary() -> Result<String, String> {
+    ensure_binary_inner().await.map_err(|e| e.to_string())
+}
+
+async fn ensure_binary_inner() -> Result<String, BridgeCommandError> {
+    // Already available? Skip the download.
+    if let Ok(existing) = DiscordBridgeTransport::resolve_binary() {
+        let path_str = existing.display().to_string();
+        log::info!(
+            target: "concord::bridge",
+            "mautrix-discord binary already available at {}",
+            redact_for_logging(&path_str)
+        );
+        return Ok(path_str);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Err(BridgeCommandError::Transport(
+            crate::servitude::transport::TransportError::NotImplemented(
+                "Discord bridge auto-download is Linux-only".to_string(),
+            ),
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let data_dir = DiscordBridgeTransport::resolve_data_dir()
+            .map_err(|e| BridgeCommandError::DataDirResolution(e.to_string()))?;
+
+        tokio::fs::create_dir_all(&data_dir).await.map_err(|e| {
+            BridgeCommandError::DataDirResolution(format!(
+                "cannot create bridge data dir: {}",
+                e
+            ))
+        })?;
+
+        let dest = data_dir.join("mautrix-discord");
+        let url = mautrix_discord_download_url();
+
+        log::info!(
+            target: "concord::bridge",
+            "downloading mautrix-discord {} from GitHub releases...",
+            MAUTRIX_DISCORD_VERSION
+        );
+
+        let response = reqwest::get(&url).await.map_err(|e| {
+            BridgeCommandError::Transport(
+                crate::servitude::transport::TransportError::StartFailed(format!(
+                    "failed to download mautrix-discord: {}",
+                    e
+                )),
+            )
+        })?;
+
+        if !response.status().is_success() {
+            return Err(BridgeCommandError::Transport(
+                crate::servitude::transport::TransportError::StartFailed(format!(
+                    "mautrix-discord download failed: HTTP {}",
+                    response.status()
+                )),
+            ));
+        }
+
+        let bytes = response.bytes().await.map_err(|e| {
+            BridgeCommandError::Transport(
+                crate::servitude::transport::TransportError::StartFailed(format!(
+                    "failed to read download body: {}",
+                    e
+                )),
+            )
+        })?;
+
+        tokio::fs::write(&dest, &bytes).await.map_err(|e| {
+            BridgeCommandError::ConfigWrite(format!(
+                "failed to write mautrix-discord binary: {}",
+                e
+            ))
+        })?;
+
+        // Make executable (0755).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = tokio::fs::metadata(&dest)
+                .await
+                .map_err(|e| {
+                    BridgeCommandError::ConfigWrite(format!(
+                        "failed to stat binary: {}",
+                        e
+                    ))
+                })?
+                .permissions();
+            perms.set_mode(0o755);
+            tokio::fs::set_permissions(&dest, perms).await.map_err(|e| {
+                BridgeCommandError::ConfigWrite(format!(
+                    "failed to chmod binary: {}",
+                    e
+                ))
+            })?;
+        }
+
+        let path_str = dest.display().to_string();
+        log::info!(
+            target: "concord::bridge",
+            "mautrix-discord binary downloaded to {}",
+            redact_for_logging(&path_str)
+        );
+
+        Ok(path_str)
+    }
+}
+
+/// Enable the Discord bridge AND restart servitude so the bridge
+/// actually starts. This is the "one click" flow — the frontend
+/// calls this single command and the bridge comes up.
+#[tauri::command]
+pub async fn discord_bridge_enable_and_start(
+    state: tauri::State<'_, ServitudeState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    enable_and_start_inner(state, app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn enable_and_start_inner(
+    state: tauri::State<'_, ServitudeState>,
+    app: tauri::AppHandle,
+) -> Result<(), BridgeCommandError> {
+    use crate::servitude::config::Transport;
+    use crate::servitude::{LifecycleState, ServitudeHandle};
+
+    // Step 1: Ensure the mautrix-discord binary is available.
+    ensure_binary_inner().await?;
+
+    // Step 2: Check bwrap (fail with clear error if missing).
+    DiscordBridgeTransport::resolve_bwrap().map_err(BridgeCommandError::Transport)?;
+
+    // Step 3: Update config to include DiscordBridge.
+    let mut config = ServitudeConfig::from_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
+
+    if !config
+        .enabled_transports
+        .contains(&Transport::MatrixFederation)
+    {
+        config
+            .enabled_transports
+            .push(Transport::MatrixFederation);
+    }
+    if !config
+        .enabled_transports
+        .contains(&Transport::DiscordBridge)
+    {
+        config.enabled_transports.push(Transport::DiscordBridge);
+    }
+
+    config
+        .save_to_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
+
+    log::info!(
+        target: "concord::bridge",
+        "discord bridge enabled — restarting servitude"
+    );
+
+    // Step 4: Stop servitude if running.
+    {
+        let mut guard = state.0.lock().await;
+        if let Some(handle) = guard.as_mut() {
+            if handle.status() != LifecycleState::Stopped {
+                let _ = handle.stop().await;
+            }
+        }
+    }
+
+    // Step 5: Start servitude with fresh config (includes DiscordBridge).
+    let config = ServitudeConfig::from_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
+
+    let mut guard = state.0.lock().await;
+    *guard = Some(
+        ServitudeHandle::new(config).map_err(|e| {
+            BridgeCommandError::Transport(
+                crate::servitude::transport::TransportError::StartFailed(e.to_string()),
+            )
+        })?,
+    );
+
+    let handle = guard
+        .as_mut()
+        .expect("handle just inserted");
+    handle.start().await.map_err(|e| {
+        BridgeCommandError::Transport(
+            crate::servitude::transport::TransportError::StartFailed(e.to_string()),
+        )
+    })?;
+
+    log::info!(
+        target: "concord::bridge",
+        "servitude restarted with discord bridge enabled"
+    );
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,6 +713,8 @@ mod tests {
                 m
             },
             bridge_enabled: true,
+            binary_available: true,
+            bwrap_available: true,
         };
         let json = serde_json::to_string(&status).expect("BridgeStatus must serialize");
         assert!(json.contains("\"has_bot_token\":true"));
@@ -485,6 +731,8 @@ mod tests {
             lifecycle: "stopped".to_string(),
             degraded_transports: HashMap::new(),
             bridge_enabled: false,
+            binary_available: false,
+            bwrap_available: false,
         };
         let json = serde_json::to_string(&status).expect("BridgeStatus must serialize");
         assert!(json.contains("\"has_bot_token\":false"));
