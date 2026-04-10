@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0c0e11" />
+    <!-- Concord launch buffer (INS-023): paint the dark theme
+         background immediately so every platform (desktop, mobile,
+         TV) avoids a white flash between document load and React
+         hydration. The React-side <LaunchAnimation/> fades out on
+         top of this once the app is ready. Kept inline so it
+         applies before any stylesheet fetch completes. -->
+    <style>
+      html, body { background: #0c0e11; color: #f4f4f7; margin: 0; }
+      html { color-scheme: dark; }
+      body { min-height: 100vh; }
+    </style>
+    <!-- Tag <html> before first paint so CSS can branch on native vs. web.
+         __TAURI__ is injected at document-start by withGlobalTauri. -->
+    <script>if(window.__TAURI__)document.documentElement.classList.add('tauri')</script>
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
