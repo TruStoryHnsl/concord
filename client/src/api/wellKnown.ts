@@ -204,6 +204,13 @@ async function fetchWellKnown<T>(
     return { status: "absent" };
   }
 
+  // Guard: if the server returned HTML (e.g. SPA fallback) instead of
+  // JSON, treat it as absent rather than crashing on JSON.parse.
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("text/html")) {
+    return { status: "absent" };
+  }
+
   let body: unknown;
   try {
     body = await response.json();
