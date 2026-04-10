@@ -50,7 +50,7 @@ MAUTRIX_DISCORD_VERSION="v0.7.2"
 # releases page. Matches the Docker image (`dock.mau.dev/mautrix/discord:v0.7.2`)
 # shipped in Wave 2's docker-compose.yml so desktop + Docker paths
 # stay feature-parity.
-MAUTRIX_DISCORD_ASSET="mautrix-discord-linux-amd64"
+MAUTRIX_DISCORD_ASSET="mautrix-discord-amd64"
 MAUTRIX_DISCORD_URL="https://github.com/mautrix/discord/releases/download/${MAUTRIX_DISCORD_VERSION}/${MAUTRIX_DISCORD_ASSET}"
 MAUTRIX_DISCORD_CACHE_DIR="${REPO_ROOT}/.build-cache/mautrix-discord"
 MAUTRIX_DISCORD_BUNDLED_DIR="${SRC_TAURI}/resources/discord_bridge"

@@ -5,7 +5,11 @@ import {
   discordBridgeDisable,
   discordBridgeStatus,
   discordBridgeEnableAndStart,
+  discordBridgeListGuilds,
+  discordBridgeGuild,
+  discordBridgeUnbridgeGuild,
   type BridgeStatus,
+  type DiscordGuild,
 } from "../../api/bridges";
 import { DiscordTosModal } from "./DiscordTosModal";
 
@@ -43,7 +47,6 @@ export function BridgesTab() {
       const s = await discordBridgeStatus();
       if (!mountedRef.current) return;
       setStatus(s);
-      setError(null);
       // Auto-advance step based on current state.
       if (s.has_bot_token && step < 4) {
         setStep(4);
@@ -193,6 +196,13 @@ export function BridgesTab() {
             data-testid="bridge-running-banner"
           >
             <p className="text-xs text-primary font-medium">Bridge running</p>
+          </div>
+        )}
+
+        {/* Guild picker — shown when bridge is running */}
+        {bridgeEnabled && status?.lifecycle === "running" && (
+          <div className="border-t border-outline-variant/10">
+            <GuildPicker />
           </div>
         )}
 
@@ -382,7 +392,7 @@ export function BridgesTab() {
           <p className="text-xs text-on-surface-variant mt-1 break-all">{error}</p>
           <button
             type="button"
-            onClick={refresh}
+            onClick={() => { setError(null); refresh(); }}
             className="mt-2 text-xs text-primary hover:underline"
           >
             Retry
@@ -465,6 +475,132 @@ function DependencyCheck({
       {!ready && (
         <span className="text-on-surface-variant/40 italic">— {hint}</span>
       )}
+    </div>
+  );
+}
+
+/**
+ * Guild picker — lets the user select which Discord servers to bridge.
+ * Fetches the guild list from the provisioning API and shows checkboxes.
+ */
+function GuildPicker() {
+  const [guilds, setGuilds] = useState<DiscordGuild[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyGuild, setBusyGuild] = useState<string | null>(null);
+
+  const loadGuilds = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await discordBridgeListGuilds();
+      setGuilds(list);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadGuilds();
+  }, [loadGuilds]);
+
+  const handleBridge = useCallback(async (guild: DiscordGuild) => {
+    setBusyGuild(guild.id);
+    try {
+      if (guild.bridged) {
+        await discordBridgeUnbridgeGuild(guild.id);
+      } else {
+        await discordBridgeGuild(guild.id);
+      }
+      await loadGuilds();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyGuild(null);
+    }
+  }, [loadGuilds]);
+
+  if (loading) {
+    return (
+      <div className="p-4 text-center">
+        <p className="text-xs text-on-surface-variant">Loading Discord servers...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 space-y-2">
+        <p className="text-xs text-error">{error}</p>
+        <button
+          type="button"
+          onClick={() => { setError(null); loadGuilds(); }}
+          className="text-xs text-primary hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (guilds.length === 0) {
+    return (
+      <div className="p-4">
+        <p className="text-xs text-on-surface-variant">
+          No Discord servers found. Make sure your bot has been invited to at least one server.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-3" data-testid="guild-picker">
+      <div>
+        <h5 className="text-sm font-medium text-on-surface">Discord Servers</h5>
+        <p className="text-xs text-on-surface-variant mt-0.5">
+          Select which servers to bridge into Concord.
+        </p>
+      </div>
+      <div className="space-y-1.5">
+        {guilds.map((guild) => (
+          <div
+            key={guild.id}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+              guild.bridged
+                ? "bg-[#5865F2]/10 border border-[#5865F2]/20"
+                : "bg-surface-container-high/40 border border-outline-variant/10 hover:border-outline-variant/30"
+            }`}
+          >
+            <div className="w-8 h-8 rounded-lg bg-[#5865F2]/20 flex items-center justify-center text-[#5865F2] text-xs font-bold flex-shrink-0">
+              {guild.name.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-on-surface font-medium truncate">{guild.name}</p>
+              {guild.bridged && (
+                <p className="text-[10px] text-[#5865F2]/70 uppercase tracking-wider">Bridged</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => handleBridge(guild)}
+              disabled={busyGuild === guild.id}
+              className={`px-3 py-1.5 text-xs rounded-md transition-colors min-h-[32px] ${
+                guild.bridged
+                  ? "bg-error/10 hover:bg-error/15 text-error disabled:opacity-40"
+                  : "bg-[#5865F2]/10 hover:bg-[#5865F2]/20 text-[#5865F2] disabled:opacity-40"
+              }`}
+            >
+              {busyGuild === guild.id
+                ? "..."
+                : guild.bridged
+                  ? "Unbridge"
+                  : "Bridge"}
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

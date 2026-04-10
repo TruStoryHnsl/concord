@@ -43,7 +43,7 @@ hex = "0.4"
 # Token redaction in log output (commercial-scope security requirement).
 regex = "1"
 # HTTP client for runtime binary download (mautrix-discord auto-fetch).
-reqwest = { version = "0.12", features = ["rustls-tls", "stream"], default-features = false }
+reqwest = { version = "0.12", features = ["rustls-tls", "stream", "json"], default-features = false }
 # Async file IO for streaming downloads to disk.
 futures-util = "0.3"
 

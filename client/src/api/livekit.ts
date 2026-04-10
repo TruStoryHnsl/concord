@@ -12,6 +12,28 @@ interface VoiceTokenResponse {
   ice_servers: IceServer[];
 }
 
+export interface TurnCheckResult {
+  turn_configured: boolean;
+  turn_reachable: boolean;
+  turn_latency_ms: number | null;
+  turn_host: string | null;
+  turn_ports: string[];
+  livekit_healthy: boolean;
+  diagnostics: string;
+}
+
+export async function checkTurnHealth(
+  accessToken: string,
+): Promise<TurnCheckResult> {
+  const resp = await fetch(`${getApiBase()}/voice/turn-check`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    throw new Error("TURN health check failed");
+  }
+  return resp.json();
+}
+
 export async function getVoiceToken(
   roomName: string,
   accessToken: string,

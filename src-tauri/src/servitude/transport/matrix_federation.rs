@@ -245,26 +245,10 @@ impl MatrixFederationTransport {
             ("CONDUWUIT_TRUSTED_SERVERS".to_string(), "[]".to_string()),
         ];
 
-        // INS-024 Wave 5: wire Application Service registrations into
-        // tuwunel so the embedded homeserver knows about bridges.
-        // Conduwuit reads `CONDUWUIT_APPSERVICES` as a JSON array of
-        // file paths, each pointing to a registration YAML. The
-        // cross-transport pre-pass in `ServitudeHandle::start` populates
-        // `self.appservice_registrations` before this method is called.
-        if !self.appservice_registrations.is_empty() {
-            let paths_json: Vec<String> = self
-                .appservice_registrations
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect();
-            // Serialize as a JSON array so conduwuit can parse it.
-            let json_array = serde_json::to_string(&paths_json)
-                .unwrap_or_else(|_| "[]".to_string());
-            envs.push((
-                "CONDUWUIT_APPSERVICES".to_string(),
-                json_array,
-            ));
-        }
+        // INS-024 Wave 5: appservice registrations are handled by
+        // register_appservices() which runs after tuwunel is reachable,
+        // not via env vars (tuwunel's admin_execute doesn't support the
+        // multiline body format needed for appservice register).
 
         envs
     }
@@ -311,6 +295,31 @@ impl MatrixFederationTransport {
         // Callers escalate straight to Child::kill.
         Ok(())
     }
+
+    /// Build the `--execute` argument for tuwunel that registers all
+    /// pending appservices at startup. Returns `None` if there are no
+    /// registrations or none of the files are readable.
+    fn build_execute_arg(&self) -> Option<String> {
+        if self.appservice_registrations.is_empty() {
+            return None;
+        }
+
+        let mut commands: Vec<String> = Vec::new();
+        for path in &self.appservice_registrations {
+            if let Ok(yaml_content) = std::fs::read_to_string(path) {
+                commands.push(format!(
+                    "appservices register\n```yaml\n{}\n```",
+                    yaml_content.trim()
+                ));
+            }
+        }
+
+        if commands.is_empty() {
+            None
+        } else {
+            Some(commands.join("\n\n"))
+        }
+    }
 }
 
 #[async_trait]
@@ -344,6 +353,15 @@ impl Transport for MatrixFederationTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
+        // Pass --execute to register appservices at startup.
+        if let Some(execute_arg) = self.build_execute_arg() {
+            cmd.arg("--execute").arg(&execute_arg);
+            log::info!(
+                target: "concord::servitude",
+                "tuwunel will execute appservice registration on startup"
+            );
+        }
 
         let child = cmd.spawn().map_err(|e| {
             TransportError::StartFailed(format!(
@@ -706,64 +724,53 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
-    fn test_env_vars_omit_appservices_when_none_registered() {
+    fn test_env_vars_omit_admin_execute_when_none_registered() {
         let t = MatrixFederationTransport::from_config(&config_on_port(8765));
         let tmp = std::env::temp_dir().join("concord-env-test-no-as");
         let envs = t.env_vars(&tmp);
         let keys: Vec<&str> = envs.iter().map(|(k, _)| k.as_str()).collect();
         assert!(
-            !keys.contains(&"CONDUWUIT_APPSERVICES"),
-            "CONDUWUIT_APPSERVICES must NOT be present when no \
+            !keys.contains(&"CONDUWUIT_ADMIN_EXECUTE"),
+            "CONDUWUIT_ADMIN_EXECUTE must NOT be present when no \
              registrations are added"
         );
     }
 
     #[test]
-    fn test_env_vars_include_appservices_when_registered() {
-        let mut t = MatrixFederationTransport::from_config(&config_on_port(8765));
-        let reg_path = PathBuf::from("/data/concord/discord-bridge/registration.yaml");
-        t.add_appservice_registration(reg_path.clone());
+    fn test_env_vars_include_admin_execute_when_registered() {
+        // Write a temporary registration YAML so read_to_string succeeds.
+        let tmp_dir = std::env::temp_dir().join("concord-env-test-with-as");
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let reg_path = tmp_dir.join("registration.yaml");
+        std::fs::write(&reg_path, "id: test_bridge\nas_token: abc\nhs_token: def\n")
+            .expect("write test registration");
 
-        let tmp = std::env::temp_dir().join("concord-env-test-with-as");
-        let envs = t.env_vars(&tmp);
+        let mut t = MatrixFederationTransport::from_config(&config_on_port(8765));
+        t.add_appservice_registration(reg_path);
+
+        let envs = t.env_vars(&tmp_dir);
         let keys: Vec<&str> = envs.iter().map(|(k, _)| k.as_str()).collect();
         assert!(
-            keys.contains(&"CONDUWUIT_APPSERVICES"),
-            "CONDUWUIT_APPSERVICES must be present after add_appservice_registration"
+            keys.contains(&"CONDUWUIT_ADMIN_EXECUTE"),
+            "CONDUWUIT_ADMIN_EXECUTE must be present after add_appservice_registration"
         );
 
         let value = envs
             .iter()
-            .find(|(k, _)| k == "CONDUWUIT_APPSERVICES")
+            .find(|(k, _)| k == "CONDUWUIT_ADMIN_EXECUTE")
             .map(|(_, v)| v.as_str())
             .unwrap();
-        // Must be a valid JSON array containing the registration path.
         let parsed: Vec<String> = serde_json::from_str(value)
-            .expect("CONDUWUIT_APPSERVICES must be valid JSON");
-        assert_eq!(parsed.len(), 1, "exactly one registration path expected");
-        assert_eq!(
-            parsed[0],
-            reg_path.to_string_lossy(),
-            "registration path must match"
+            .expect("CONDUWUIT_ADMIN_EXECUTE must be valid JSON");
+        assert_eq!(parsed.len(), 1, "exactly one command expected");
+        assert!(
+            parsed[0].contains("appservice register"),
+            "command must contain 'appservice register'"
         );
-    }
-
-    #[test]
-    fn test_env_vars_include_multiple_appservices() {
-        let mut t = MatrixFederationTransport::from_config(&config_on_port(8765));
-        t.add_appservice_registration(PathBuf::from("/data/discord/registration.yaml"));
-        t.add_appservice_registration(PathBuf::from("/data/telegram/registration.yaml"));
-
-        let tmp = std::env::temp_dir().join("concord-env-test-multi-as");
-        let envs = t.env_vars(&tmp);
-        let value = envs
-            .iter()
-            .find(|(k, _)| k == "CONDUWUIT_APPSERVICES")
-            .map(|(_, v)| v.as_str())
-            .expect("CONDUWUIT_APPSERVICES must be present");
-        let parsed: Vec<String> = serde_json::from_str(value)
-            .expect("must be valid JSON");
-        assert_eq!(parsed.len(), 2, "two registration paths expected");
+        assert!(
+            parsed[0].contains("test_bridge"),
+            "command must contain registration content"
+        );
     }
 
     #[test]

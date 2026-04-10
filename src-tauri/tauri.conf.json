@@ -18,7 +18,8 @@
         "minWidth": 420,
         "minHeight": 520,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "backgroundColor": [12, 14, 17, 255]
       }
     ],
     "security": {
@@ -28,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage"],
+    "targets": ["deb", "rpm", "appimage", "nsis", "msi"],
     "category": "SocialNetworking",
     "shortDescription": "Concord — decentralized chat",
     "longDescription": "Concord is a self-hosted, Matrix-based decentralized chat platform with voice channels, soundboard, and federation.",
@@ -53,6 +54,11 @@
       "frameworks": []
     },
     "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "installMode": "currentUser"
+      },
       "wix": {
         "language": ["en-US"]
       }
@@ -66,9 +72,5 @@
       "minSdkVersion": 24
     }
   },
-  "plugins": {
-    "stronghold": {
-      "salt": "concord-stronghold-salt-v1"
-    }
-  }
+  "plugins": {}
 }

@@ -83,9 +83,9 @@ interface SettingsState {
    * dropped to keep persisted state well-formed.
    */
   setChatFontSize: (px: number) => void;
-  openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "appearance" | "node" | "about" | "admin") => void;
+  openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "appearance" | "node" | "bridges" | "about" | "admin") => void;
   closeSettings: () => void;
-  setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "appearance" | "node" | "about" | "admin") => void;
+  setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "appearance" | "node" | "bridges" | "about" | "admin") => void;
   openServerSettings: (serverId: string) => void;
   closeServerSettings: () => void;
   resetToDefaults: () => void;

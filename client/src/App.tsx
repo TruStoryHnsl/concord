@@ -3,10 +3,10 @@ import { LiveKitRoom } from "@livekit/components-react";
 import { useAuthStore } from "./stores/auth";
 import { useServerStore } from "./stores/server";
 import { useToastStore } from "./stores/toast";
-import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession } from "./stores/voice";
+import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession, MAX_RECONNECT_ATTEMPTS, RECONNECT_BASE_DELAY_MS } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
 import { useServerConfigStore } from "./stores/serverConfig";
-import { isDesktopMode, hasServerUrl } from "./api/serverUrl";
+import { isDesktopMode, hasServerUrl, getHomeserverUrl } from "./api/serverUrl";
 import { usePlatform } from "./hooks/usePlatform";
 import { computeInitialServerConnected } from "./serverPickerGate";
 import { redeemInvite } from "./api/concord";
@@ -141,6 +141,17 @@ export default function App() {
     voiceDisconnect();
   }, [voiceDisconnect]);
 
+  const handleVoiceError = useCallback((error: Error) => {
+    console.error("LiveKit connection error:", error);
+    addToast(`Voice failed: ${error.message}`, "error");
+    voiceDisconnect();
+  }, [voiceDisconnect, addToast]);
+
+  const handleMediaDeviceFailure = useCallback(() => {
+    console.warn("LiveKit media device failure — continuing without mic");
+    addToast("Microphone unavailable — you'll join muted", "info");
+  }, [addToast]);
+
   // Warn user before closing/refreshing if voice is active
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -200,9 +211,12 @@ export default function App() {
     })();
   }, [isLoggedIn, cleanupUserId, addToast]);
 
-  // Auto-reconnect to voice after page refresh
+  // Auto-reconnect to voice after page refresh.
+  // Retries up to MAX_RECONNECT_ATTEMPTS with exponential backoff
+  // (1s, 2s, 4s) before giving up and clearing the pending session.
   const voiceReconnectHandled = useRef(false);
   const voiceConnect = useVoiceStore((s) => s.connect);
+  const voiceConnectionState = useVoiceStore((s) => s.connectionState);
   useEffect(() => {
     if (!isLoggedIn || !accessToken || voiceReconnectHandled.current) return;
     if (voiceConnected) return; // already connected
@@ -212,26 +226,51 @@ export default function App() {
 
     voiceReconnectHandled.current = true;
 
-    (async () => {
+    const attemptReconnect = async (attempt: number): Promise<void> => {
+      if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+        console.warn(`Voice reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts`);
+        clearPendingVoiceSession();
+        useVoiceStore.getState().setConnectionState("failed");
+        addToast("Voice reconnection failed. Join manually when ready.", "error");
+        return;
+      }
+
+      if (attempt > 0) {
+        const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        useVoiceStore.getState().setConnectionState("reconnecting");
+        useVoiceStore.getState().incrementReconnectAttempt();
+        await new Promise((r) => setTimeout(r, delay));
+      } else {
+        useVoiceStore.getState().setConnectionState("connecting");
+      }
+
       try {
-        // Request mic permission
+        // Request mic permission (guard for webviews where mediaDevices
+        // may be undefined outside a secure context).
         let micGrantedLocal = false;
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          stream.getTracks().forEach((t) => t.stop());
-          micGrantedLocal = true;
-        } catch {
-          // Continue without mic
+        if (navigator.mediaDevices?.getUserMedia) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach((t) => t.stop());
+            micGrantedLocal = true;
+          } catch {
+            // Continue without mic
+          }
         }
 
         const result = await getVoiceToken(session.channelId, accessToken);
-        const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
-        const port = window.location.port ? `:${window.location.port}` : "";
-        const clientUrl = `${wsProto}://${window.location.hostname}${port}/livekit/`;
+
+        // Same well-known-first resolution as VoiceChannel.tsx.
+        // Trailing slash is critical — see VoiceChannel.tsx comment.
+        const wkLivekit = useServerConfigStore.getState().config?.livekit_url;
+        const rawUrl = wkLivekit
+          || result.livekit_url
+          || `${getHomeserverUrl().replace(/^http/, "ws")}/livekit/`;
+        const lkUrl = rawUrl.endsWith("/") ? rawUrl : `${rawUrl}/`;
 
         voiceConnect({
           token: result.token,
-          livekitUrl: clientUrl,
+          livekitUrl: lkUrl,
           iceServers: result.ice_servers?.length ? result.ice_servers : [],
           serverId: session.serverId,
           channelId: session.channelId,
@@ -244,11 +283,13 @@ export default function App() {
         setActiveServer(session.serverId);
         useServerStore.getState().setActiveChannel(session.channelId);
       } catch (err) {
-        console.error("Voice reconnect failed:", err);
-        clearPendingVoiceSession();
+        console.error(`Voice reconnect attempt ${attempt + 1} failed:`, err);
+        return attemptReconnect(attempt + 1);
       }
-    })();
-  }, [isLoggedIn, accessToken, voiceConnected, voiceConnect]);
+    };
+
+    attemptReconnect(0);
+  }, [isLoggedIn, accessToken, voiceConnected, voiceConnect, addToast]);
 
   // Native mode: show the first-launch server picker when no
   // HomeserverConfig has been selected yet.
@@ -265,7 +306,7 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="h-screen bg-surface flex items-center justify-center mesh-background">
+      <div className="h-full bg-surface flex items-center justify-center mesh-background">
         <div className="flex flex-col items-center gap-3 relative z-10">
           <span className="inline-block w-6 h-6 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
           <span className="text-on-surface-variant text-sm font-body">Loading...</span>
@@ -276,7 +317,7 @@ export default function App() {
 
   // Authenticated content, optionally wrapped in LiveKitRoom
   const authenticatedContent = (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
         <ChatLayout />
       </div>
@@ -303,7 +344,7 @@ export default function App() {
                 },
               }),
             }}
-            audio={micGranted}
+            audio={micGranted && !isDesktopMode()}
             video={false}
             options={{
               audioCaptureDefaults: {
@@ -314,6 +355,8 @@ export default function App() {
               },
             }}
             onDisconnected={handleVoiceDisconnect}
+            onError={handleVoiceError}
+            onMediaDeviceFailure={handleMediaDeviceFailure}
             style={{ display: "contents" }}
           >
             <CustomAudioRenderer />

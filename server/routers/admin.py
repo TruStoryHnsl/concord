@@ -369,6 +369,96 @@ async def admin_stats(
 
 
 # ---------------------------------------------------------------------------
+# Admin: invite bootstrap (INS-020)
+# ---------------------------------------------------------------------------
+
+class AdminInviteCreate(BaseModel):
+    server_id: str
+    max_uses: int = Field(default=10, ge=1, le=10000)
+    expires_in_hours: int = Field(default=168, ge=1, le=87600)  # default 7 days, max 10 years
+    permanent: bool = False
+
+
+@router.post("/api/admin/invites")
+async def admin_create_invite(
+    body: AdminInviteCreate,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an invite token for any server. Admin-only bootstrap endpoint.
+
+    Unlike POST /api/invites (which requires server membership), this
+    endpoint lets a system admin create invite tokens for any server —
+    including the first invite for a fresh deployment where no members
+    exist yet.
+    """
+    require_admin(user_id)
+
+    # Verify server exists
+    server = (await db.execute(
+        select(Server).where(Server.id == body.server_id)
+    )).scalar_one_or_none()
+    if not server:
+        raise HTTPException(404, "Server not found")
+
+    invite = InviteToken(
+        server_id=body.server_id,
+        created_by=user_id,
+        max_uses=body.max_uses,
+        permanent=body.permanent,
+    )
+    if not body.permanent:
+        from datetime import timedelta
+        invite.expires_at = datetime.now(timezone.utc) + timedelta(hours=body.expires_in_hours)
+
+    db.add(invite)
+    await db.commit()
+    await db.refresh(invite)
+
+    return {
+        "token": invite.token,
+        "server_id": invite.server_id,
+        "server_name": server.name,
+        "max_uses": invite.max_uses,
+        "permanent": invite.permanent,
+        "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+        "is_valid": invite.is_valid,
+    }
+
+
+@router.get("/api/admin/invites")
+async def admin_list_all_invites(
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all invite tokens across all servers. Admin-only."""
+    require_admin(user_id)
+
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(InviteToken).options(selectinload(InviteToken.server)).order_by(InviteToken.created_at.desc())
+    )
+    invites = result.scalars().all()
+
+    return [
+        {
+            "id": inv.id,
+            "token": inv.token,
+            "server_id": inv.server_id,
+            "server_name": inv.server.name if inv.server else None,
+            "created_by": inv.created_by,
+            "max_uses": inv.max_uses,
+            "use_count": inv.use_count,
+            "permanent": inv.permanent,
+            "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
+            "is_valid": inv.is_valid,
+            "created_at": inv.created_at.isoformat() if inv.created_at else None,
+        }
+        for inv in invites
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Admin: servers
 # ---------------------------------------------------------------------------
 

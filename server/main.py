@@ -18,7 +18,7 @@ logging.basicConfig(
 
 from database import init_db
 from errors import ConcordError, ErrorResponse
-from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_bridges, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown
+from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_bridges, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown, extensions
 
 
 @asynccontextmanager
@@ -315,6 +315,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Lobby welcome setup failed: %s", e)
+
+    extensions.init_catalog()
 
     yield
 
@@ -615,7 +617,17 @@ _default_origins = (
     "https://concorrd.com,"
     "https://www.concorrd.com,"
     "http://localhost:5173,"
-    "http://localhost:8080"
+    "http://localhost:8080,"
+    # Native Tauri v2 mobile clients load from these custom schemes.
+    # The authoritative CORS fix for the `.well-known/concord/*` bootstrap
+    # endpoint lives in `config/Caddyfile` (wildcard Allow-Origin override),
+    # but adding these to the Python-level default widens coverage to
+    # locally-deployed instances that bypass Caddy (e.g. developers running
+    # the API directly for native-client testing). Non-wildcard because
+    # `allow_credentials=True` conflicts with `*` in the CORS spec.
+    "tauri://localhost,"         # Tauri v2 iOS WKWebView origin
+    "http://tauri.localhost,"    # Tauri v2 Android WebView origin
+    "https://tauri.localhost"    # Tauri v2 desktop WebView origin
 )
 allowed_origins = os.getenv("CORS_ORIGINS", _default_origins).split(",")
 
@@ -645,6 +657,7 @@ app.include_router(dms.router)
 app.include_router(nodes.router)
 app.include_router(explore.router)
 app.include_router(wellknown.router)
+app.include_router(extensions.router)
 
 
 @app.get("/api/health")

@@ -405,16 +405,17 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     return [...placed, ...unplaced];
   }, [filteredLive, filteredPlaceholders, preferredMatrixOrder]);
 
-  // dnd-kit sensors. PointerSensor activates after 5px of movement so
-  // regular clicks on the server tile still fire (for server select).
-  // TouchSensor requires a 1-second long-press before drag activates —
-  // prevents accidental tile rearrangement on mobile when the user just
-  // wants to scroll or tap. The 5px tolerance lets the finger drift
-  // slightly during the hold without canceling the gesture.
-  // KeyboardSensor enables arrow-key reorder for keyboard users.
+  // dnd-kit sensors — platform-specific.
+  // Mobile: ONLY TouchSensor with 1-second hold. PointerSensor must NOT
+  // be registered on touch devices because it fires at 5px movement,
+  // overriding TouchSensor's delay and making tiles drag on any swipe.
+  // Desktop: PointerSensor (5px distance) for mouse drag.
+  // Both: KeyboardSensor for arrow-key reorder.
+  const isTouchDevice = typeof window !== "undefined" && "ontouchstart" in window;
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 1000, tolerance: 5 } }),
+    ...(isTouchDevice
+      ? [useSensor(TouchSensor, { activationConstraint: { delay: 1000, tolerance: 5 } })]
+      : [useSensor(PointerSensor, { activationConstraint: { distance: 5 } })]),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
@@ -531,7 +532,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // direct child than marking each row individually.
   if (mobile) {
     return (
-      <div className="h-full bg-surface-container-low overflow-y-auto overflow-x-hidden overscroll-y-auto p-3 flex flex-col [&>*]:shrink-0">
+      <div className="h-full bg-surface-container-low">
+        {/* ── Top scroll region: local + Concord servers ── */}
+        <div className="overflow-y-auto overflow-x-hidden overscroll-y-auto p-3" style={{ height: "50%" }}>
         <h3 className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest px-2 mb-3">
           Your Servers
         </h3>
@@ -687,12 +690,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           <span className="font-body font-medium">Add Server</span>
         </button>
 
-        {/* Divider between Your Servers and federated section */}
-        <div className="mt-3 mb-2 h-px bg-outline-variant/20" aria-hidden="true" />
-
-        {/* Federated search bar moved to ExploreModal (INS-020).
-            The federated stack below is unfiltered in the server list;
-            search/filter lives in the Explore menu. */}
+        </div>
+        {/* ── Bottom region: federated + Discord + Explore ── */}
+        <div className="overflow-y-auto overflow-x-hidden overscroll-y-auto p-3 border-t border-outline-variant/20" style={{ height: "50%" }}>
 
         {/* Vanilla Matrix federated stack (mobile). Now draggable
             via dnd-kit to match the desktop sidebar and the main
@@ -811,6 +811,8 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           <span className="font-body font-medium">Explore</span>
         </button>
 
+        </div>
+        {/* Modals — outside both scroll regions */}
         {showNewServer && <NewServerModal onClose={() => setShowNewServer(false)} />}
         <ExploreModal isOpen={exploreOpen} onClose={() => setExploreOpen(false)} />
       </div>
@@ -825,7 +827,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // `flex-shrink: 1` causes tiles to squish before the scrollbar
   // ever appears.
   return (
-    <div className="w-16 bg-surface flex flex-col items-center py-3 gap-2 overflow-y-auto min-h-0 [&>*]:shrink-0">
+    <div className="w-16 bg-surface" style={{ height: "100%" }}>
+      {/* ── Top scroll region: DMs + local servers ── */}
+      <div className="overflow-y-auto overflow-x-hidden py-3 flex flex-col items-center gap-2 [&>*]:shrink-0" style={{ height: "50%" }}>
       {/* DM button */}
       <div className="relative group">
         <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-primary transition-all ${
@@ -985,9 +989,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         <span className="material-symbols-outlined text-xl">add</span>
       </button>
 
-      {/* Flex spacer — pushes the federated stack + Explore button to
-          the bottom of the column. */}
-      <div className="flex-grow" />
+      </div>
+      {/* ── Bottom region: federated + Explore ── */}
+      <div className="overflow-y-auto overflow-x-hidden py-2 flex flex-col items-center gap-2 [&>*]:shrink-0 border-t border-outline-variant/20" style={{ height: "50%" }}>
 
       {/* Vanilla Matrix federated stack, stacked upward from Explore.
           Now draggable so users can reorder their federated rooms —
@@ -1127,6 +1131,8 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         <span className="material-symbols-outlined text-xl">public</span>
       </button>
 
+      </div>
+      {/* Modals */}
       {showNewServer && <NewServerModal onClose={() => setShowNewServer(false)} />}
       <ExploreModal isOpen={exploreOpen} onClose={() => setExploreOpen(false)} />
     </div>

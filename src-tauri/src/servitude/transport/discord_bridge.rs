@@ -429,9 +429,11 @@ impl DiscordBridgeTransport {
         // The mautrix-discord binary itself, bind-mounted into the
         // sandbox at a fixed well-known path so the launch command
         // inside the sandbox does not depend on the host path.
+        // Uses /usr/bin/ (which exists from the /usr ro-bind above)
+        // rather than /usr/local/bin/ (which may not exist).
         argv.push("--ro-bind".to_string());
         argv.push(binary.to_string_lossy().into_owned());
-        argv.push("/usr/local/bin/mautrix-discord".to_string());
+        argv.push("/usr/bin/mautrix-discord".to_string());
 
         // The only read-write mount — the bridge's own data directory,
         // which holds its SQLite state, config, and AS registration.
@@ -466,7 +468,7 @@ impl DiscordBridgeTransport {
         // End of bwrap args — everything after `--` is the command
         // executed inside the sandbox.
         argv.push("--".to_string());
-        argv.push("/usr/local/bin/mautrix-discord".to_string());
+        argv.push("/usr/bin/mautrix-discord".to_string());
         argv.push("-c".to_string());
         argv.push("/data/config.yaml".to_string());
         argv.push("-r".to_string());
@@ -577,10 +579,36 @@ impl Transport for DiscordBridgeTransport {
                 if let Some(child) = self.child.as_mut() {
                     match child.try_wait() {
                         Ok(Some(status)) => {
+                            // Capture stderr to diagnose why the bridge died.
+                            let stderr_output = if let Some(stderr) = child.stderr.take() {
+                                use tokio::io::AsyncReadExt;
+                                let mut buf = Vec::new();
+                                let mut stderr = stderr;
+                                let _ = stderr.read_to_end(&mut buf).await;
+                                String::from_utf8_lossy(&buf).to_string()
+                            } else {
+                                String::new()
+                            };
+                            let stdout_output = if let Some(stdout) = child.stdout.take() {
+                                use tokio::io::AsyncReadExt;
+                                let mut buf = Vec::new();
+                                let mut stdout = stdout;
+                                let _ = stdout.read_to_end(&mut buf).await;
+                                String::from_utf8_lossy(&buf).to_string()
+                            } else {
+                                String::new()
+                            };
+                            let combined = format!("{}{}", stdout_output, stderr_output);
+                            log::error!(
+                                target: "concord::bridge",
+                                "mautrix-discord (bwrap) died on startup:\n{}",
+                                if combined.is_empty() { "(no output)" } else { &combined }
+                            );
                             self.child = None;
                             return Err(TransportError::StartFailed(format!(
-                                "mautrix-discord (bwrap) exited during startup: {}",
-                                status
+                                "mautrix-discord (bwrap) exited during startup: {} — {}",
+                                status,
+                                if combined.len() > 200 { &combined[..200] } else { &combined }
                             )));
                         }
                         Ok(None) => {}

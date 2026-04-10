@@ -42,6 +42,10 @@ server/.venv/
 
 # Build caches
 .vite/
+.build-cache/
+
+# Extensions (nested repos, managed separately)
+ext/
 
 # OS
 .DS_Store

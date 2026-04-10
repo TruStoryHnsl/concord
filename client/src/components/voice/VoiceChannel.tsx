@@ -9,6 +9,8 @@ import {
 import { Track, ConnectionState } from "livekit-client";
 import "@livekit/components-styles";
 import { getVoiceToken } from "../../api/livekit";
+import { getHomeserverUrl } from "../../api/serverUrl";
+import { useServerConfigStore } from "../../stores/serverConfig";
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
 import { useVoiceStore } from "../../stores/voice";
@@ -41,6 +43,8 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
   const connect = useVoiceStore((s) => s.connect);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDiag, setErrorDiag] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [showPinDialog, setShowPinDialog] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [pinVerified, setPinVerified] = useState(false);
@@ -78,21 +82,24 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
     setConnecting(true);
     setError(null);
     try {
-      // Request mic permission IMMEDIATELY during user gesture (critical for mobile)
+      // Request mic permission IMMEDIATELY during user gesture (critical for
+      // mobile webviews which gate getUserMedia on a user-initiated tap).
       let micGranted = false;
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation,
-            noiseSuppression,
-            autoGainControl,
-            ...(preferredInputDeviceId && { deviceId: { ideal: preferredInputDeviceId } }),
-          },
-        });
-        stream.getTracks().forEach((t) => t.stop());
-        micGranted = true;
-      } catch {
-        // Continue without mic
+      if (navigator.mediaDevices?.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation,
+              noiseSuppression,
+              autoGainControl,
+              ...(preferredInputDeviceId && { deviceId: { ideal: preferredInputDeviceId } }),
+            },
+          });
+          stream.getTracks().forEach((t) => t.stop());
+          micGranted = true;
+        } catch {
+          // Continue without mic — permission denied is non-fatal
+        }
       }
 
       // Resume AudioContext for mobile playback
@@ -107,13 +114,24 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
       }
 
       const result = await getVoiceToken(roomId, accessToken);
-      const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
-      const port = window.location.port ? `:${window.location.port}` : "";
-      const clientUrl = `${wsProto}://${window.location.hostname}${port}/livekit/`;
+
+      // Resolve the LiveKit signaling URL. Three sources, in priority:
+      //  1. well-known config (set during server-picker, uses CONDUWUIT_SERVER_NAME — always correct)
+      //  2. voice-token response (derived from the request Host header — can be mangled by proxies)
+      //  3. homeserver origin fallback
+      // IMPORTANT: LiveKit SDK resolves /rtc relative to this URL via the
+      // URL() constructor. Without a trailing slash, "livekit" is treated as
+      // a filename and /rtc resolves as a sibling (wss://host/rtc) instead
+      // of a child (wss://host/livekit/rtc). Always ensure trailing slash.
+      const wkLivekit = useServerConfigStore.getState().config?.livekit_url;
+      const rawUrl = wkLivekit
+        || result.livekit_url
+        || `${getHomeserverUrl().replace(/^http/, "ws")}/livekit/`;
+      const lkUrl = rawUrl.endsWith("/") ? rawUrl : `${rawUrl}/`;
 
       connect({
         token: result.token,
-        livekitUrl: clientUrl,
+        livekitUrl: lkUrl,
         iceServers: result.ice_servers?.length ? result.ice_servers : [],
         serverId,
         channelId: roomId,
@@ -123,7 +141,27 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
       });
     } catch (err) {
       console.error("Failed to join voice:", err);
-      setError(err instanceof Error ? err.message : "Failed to connect");
+      const msg = err instanceof Error ? err.message : "Failed to connect";
+
+      // Classify the error for actionable diagnostics
+      let diag: string | null = null;
+      if (msg.includes("Failed to get voice token") || msg.includes("401") || msg.includes("403")) {
+        diag = "Authentication failed. Try logging out and back in.";
+      } else if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("net::ERR")) {
+        diag = "Cannot reach the voice server. Check your internet connection.";
+      } else if (msg.includes("404")) {
+        diag = "Voice service not found. The server may not have LiveKit configured.";
+      } else if (msg.includes("500") || msg.includes("Internal")) {
+        diag = "Voice server error. An admin should check the server logs.";
+      } else if (msg.includes("WebSocket") || msg.includes("signaling")) {
+        diag = "WebSocket signaling failed. This may be a firewall or proxy issue blocking wss:// connections.";
+      } else if (msg.includes("ICE") || msg.includes("TURN") || msg.includes("STUN")) {
+        diag = "NAT traversal failed. The TURN relay may be unreachable — UDP ports 3478 and 49152-49252 must be open.";
+      }
+
+      setError(msg);
+      setErrorDiag(diag);
+      setRetryCount((c) => c + 1);
     } finally {
       setConnecting(false);
     }
@@ -190,7 +228,28 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
             {connecting ? "Connecting..." : "Join Voice"}
           </button>
         )}
-        {error && <p className="text-error text-sm">{error}</p>}
+        {error && (
+          <div className="flex flex-col items-center gap-2 max-w-md text-center">
+            <p className="text-error text-sm">{error}</p>
+            {errorDiag && (
+              <p className="text-on-surface-variant/70 text-xs">{errorDiag}</p>
+            )}
+            {retryCount > 0 && retryCount < 5 && (
+              <button
+                onClick={() => { setError(null); setErrorDiag(null); handleJoin(); }}
+                disabled={connecting}
+                className="px-4 py-1.5 bg-surface-container hover:bg-surface-container-highest text-on-surface text-sm rounded-md transition-colors"
+              >
+                {connecting ? "Retrying..." : `Retry (attempt ${retryCount + 1})`}
+              </button>
+            )}
+            {retryCount >= 5 && (
+              <p className="text-on-surface-variant/50 text-xs">
+                Multiple connection attempts failed. Check your network or contact an admin.
+              </p>
+            )}
+          </div>
+        )}
 
         {showPinDialog && activeChannel && (
           <PinDialog

@@ -59,6 +59,8 @@ export interface SourcesState {
   connectedSources: () => ConcordSource[];
   /** Toggle a source's visibility in the server column. */
   toggleSource: (id: string) => void;
+  /** Sync Discord bridge source state from Matrix room scan. */
+  syncDiscordBridge: (bridgeRunning: boolean) => void;
   /** One-time migration from active session (native first launch). */
   migrateFromSession: () => void;
 }
@@ -77,7 +79,6 @@ export const useSourcesStore = create<SourcesState>()(
       addSource: (source) => {
         const id = generateSourceId();
         const full: ConcordSource = {
-          enabled: true,  // default before spread so caller can override
           ...source,
           id,
           addedAt: new Date().toISOString(),
@@ -111,6 +112,11 @@ export const useSourcesStore = create<SourcesState>()(
             s.id === id ? { ...s, enabled: !s.enabled } : s,
           ),
         }));
+      },
+
+      syncDiscordBridge: (_bridgeRunning) => {
+        // Stub — Discord bridge source management is handled by
+        // the migration flow. This satisfies calls from useMatrix.ts.
       },
 
       /**

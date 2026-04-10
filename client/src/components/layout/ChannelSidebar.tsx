@@ -94,7 +94,6 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
             Use the <strong className="text-on-surface">+</strong> button to create or join a server
           </p>
         </div>
-        {!mobile && <UserBar userId={userId} logout={logout} />}
       </div>
     );
   }
@@ -493,8 +492,6 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
         )}
       </div>
 
-      {!mobile && <UserBar userId={userId} logout={logout} />}
-
       {showInviteModal && (
         <InviteModal serverId={server.id} onClose={() => setShowInviteModal(false)} />
       )}
@@ -712,7 +709,7 @@ function SortableChannelRow({
   );
 }
 
-function UserBar({
+export function UserBar({
   userId,
   logout,
 }: {
@@ -722,7 +719,7 @@ function UserBar({
   const openSettings = useSettingsStore((s) => s.openSettings);
 
   return (
-    <div className="p-3 bg-surface-container flex items-center justify-between">
+    <div className="px-3 py-2 bg-surface-container flex items-center justify-between">
       <div className="flex items-center gap-2 min-w-0">
         {userId && <Avatar userId={userId} size="md" showPresence />}
         <span className="text-sm text-on-surface truncate font-body">

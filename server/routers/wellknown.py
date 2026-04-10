@@ -87,6 +87,16 @@ class ConcordClientWellKnown(BaseModel):
             "identifiers are listed here to keep the contract stable."
         ),
     )
+    turn_servers: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "STUN/TURN server list for ICE connectivity. Unauthenticated "
+            "entries only (STUN URLs) — authenticated TURN credentials "
+            "are issued per-user via the voice token endpoint. Clients "
+            "can use these for pre-auth connectivity checks in the "
+            "server picker screen."
+        ),
+    )
 
 
 def _resolve_api_base() -> str:
@@ -136,6 +146,29 @@ def _resolve_instance_name() -> str | None:
     return name or None
 
 
+def _resolve_turn_servers() -> list[dict]:
+    """Return unauthenticated STUN/TURN server hints for pre-auth checks.
+
+    Only includes STUN URLs (no credentials) so the well-known document
+    stays safe to serve unauthenticated. Authenticated TURN credentials
+    are issued per-user via ``POST /api/voice/token``. Clients can use
+    these STUN entries in the server-picker screen to verify basic UDP
+    connectivity before the user even logs in.
+    """
+    turn_host = os.environ.get("TURN_HOST", "").strip()
+    turn_domain = os.environ.get("TURN_DOMAIN", "").strip()
+    host = turn_host or turn_domain
+
+    servers: list[dict] = []
+    if host:
+        # Advertise the instance's own STUN endpoint (coturn serves
+        # STUN on the same port as TURN, no credentials needed for STUN).
+        servers.append({"urls": f"stun:{host}:3478"})
+    # Always include Google's public STUN as a fallback
+    servers.append({"urls": "stun:stun.l.google.com:19302"})
+    return servers
+
+
 def _advertised_features() -> list[str]:
     """Return the stable list of feature identifiers advertised.
 
@@ -144,7 +177,7 @@ def _advertised_features() -> list[str]:
     corresponding feature ships; remove them only when the feature is
     retired AND no deployed native clients still check for them.
     """
-    return ["chat", "voice", "federation", "soundboard", "explore"]
+    return ["chat", "voice", "federation", "soundboard", "explore", "extensions"]
 
 
 @router.get(
@@ -170,4 +203,5 @@ async def concord_client_wellknown() -> ConcordClientWellKnown:
         livekit_url=_resolve_livekit_url(),
         instance_name=_resolve_instance_name(),
         features=_advertised_features(),
+        turn_servers=_resolve_turn_servers(),
     )

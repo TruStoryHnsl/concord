@@ -105,3 +105,49 @@ export async function discordBridgeEnableAndStart(): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("discord_bridge_enable_and_start");
 }
+
+/**
+ * Discord guild returned by the provisioning API.
+ */
+export interface DiscordGuild {
+  id: string;
+  name: string;
+  icon: string;
+  mxid: string;
+  bridged: boolean;
+}
+
+/**
+ * List Discord guilds the connected user has access to.
+ * Requires the bridge to be running with provisioning API enabled.
+ */
+export async function discordBridgeListGuilds(): Promise<DiscordGuild[]> {
+  if (!isTauri()) {
+    throw new Error("not-in-tauri");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<DiscordGuild[]>("discord_bridge_list_guilds");
+}
+
+/**
+ * Bridge a specific Discord guild by ID. Creates Matrix rooms
+ * for all channels in the guild.
+ */
+export async function discordBridgeGuild(guildId: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("not-in-tauri");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("discord_bridge_guild", { guildId });
+}
+
+/**
+ * Unbridge a Discord guild by ID. Removes the Matrix rooms.
+ */
+export async function discordBridgeUnbridgeGuild(guildId: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("not-in-tauri");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("discord_bridge_unbridge_guild", { guildId });
+}

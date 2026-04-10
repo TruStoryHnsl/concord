@@ -58,6 +58,8 @@ export interface HomeserverConfig {
   instance_name?: string;
   /** Optional list of advertised feature flags. */
   features?: string[];
+  /** Optional STUN/TURN server hints for pre-auth connectivity checks. */
+  turn_servers?: Array<{ urls: string | string[]; username?: string; credential?: string }>;
 }
 
 /** Raised when the target host cannot be reached at all (DNS/network). */
@@ -153,6 +155,7 @@ interface ConcordClientWellKnown {
   livekit_url?: string;
   instance_name?: string;
   features?: string[];
+  turn_servers?: Array<{ urls: string | string[] }>;
 }
 
 /**
@@ -345,6 +348,7 @@ export async function discoverHomeserver(
   let livekitUrl: string | undefined;
   let instanceName: string | undefined;
   let features: string[] | undefined;
+  let turnServers: HomeserverConfig["turn_servers"] | undefined;
   if (concordResult.status === "ok") {
     const body = concordResult.body;
     if (typeof body.api_base === "string" && body.api_base.length > 0) {
@@ -381,6 +385,12 @@ export async function discoverHomeserver(
         (f): f is string => typeof f === "string" && f.length > 0,
       );
     }
+    if (Array.isArray(body.turn_servers)) {
+      turnServers = body.turn_servers.filter(
+        (s): s is { urls: string | string[] } =>
+          s !== null && typeof s === "object" && "urls" in s,
+      );
+    }
   } else {
     apiBase = assertHttpsUrl(
       `https://${canonicalHost}/api`,
@@ -396,5 +406,6 @@ export async function discoverHomeserver(
     livekit_url: livekitUrl,
     instance_name: instanceName,
     features,
+    turn_servers: turnServers,
   };
 }

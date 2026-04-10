@@ -45,7 +45,11 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-      - path: Externals
+      # Externals intentionally excluded — it only contains libapp.a
+      # build artifacts that the linker finds via LIBRARY_SEARCH_PATHS.
+      # Including it as a source causes xcodegen to add the .a files as
+      # Resources, which conflicts with the framework dependency and
+      # triggers "Multiple commands produce libapp.a".
       - path: concord_iOS
       - path: assets
         buildPhase: resources
@@ -128,6 +132,10 @@ targets:
     settings:
       base:
         ENABLE_BITCODE: false
+        # xcodegen regenerates the entitlements file from project.yml
+        # properties on each build, which Xcode detects as a mid-build
+        # modification. This flag tells Xcode to accept it.
+        CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: true
         ARCHS: [arm64]
         VALID_ARCHS: arm64
         # INS-020 — universal iPhone + iPad device family. Tauri's default

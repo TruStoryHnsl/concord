@@ -176,6 +176,114 @@ async def get_voice_token(
     )
 
 
+class TurnCheckResponse(BaseModel):
+    turn_configured: bool
+    turn_reachable: bool = False
+    turn_latency_ms: float | None = None
+    turn_host: str | None = None
+    turn_ports: list[str] = []
+    livekit_healthy: bool = False
+    diagnostics: str = ""
+
+
+@router.get("/turn-check", response_model=TurnCheckResponse)
+async def check_turn_health(
+    user_id: str = Depends(get_user_id),
+):
+    """Diagnostic endpoint: check whether the bundled TURN relay is reachable.
+
+    Generates ephemeral credentials and attempts a STUN binding request
+    to the configured TURN host on port 3478/UDP. Also validates that
+    the LiveKit SFU is reachable over its internal HTTP API. Returns
+    structured diagnostics so operators and clients can pinpoint voice
+    connectivity issues.
+
+    Requires authentication (any logged-in user) to prevent abuse as a
+    network scanning primitive.
+    """
+    turn_host = os.getenv("TURN_HOST", TURN_DOMAIN)
+    has_secret = bool(TURN_SECRET)
+
+    if not has_secret:
+        return TurnCheckResponse(
+            turn_configured=False,
+            diagnostics="TURN_SECRET not set — TURN relay is not configured. "
+                        "Voice will only work on direct connections (no NAT traversal).",
+        )
+
+    # Determine advertised TURN ports from the credential generator
+    turn_ports = [
+        f"turns:{turn_host}:443/tcp",
+        f"turn:{turn_host}:3478/udp",
+        f"turn:{turn_host}:3478/tcp",
+    ]
+
+    # Attempt a lightweight STUN binding check to the TURN host
+    import socket
+    import struct
+    import time as _time
+
+    turn_reachable = False
+    latency_ms: float | None = None
+    diag_parts: list[str] = []
+
+    try:
+        # STUN Binding Request: RFC 5389 minimal header (20 bytes)
+        # Type=0x0001 (Binding Request), Length=0, Magic=0x2112A442, TxID=12 random bytes
+        import secrets
+        tx_id = secrets.token_bytes(12)
+        stun_header = struct.pack("!HHI", 0x0001, 0, 0x2112A442) + tx_id
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3.0)
+        start = _time.monotonic()
+        sock.sendto(stun_header, (turn_host, 3478))
+        try:
+            data, _ = sock.recvfrom(1024)
+            elapsed = _time.monotonic() - start
+            latency_ms = round(elapsed * 1000, 1)
+            # Validate it's a STUN response (type 0x0101 = Binding Success)
+            if len(data) >= 20:
+                resp_type = struct.unpack("!H", data[:2])[0]
+                if resp_type == 0x0101:
+                    turn_reachable = True
+                    diag_parts.append(f"STUN binding succeeded in {latency_ms}ms")
+                else:
+                    diag_parts.append(f"Got STUN response type 0x{resp_type:04x} (expected 0x0101)")
+            else:
+                diag_parts.append(f"Got {len(data)} bytes (too short for STUN)")
+        except socket.timeout:
+            diag_parts.append(f"STUN binding to {turn_host}:3478/udp timed out (3s)")
+        finally:
+            sock.close()
+    except Exception as e:
+        diag_parts.append(f"STUN check failed: {e}")
+
+    # Check LiveKit health
+    lk_healthy = False
+    lk_url = LIVEKIT_URL.replace("ws://", "http://").replace("wss://", "https://")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(lk_url)
+            lk_healthy = resp.status_code < 500
+            if lk_healthy:
+                diag_parts.append("LiveKit SFU reachable")
+            else:
+                diag_parts.append(f"LiveKit returned HTTP {resp.status_code}")
+    except Exception as e:
+        diag_parts.append(f"LiveKit unreachable: {e}")
+
+    return TurnCheckResponse(
+        turn_configured=True,
+        turn_reachable=turn_reachable,
+        turn_latency_ms=latency_ms,
+        turn_host=turn_host,
+        turn_ports=turn_ports,
+        livekit_healthy=lk_healthy,
+        diagnostics="; ".join(diag_parts),
+    )
+
+
 class VoiceParticipant(BaseModel):
     identity: str
     name: str

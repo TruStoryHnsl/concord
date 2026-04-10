@@ -5,7 +5,6 @@ import {
   servitudeStatus,
   servitudeStop,
   type ServitudeState,
-  type ServitudeStatusResponse,
 } from "../../api/servitude";
 
 /**

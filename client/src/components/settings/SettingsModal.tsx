@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useSettingsStore } from "../../stores/settings";
 import { useAuthStore } from "../../stores/auth";
 import { checkAdmin } from "../../api/concord";
+import { usePlatform } from "../../hooks/usePlatform";
 import { AudioTab } from "./AudioTab";
 import { VoiceTab } from "./VoiceTab";
 import { NotificationsTab } from "./NotificationsTab";
@@ -11,17 +12,6 @@ import { NodeHostingTab } from "./NodeHostingTab";
 import { BridgesTab } from "./BridgesTab";
 import { AboutTab } from "./AboutTab";
 import { AdminTab } from "./AdminTab";
-
-const baseTabs = [
-  { key: "audio" as const, label: "Audio", icon: "headphones" },
-  { key: "voice" as const, label: "Voice", icon: "graphic_eq" },
-  { key: "notifications" as const, label: "Notifications", icon: "notifications" },
-  { key: "profile" as const, label: "Profile", icon: "person" },
-  { key: "appearance" as const, label: "Appearance", icon: "palette" },
-  { key: "node" as const, label: "Node", icon: "dns" },
-  { key: "bridges" as const, label: "Bridges", icon: "hub" },
-  { key: "about" as const, label: "About", icon: "info" },
-];
 
 /**
  * Inline settings panel — renders inside the main content pane
@@ -33,6 +23,25 @@ export function SettingsPanel() {
   const close = useSettingsStore((s) => s.closeSettings);
   const accessToken = useAuthStore((s) => s.accessToken);
   const [isAdmin, setIsAdmin] = useState(false);
+  const { isTauri, isMobile } = usePlatform();
+
+  // Bridges tab is desktop-only (bridge process requires Linux bwrap).
+  // Node hosting is Tauri-only (no browser, no mobile).
+  const baseTabs = useMemo(() => {
+    const tabs = [
+      { key: "audio" as const, label: "Audio", icon: "headphones" },
+      { key: "voice" as const, label: "Voice", icon: "graphic_eq" },
+      { key: "notifications" as const, label: "Notifications", icon: "notifications" },
+      { key: "profile" as const, label: "Profile", icon: "person" },
+      { key: "appearance" as const, label: "Appearance", icon: "palette" },
+    ];
+    if (isTauri && !isMobile) {
+      tabs.push({ key: "node" as const, label: "Node", icon: "dns" });
+      tabs.push({ key: "bridges" as const, label: "Bridges", icon: "hub" });
+    }
+    tabs.push({ key: "about" as const, label: "About", icon: "info" });
+    return tabs;
+  }, [isTauri, isMobile]);
 
   useEffect(() => {
     if (!accessToken) return;

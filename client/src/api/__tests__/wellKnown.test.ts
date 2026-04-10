@@ -20,7 +20,6 @@ import {
  * `.ok`, and `.json()`.
  */
 const jsonHeaders = { get: (k: string) => k === "content-type" ? "application/json" : null };
-const htmlHeaders = { get: (k: string) => k === "content-type" ? "text/html" : null };
 
 function jsonResponse(
   status: number,

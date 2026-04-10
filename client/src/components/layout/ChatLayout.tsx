@@ -29,7 +29,7 @@ import { useExtensionStore } from "../../stores/extension";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
 import { ServerSidebar } from "./ServerSidebar";
-import { ChannelSidebar } from "./ChannelSidebar";
+import { ChannelSidebar, UserBar } from "./ChannelSidebar";
 import { DMSidebar } from "../dm/DMSidebar";
 import { MessageList } from "../chat/MessageList";
 import { MessageInput } from "../chat/MessageInput";
@@ -64,6 +64,7 @@ export function ChatLayout() {
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
+  const logout = useAuthStore((s) => s.logout);
   const loadServers = useServerStore((s) => s.loadServers);
   const activeChannelId = useServerStore((s) => s.activeChannelId);
   const servers = useServerStore((s) => s.servers);
@@ -411,76 +412,87 @@ export function ChatLayout() {
     }
 
     return (
-      <div className="h-full flex overflow-hidden bg-surface text-on-surface">
-        {/* Sources sidebar — native desktop only. Narrow column of
-            connected instance icons, same data as the mobile Sources
-            panel but rendered as compact icons. */}
-        {isNativeApp && (
-          <div className="w-14 flex-shrink-0 bg-surface-container-low border-r border-outline-variant/10 flex flex-col items-center py-2 gap-2 overflow-y-auto">
-            {sources.map((source) => (
+      <div className="h-full flex flex-col overflow-hidden bg-surface text-on-surface">
+        {/* Main row: sidebars + content */}
+        <div className="flex-1 flex min-h-0">
+          {/* Sources sidebar — native desktop only. Narrow column of
+              connected instance icons, same data as the mobile Sources
+              panel but rendered as compact icons. */}
+          {isNativeApp && (
+            <div className="w-14 flex-shrink-0 bg-surface-container-low border-r border-outline-variant/10 flex flex-col items-center py-2 gap-2 overflow-y-auto">
+              {sources.map((source) => (
+                <button
+                  key={source.id}
+                  onClick={() => useSourcesStore.getState().toggleSource(source.id)}
+                  title={`${source.instanceName || source.host}${source.enabled ? " (click to hide)" : " (click to show)"}`}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-150 flex-shrink-0 ${
+                    source.enabled
+                      ? "bg-surface-container-high hover:bg-surface-container-highest text-on-surface ring-1 ring-primary/30"
+                      : "bg-surface-container-low text-on-surface-variant/30"
+                  }`}
+                >
+                  <span className="text-xs font-headline font-bold uppercase">
+                    {(source.instanceName || source.host).slice(0, 2)}
+                  </span>
+                </button>
+              ))}
               <button
-                key={source.id}
-                title={source.instanceName || source.host}
-                className="w-10 h-10 rounded-xl bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors flex-shrink-0"
+                onClick={() => setAddSourceOpen(true)}
+                title="Add source"
+                className="w-10 h-10 rounded-xl border border-dashed border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors flex-shrink-0"
               >
-                <span className="text-xs font-headline font-bold uppercase">
-                  {(source.instanceName || source.host).slice(0, 2)}
-                </span>
+                <span className="material-symbols-outlined text-lg">add</span>
               </button>
-            ))}
-            <button
-              onClick={() => setAddSourceOpen(true)}
-              title="Add source"
-              className="w-10 h-10 rounded-xl border border-dashed border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors flex-shrink-0"
-            >
-              <span className="material-symbols-outlined text-lg">add</span>
-            </button>
-          </div>
-        )}
-
-        {/* Sidebar collapse toggle — visible when extension is active */}
-        {extensionActive && (
-          <button
-            onClick={() => setSidebarCollapsed((c) => !c)}
-            className="flex-shrink-0 w-6 flex items-center justify-center bg-surface-container-low/60 backdrop-blur-sm hover:bg-surface-container-high/80 transition-colors z-10 border-r border-outline-variant/10"
-            aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-            title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-          >
-            <span
-              className="material-symbols-outlined text-sm text-on-surface-variant/70 transition-transform duration-200"
-              style={{ transform: sidebarCollapsed ? "rotate(0deg)" : "rotate(180deg)" }}
-            >
-              chevron_right
-            </span>
-          </button>
-        )}
-
-        {/* Server sidebar */}
-        {showSidebar && (
-          <>
-            <SilentBoundary>
-              <ServerSidebar />
-            </SilentBoundary>
-
-            {/* Channel / DM sidebar */}
-            <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
-              <SilentBoundary>
-                {dmActive ? <DMSidebar /> : <ChannelSidebar />}
-              </SilentBoundary>
             </div>
+          )}
 
-            {/* Resize handle */}
-            <div
-              onMouseDown={handleResizeStart}
-              className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
-            />
-          </>
-        )}
+          {/* Sidebar collapse toggle — visible when extension is active */}
+          {extensionActive && (
+            <button
+              onClick={() => setSidebarCollapsed((c) => !c)}
+              className="flex-shrink-0 w-6 flex items-center justify-center bg-surface-container-low/60 backdrop-blur-sm hover:bg-surface-container-high/80 transition-colors z-10 border-r border-outline-variant/10"
+              aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+            >
+              <span
+                className="material-symbols-outlined text-sm text-on-surface-variant/70 transition-transform duration-200"
+                style={{ transform: sidebarCollapsed ? "rotate(0deg)" : "rotate(180deg)" }}
+              >
+                chevron_right
+              </span>
+            </button>
+          )}
 
-        {/* Main content */}
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          {renderMainContent()}
+          {/* Server sidebar */}
+          {showSidebar && (
+            <>
+              <SilentBoundary>
+                <ServerSidebar />
+              </SilentBoundary>
+
+              {/* Channel / DM sidebar */}
+              <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
+                <SilentBoundary>
+                  {dmActive ? <DMSidebar /> : <ChannelSidebar />}
+                </SilentBoundary>
+              </div>
+
+              {/* Resize handle */}
+              <div
+                onMouseDown={handleResizeStart}
+                className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
+              />
+            </>
+          )}
+
+          {/* Main content */}
+          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+            {renderMainContent()}
+          </div>
         </div>
+
+        {/* Full-width user bar at the bottom of the window */}
+        <UserBar userId={userId} logout={logout} />
       </div>
     );
   };
@@ -1372,6 +1384,7 @@ function AddSourceModal({
         apiBase: config.api_base,
         homeserverUrl: config.homeserver_url,
         status: "connected",
+        enabled: true,
       });
 
       onSourceAdded();

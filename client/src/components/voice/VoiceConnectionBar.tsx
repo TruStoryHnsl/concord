@@ -9,6 +9,8 @@ import { useServerStore } from "../../stores/server";
 
 export function VoiceConnectionBar() {
   const connected = useVoiceStore((s) => s.connected);
+  const connectionState = useVoiceStore((s) => s.connectionState);
+  const reconnectAttempt = useVoiceStore((s) => s.reconnectAttempt);
   const channelName = useVoiceStore((s) => s.channelName);
   const serverId = useVoiceStore((s) => s.serverId);
   const channelId = useVoiceStore((s) => s.channelId);
@@ -18,10 +20,52 @@ export function VoiceConnectionBar() {
   const setActiveChannel = useServerStore((s) => s.setActiveChannel);
   const activeChannelId = useServerStore((s) => s.activeChannelId);
 
-  if (!connected) return null;
-  if (activeChannelId === channelId) return null;
+  // Show reconnecting state even when not yet connected
+  const showReconnecting = connectionState === "reconnecting" || connectionState === "connecting";
+  const showFailed = connectionState === "failed";
+
+  if (!connected && !showReconnecting && !showFailed) return null;
+  if (connected && activeChannelId === channelId) return null;
 
   const serverName = servers.find((s) => s.id === serverId)?.name ?? "Server";
+
+  // Reconnecting indicator
+  if (showReconnecting) {
+    return (
+      <div className="flex items-center justify-between px-3 md:px-4 py-2 md:py-2 glass-panel flex-shrink-0 safe-bottom">
+        <div className="flex items-center gap-2 text-sm text-yellow-400 min-w-0 font-body">
+          <span className="inline-block w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="truncate">
+            Reconnecting to voice{reconnectAttempt > 0 ? ` (attempt ${reconnectAttempt})` : ""}...
+          </span>
+        </div>
+        <button
+          onClick={disconnect}
+          className="btn-press px-2.5 py-1 text-xs bg-error-container/30 text-on-error-container rounded-lg transition-colors font-label"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  // Failed state
+  if (showFailed) {
+    return (
+      <div className="flex items-center justify-between px-3 md:px-4 py-2 md:py-2 glass-panel flex-shrink-0 safe-bottom">
+        <div className="flex items-center gap-2 text-sm text-error min-w-0 font-body">
+          <div className="w-2 h-2 rounded-full bg-error flex-shrink-0" />
+          <span className="truncate">Voice reconnection failed</span>
+        </div>
+        <button
+          onClick={() => useVoiceStore.getState().setConnectionState("disconnected")}
+          className="btn-press px-2.5 py-1 text-xs bg-surface-container text-on-surface rounded-lg transition-colors font-label"
+        >
+          Dismiss
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-between px-3 md:px-4 py-2 md:py-2 glass-panel flex-shrink-0 safe-bottom">

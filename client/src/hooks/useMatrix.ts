@@ -26,7 +26,18 @@ function trimTimeline(room: Room) {
 
 export function useMatrixSync() {
   const client = useAuthStore((s) => s.client);
-  const [syncing, setSyncing] = useState(false);
+  const [syncing, setSyncingLocal] = useState(false);
+  // Keep local state + auth store in sync so consumers that read
+  // connection state from the store (e.g. ServerSidebar) don't have
+  // to re-subscribe to ClientEvent.Sync themselves and duplicate
+  // this hook's federated-hydration side effects. Zustand's setState
+  // is stable so reading it through `getState()` avoids subscribing
+  // to store changes and also sidesteps the exhaustive-deps lint
+  // that would want `setSyncing` in every effect below.
+  const setSyncing = (value: boolean) => {
+    setSyncingLocal(value);
+    useAuthStore.getState().setSyncing(value);
+  };
 
   useEffect(() => {
     if (!client) return;
@@ -199,10 +210,20 @@ export function useMatrixSync() {
       Promise.all([
         import("../stores/server"),
         import("../stores/federatedInstances"),
+        import("../stores/sources"),
       ])
-        .then(([{ useServerStore }, { useFederatedInstanceStore }]) => {
+        .then(([{ useServerStore }, { useFederatedInstanceStore }, { useSourcesStore }]) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           useServerStore.getState().hydrateFederatedRooms(client as any);
+
+          // Sync Discord bridge source: if hydration produced any
+          // servers with bridgeType="discord", surface a Discord
+          // source in the sources panel.
+          const hasDiscordBridge = useServerStore
+            .getState()
+            .servers.some((s) => s.bridgeType === "discord");
+          useSourcesStore.getState().syncDiscordBridge(hasDiscordBridge);
+
           const instanceStore = useFederatedInstanceStore.getState();
           // Probe each catalog host for /.well-known/concord/client
           // exactly once per session — skip hosts that have already
