@@ -188,6 +188,7 @@ async function fetchWellKnown<T>(
     // connection refused, abort). We treat all of these as "host
     // unreachable" rather than trying to distinguish sub-cases that
     // don't exist at the DOM fetch layer.
+    console.error(`[wellKnown] fetch failed for ${url}:`, err);
     throw new DnsResolutionError(host, err);
   }
 
@@ -265,10 +266,15 @@ export async function discoverHomeserver(
     throw new InvalidUrlError(trimmed, "hostname is empty after parsing");
   }
 
-  // Run both discovery fetches in parallel — they're independent and
-  // both small. A failure in one propagates immediately; a 404 is
-  // absorbed and handled by the fallback logic below.
-  const [matrixResult, concordResult] = await Promise.all([
+  // Run both discovery fetches in parallel. The matrix well-known is
+  // the critical path; the concord well-known is optional (provides
+  // api_base, livekit_url, etc. but we can fall back without it).
+  // Use Promise.allSettled so a CORS or network failure on one
+  // endpoint doesn't kill the other — WebKitGTK on Linux blocks
+  // cross-origin responses that lack Access-Control-Allow-Origin,
+  // which is common for the concord well-known on deployments that
+  // only add CORS to the matrix well-known inline response.
+  const [matrixSettled, concordSettled] = await Promise.allSettled([
     fetchWellKnown<MatrixClientWellKnown>(
       canonicalHost,
       "/.well-known/matrix/client",
@@ -280,6 +286,20 @@ export async function discoverHomeserver(
       "concord/client",
     ),
   ]);
+
+  // If the matrix well-known itself failed at the network level,
+  // propagate that — the host is genuinely unreachable.
+  if (matrixSettled.status === "rejected") {
+    throw matrixSettled.reason;
+  }
+  const matrixResult = matrixSettled.value;
+
+  // Concord well-known failures (CORS, network, etc.) are non-fatal —
+  // treat as absent and fall back to defaults.
+  const concordResult: WellKnownResult<ConcordClientWellKnown> =
+    concordSettled.status === "fulfilled"
+      ? concordSettled.value
+      : { status: "absent" };
 
   // ---------------------------------------------------------------
   // Matrix homeserver URL resolution

@@ -72,9 +72,24 @@
     # URL, advertised features) that only the Python service knows.
     # Unauthenticated by design: native clients hit this BEFORE they
     # have any credentials. See `server/routers/wellknown.py`.
+    #
+    # CORS (INS-020, 2026-04-09): native Tauri mobile clients load from
+    # custom schemes (`tauri://localhost` on iOS, `http://tauri.localhost`
+    # on Android), none of which are in FastAPI's CORS whitelist. Since
+    # this is a public discovery document that ANY client should be able
+    # to read, we override the upstream CORS headers at the edge with a
+    # wildcard Allow-Origin. This matches the inline handling of
+    # `.well-known/matrix/*` above — both are public bootstrap endpoints.
+    # The `-Access-Control-Allow-Credentials` strip is required because
+    # `Access-Control-Allow-Origin: *` is invalid when credentials are
+    # also allowed (CORS spec: wildcards and credentials are mutually
+    # exclusive).
     handle /.well-known/concord/* {
         reverse_proxy concord-api:8000 {
             header_up X-Forwarded-Proto {http.request.scheme}
+            header_down Access-Control-Allow-Origin "*"
+            header_down Access-Control-Allow-Methods "GET, OPTIONS"
+            header_down -Access-Control-Allow-Credentials
         }
     }
 
@@ -90,10 +105,17 @@
         reverse_proxy conduwuit:6167
     }
 
-    # Concord API — forward proto for correct scheme detection
+    # Concord API — forward proto for correct scheme detection.
+    # CORS: native Tauri clients (desktop + mobile) load from custom
+    # origins that won't match the server's CORS whitelist. Wildcard
+    # Allow-Origin at the edge ensures all clients can reach the API.
     handle /api/* {
         reverse_proxy concord-api:8000 {
             header_up X-Forwarded-Proto {http.request.scheme}
+            header_down Access-Control-Allow-Origin "*"
+            header_down Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            header_down Access-Control-Allow-Headers "Content-Type, Authorization"
+            header_down -Access-Control-Allow-Credentials
         }
     }
 
