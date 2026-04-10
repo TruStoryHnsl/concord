@@ -61,6 +61,10 @@ export interface PlatformFlags {
   isIPad: boolean;
   /** TV device (Google TV, Android TV, Fire TV, LG webOS, Samsung Tizen…). */
   isTV: boolean;
+  /** Google TV or Android TV specifically (isAndroid && isTV). */
+  isAndroidTV: boolean;
+  /** Apple TV running tvOS (UA contains "AppleTV" or platform is tvOS). */
+  isAppleTV: boolean;
   /** A precise pointing device is available (mouse, pencil, trackpad). */
   hasPointer: boolean;
   /** Only coarse pointers (fingers) — no mouse at all. */
@@ -79,6 +83,8 @@ const DEFAULT_FLAGS: PlatformFlags = {
   isAndroid: false,
   isIPad: false,
   isTV: false,
+  isAndroidTV: false,
+  isAppleTV: false,
   hasPointer: true,
   hasTouchOnly: false,
 };
@@ -129,6 +135,10 @@ function detectPlatform(): PlatformFlags {
   }
   const isTV = isTVFromUA || (noPointer && bigScreen);
 
+  // Sub-TV platform detection — which TV family are we on?
+  const isAndroidTV = isAndroid && isTV;
+  const isAppleTV = /AppleTV/i.test(ua) || /tvOS/i.test(ua);
+
   // "Mobile" = handheld or tablet in touch-first mode. iPads count as
   // mobile for layout purposes; TVs do NOT count as mobile.
   const isMobile =
@@ -141,6 +151,8 @@ function detectPlatform(): PlatformFlags {
     isAndroid,
     isIPad,
     isTV,
+    isAndroidTV,
+    isAppleTV,
     hasPointer,
     hasTouchOnly,
   };

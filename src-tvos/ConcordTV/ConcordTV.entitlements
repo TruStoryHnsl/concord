@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Concord tvOS entitlements — scaffold for the Path C SwiftUI shell.
+
+  These entitlements mirror the iOS entitlements from
+  src-tauri/gen/apple/ios-entitlements.plist where applicable on tvOS.
+  tvOS does not support all iOS entitlements; the ones below are the
+  subset that tvOS recognises and that Concord needs.
+
+  Reference: docs/native-apps/appletv-feasibility.md §6 checklist
+-->
+<plist version="1.0">
+<dict>
+    <!-- Keychain access group — shared with the iOS app so a user
+         who owns both devices can share their auth token. -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.concord.chat</string>
+    </array>
+
+    <!-- Multicast networking — needed for mDNS / Bonjour peer
+         discovery on the local network. Requires Apple Developer
+         Program approval (same entitlement as iOS). -->
+    <!-- TODO(post-v0.3): Enable once Apple Developer Program
+         relationship is established.
+    <key>com.apple.developer.networking.multicast</key>
+    <true/>
+    -->
+</dict>
+</plist>

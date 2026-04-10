@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Concord tvOS Info.plist — scaffold for the Path C SwiftUI shell.
+
+  This plist targets tvOS 17.0+ and declares the minimum set of keys
+  the tvOS app needs. Capability-specific keys (network, Bonjour) are
+  deferred until the bridge implementation begins post-v0.3.
+
+  Reference: docs/native-apps/appletv-feasibility.md §4
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Concord</string>
+
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.concord.chat.tv</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleName</key>
+    <string>ConcordTV</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>LSRequiresIPhoneOS</key>
+    <false/>
+
+    <!-- tvOS minimum deployment target -->
+    <key>MinimumOSVersion</key>
+    <string>17.0</string>
+
+    <!-- App Transport Security — allow the webview to connect to
+         arbitrary homeservers over HTTPS (and HTTP for local dev). -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+
+    <!-- Network usage description for local peer discovery (future). -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Concord uses the local network to discover other Concord nodes on your LAN.</string>
+
+    <!-- UI launch storyboard — SwiftUI apps can use a launch screen
+         dict instead of a storyboard file. -->
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>LaunchBackground</string>
+    </dict>
+</dict>
+</plist>

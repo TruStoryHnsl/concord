@@ -109,6 +109,8 @@ Concord's binaries split into two **roles** per platform:
 | **macOS Universal**| orrpheus · `scripts/build_macos_native.sh` | embedded module | direct download (.dmg) + Mac App Store (future) | `src-tauri/target/universal-apple-darwin/release/bundle/{dmg,macos}/` |
 | **iOS ARM64**      | orrpheus · `cargo tauri ios build` (after `cargo tauri ios init`) | embedded module (foreground MVP — VoIP background entitlement is a stretch goal) | App Store (Apple Developer Program enrollment in progress 2026-04-07) | `src-tauri/gen/apple/build/Build/Products/Release-iphoneos/` |
 | **Android ARM64**  | orrion · `cargo tauri android build` (after `cargo tauri android init`) | embedded module (foreground MVP) | Play Store + direct .apk download + F-Droid (future) | `src-tauri/gen/android/app/build/outputs/apk/release/` |
+| **Google TV / Android TV** | orrion · same `cargo tauri android build` (shared APK with leanback manifest flags) | embedded module (foreground MVP) | Play Store (TV track) + direct .apk sideload | `src-tauri/gen/android/app/build/outputs/apk/release/` (same APK as Android phone) |
+| **Apple TV (tvOS)** | orrpheus · Xcode build of `src-tvos/ConcordTV.xcodeproj` (Path C shell, **deferred to post-v0.3**) | not embedded (web-only shell, no Rust runtime) | App Store (tvOS track, future) | `src-tvos/build/` |
 
 > **Embedded servitude rule (2026-04-08):** servitude is *not* a standalone
 > daemon. Every Concord build, on every platform, ships the servitude module
@@ -300,6 +302,47 @@ the `usePlatform()` hook (TV detection = large screen + no pointer,
 or UA contains "TV") and enables roving-tabindex focus navigation
 through the `useDpadNav()` hook. Both hooks ship with unit tests in
 `client/src/hooks/__tests__/`.
+
+**Sub-platform detection**: `usePlatform()` exposes `isAndroidTV`
+(true when `isAndroid && isTV`) and `isAppleTV` (true when the UA
+contains "AppleTV" or "tvOS") for components that need to branch on
+the specific TV platform rather than the generic `isTV` flag.
+
+### 7b. Google TV build and sideload commands
+
+Google TV uses the **same APK** as Android phones. No separate build
+command is needed — `cargo tauri android build` produces a universal
+APK that installs on both phones and TVs.
+
+**Pre-build validation**: run the manifest compliance checker before
+building to confirm all Google TV requirements are met:
+
+```bash
+scripts/build_androidtv_check.sh
+```
+
+This validates the 4 required manifest entries: leanback feature,
+touchscreen optional, LEANBACK_LAUNCHER intent-filter, and
+android:banner attribute. Exit code 0 means compliant; 1 means one
+or more entries are missing.
+
+**Build + sideload to a Google TV device**:
+
+```bash
+# Build (same as phone):
+cd src-tauri
+cargo tauri android build
+
+# Sideload to a Google TV / Android TV device on the LAN:
+adb connect <tv-ip>:5555
+adb -s <tv-ip>:5555 install -r \
+    src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+**TV banner asset**: the 320x180 placeholder banner lives at
+`src-tauri/gen/android/app/src/main/res/drawable-xhdpi/tv_banner.png`.
+See `src-tauri/gen/android/tv-banner-README.md` for the spec and
+design pass instructions.
 
 ---
 
@@ -505,6 +548,41 @@ If the smoke test passes, the AppImage and `.deb` in
 
 ---
 
+## 9a. Apple TV (tvOS) scaffolding status
+
+**Status:** SCAFFOLDED — project structure committed at `src-tvos/`,
+implementation deferred to post-v0.3.
+
+The Apple TV client follows **Path C** from the feasibility study
+(`docs/native-apps/appletv-feasibility.md`): a standalone SwiftUI +
+WKWebView app that loads the same `client/dist` bundle used by all
+other platforms. Unlike the Google TV target, tvOS cannot use the
+Tauri Android shell — it is a completely separate Xcode project with
+no Rust runtime.
+
+**What is committed now:**
+
+- `src-tvos/ConcordTV.xcodeproj/` — Xcode project targeting tvOS 17.0+
+- `src-tvos/ConcordTV/ConcordTVApp.swift` — SwiftUI `@main` app entry
+- `src-tvos/ConcordTV/WebViewHost.swift` — WKWebView host (placeholder)
+- `src-tvos/ConcordTV/JSBridge.swift` — 4-function bridge protocol + stubs
+- `src-tvos/ConcordTV/Info.plist` — tvOS plist with network keys
+- `src-tvos/ConcordTV/ConcordTV.entitlements` — keychain + multicast
+- `client/src/api/tvOSHost.ts` — TypeScript bridge client (no-ops on non-tvOS)
+
+**What is NOT committed yet:**
+
+- Real WKWebView instantiation + bundle loading
+- Bridge function implementations (UserDefaults, ASWebAuthenticationSession)
+- UIFocus <-> DOM focus bridging
+- Asset catalogs (App Icon, Top Shelf Image)
+- CI/CD pipeline for tvOS
+
+**When to begin:** see `src-tvos/README.md` and the feasibility study
+for the prerequisites checklist. Target: no earlier than Q3 2026.
+
+---
+
 ## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -516,3 +594,6 @@ If the smoke test passes, the AppImage and `.deb` in
 | `cargo tauri ios build --target aarch64-apple-ios-sim` fails with `invalid value` | Tauri CLI uses short target aliases | Use `--target aarch64-sim` (simulator) or `--target aarch64` (device); `aarch64-apple-ios-sim` is the rustup name, not the Tauri CLI alias |
 | AppImage smoke launch hangs in CI | No display server | Run with `xvfb-run` or skip `--smoke` |
 | `linker 'cc' not found` on Windows | MSVC build tools missing | Install Visual Studio 2022 Build Tools |
+| Google TV APK installs but app does not appear in TV launcher | Missing `LEANBACK_LAUNCHER` intent-filter or `android:banner` attribute | Run `scripts/build_androidtv_check.sh` to validate manifest compliance. Ensure the TV banner PNG exists at `src-tauri/gen/android/app/src/main/res/drawable-xhdpi/tv_banner.png`. |
+| DPAD navigation not working on Google TV — arrow keys scroll the page | `useDpadNav` hook not enabled | Verify `usePlatform().isTV` returns `true` on the device. The hook must be passed `enabled: isTV`. Check that the webview UA string or `pointer: none` matchMedia is being detected. |
+| Google TV build rejected by Play Store with "TV apps must declare leanback" | `android.software.leanback` uses-feature missing or `required="true"` | The template at `src-tauri/gen/android/AndroidManifest.xml.template` has `required="false"`. Ensure the generated manifest matches. |

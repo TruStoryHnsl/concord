@@ -1,0 +1,259 @@
+// !$*UTF8*$!
+// Concord tvOS Xcode project — SCAFFOLD ONLY.
+//
+// This is a minimal project.pbxproj that defines the ConcordTV tvOS
+// app target. It is committed as a structural placeholder so the
+// project layout is visible in git. When tvOS development begins
+// (post-v0.3), this file should be regenerated or updated via Xcode
+// to include the full build settings, asset catalogs, and framework
+// dependencies.
+//
+// DO NOT hand-edit this file during active development — use Xcode's
+// project editor instead. This scaffold exists solely to establish
+// the directory structure and make the project openable in Xcode for
+// inspection.
+//
+// Reference: docs/native-apps/appletv-feasibility.md (Path C)
+//
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000001 /* ConcordTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
+		A1000002 /* WebViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
+		A1000003 /* JSBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A2000001 /* ConcordTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConcordTVApp.swift; sourceTree = "<group>"; };
+		A2000002 /* WebViewHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHost.swift; sourceTree = "<group>"; };
+		A2000003 /* JSBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSBridge.swift; sourceTree = "<group>"; };
+		A2000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000005 /* ConcordTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ConcordTV.entitlements; sourceTree = "<group>"; };
+		A2000010 /* ConcordTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ConcordTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		A3000001 = {
+			isa = PBXGroup;
+			children = (
+				A3000002 /* ConcordTV */,
+				A3000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A3000002 /* ConcordTV */ = {
+			isa = PBXGroup;
+			children = (
+				A2000001 /* ConcordTVApp.swift */,
+				A2000002 /* WebViewHost.swift */,
+				A2000003 /* JSBridge.swift */,
+				A2000004 /* Info.plist */,
+				A2000005 /* ConcordTV.entitlements */,
+			);
+			path = ConcordTV;
+			sourceTree = "<group>";
+		};
+		A3000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A2000010 /* ConcordTV.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A4000001 /* ConcordTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A6000001 /* Build configuration list for PBXNativeTarget "ConcordTV" */;
+			buildPhases = (
+				A5000001 /* Sources */,
+				A5000002 /* Frameworks */,
+				A5000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ConcordTV;
+			productName = ConcordTV;
+			productReference = A2000010 /* ConcordTV.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A0000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1540;
+			};
+			buildConfigurationList = A6000002 /* Build configuration list for PBXProject "ConcordTV" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A3000001;
+			productRefGroup = A3000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A4000001 /* ConcordTV */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A5000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000001 /* ConcordTVApp.swift in Sources */,
+				A1000002 /* WebViewHost.swift in Sources */,
+				A1000003 /* JSBridge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A5000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A5000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A7000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				CODE_SIGN_ENTITLEMENTS = ConcordTV/ConcordTV.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ConcordTV/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Concord;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.concord.chat.tv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+		A7000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				CODE_SIGN_ENTITLEMENTS = ConcordTV/ConcordTV.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ConcordTV/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Concord;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.concord.chat.tv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Release;
+		};
+		A7000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = appletvos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+		A7000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				SDKROOT = appletvos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A6000001 /* Build configuration list for PBXNativeTarget "ConcordTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7000001 /* Debug */,
+				A7000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A6000002 /* Build configuration list for PBXProject "ConcordTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7000003 /* Debug */,
+				A7000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A0000001 /* Project object */;
+}

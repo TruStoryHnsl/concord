@@ -214,8 +214,84 @@ describe("getPlatformFlags", () => {
     const flags = getPlatformFlags();
 
     expect(flags.isTV).toBe(true);
+    expect(flags.isAndroidTV).toBe(true);
+    expect(flags.isAppleTV).toBe(false);
     // TVs are explicitly NOT mobile even though they run Android.
     expect(flags.isMobile).toBe(false);
+  });
+
+  it("detects Android TV via UA substring and sets isAndroidTV", () => {
+    stubNavigator({
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 12; Chromecast HD Build/STTE.240507.002) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36 Android TV",
+      platform: "Linux armv8l",
+      maxTouchPoints: 0,
+    });
+    stubWindow({
+      innerWidth: 1920,
+      innerHeight: 1080,
+      matchMedia: {
+        "(pointer: fine)": false,
+        "(pointer: coarse)": false,
+        "(pointer: none)": true,
+      },
+    });
+
+    const flags = getPlatformFlags();
+
+    expect(flags.isTV).toBe(true);
+    expect(flags.isAndroidTV).toBe(true);
+    expect(flags.isAppleTV).toBe(false);
+    expect(flags.isMobile).toBe(false);
+  });
+
+  it("detects Apple TV via AppleTV UA string", () => {
+    stubNavigator({
+      userAgent:
+        "Mozilla/5.0 (AppleTV; U; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      platform: "AppleTV",
+      maxTouchPoints: 0,
+    });
+    stubWindow({
+      innerWidth: 1920,
+      innerHeight: 1080,
+      matchMedia: {
+        "(pointer: fine)": false,
+        "(pointer: coarse)": false,
+        "(pointer: none)": true,
+      },
+    });
+
+    const flags = getPlatformFlags();
+
+    expect(flags.isTV).toBe(true);
+    expect(flags.isAppleTV).toBe(true);
+    expect(flags.isAndroidTV).toBe(false);
+    expect(flags.isMobile).toBe(false);
+  });
+
+  it("does not set isAndroidTV or isAppleTV for a regular phone", () => {
+    stubNavigator({
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+      platform: "Linux armv8l",
+      maxTouchPoints: 5,
+    });
+    stubWindow({
+      innerWidth: 412,
+      innerHeight: 915,
+      matchMedia: {
+        "(pointer: fine)": false,
+        "(pointer: coarse)": true,
+        "(pointer: none)": false,
+      },
+    });
+
+    const flags = getPlatformFlags();
+
+    expect(flags.isAndroidTV).toBe(false);
+    expect(flags.isAppleTV).toBe(false);
+    expect(flags.isTV).toBe(false);
   });
 
   it("detects TV via UA substring when matchMedia is inconclusive", () => {
