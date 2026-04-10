@@ -12,12 +12,84 @@
 //!   - The `discord_bridge_status` command surfaces `degraded_transports()`
 //!     so the UI can render partial-failure state from Wave 3.
 //!   - All commands that mutate state acquire the `ServitudeState` mutex.
+//!   - `redact_for_logging()` strips all token patterns from log strings.
 
+use regex::Regex;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use crate::servitude::config::ServitudeConfig;
 use crate::ServitudeState;
+
+// -----------------------------------------------------------------------
+// INS-024 Wave 5 — Typed error hierarchy for bridge operations
+// -----------------------------------------------------------------------
+
+/// Structured error type for bridge command failures. Maps to user-friendly
+/// messages at the Tauri command boundary. Commercial scope requires that
+/// no raw stack traces or internal file paths leak to the frontend.
+#[derive(Debug, thiserror::Error)]
+pub enum BridgeCommandError {
+    /// The user-supplied bot token failed basic shape validation.
+    #[error("token validation failed: {0}")]
+    TokenValidation(String),
+
+    /// Writing the bridge config or registration file to disk failed.
+    #[error("bridge config write failed: {0}")]
+    ConfigWrite(String),
+
+    /// The bridge data directory could not be resolved or created.
+    #[error("cannot resolve bridge data directory: {0}")]
+    DataDirResolution(String),
+
+    /// Reading from or writing to the Tauri settings store failed.
+    #[error("settings store error: {0}")]
+    StoreAccess(String),
+
+    /// An error propagated from the transport layer.
+    #[error("transport error: {0}")]
+    Transport(#[from] crate::servitude::transport::TransportError),
+}
+
+impl From<BridgeCommandError> for String {
+    fn from(e: BridgeCommandError) -> String {
+        e.to_string()
+    }
+}
+
+// -----------------------------------------------------------------------
+// INS-024 Wave 5 — Token redaction for log output
+// -----------------------------------------------------------------------
+
+/// COMMERCIAL SCOPE MANDATE: Bot tokens, AS tokens, HS tokens, and
+/// Discord user tokens must NEVER appear in log output, error messages,
+/// or crash reports. This function is the single enforcement point —
+/// apply it to any log string that could transitively contain a secret.
+///
+/// Patterns redacted:
+///   - Discord bot tokens: `[A-Za-z0-9_-]{20,}.[A-Za-z0-9_-]{6}.[A-Za-z0-9_-]{27,}`
+///   - 64-char hex strings (AS/HS tokens from `generate_hex_token`)
+///   - Bearer authorization headers: `Bearer <token>`
+pub fn redact_for_logging(input: &str) -> String {
+    static BOT_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{6}\.[A-Za-z0-9_\-]{27,}")
+            .expect("bot token regex must compile")
+    });
+    static HEX_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"[0-9a-fA-F]{64}")
+            .expect("hex token regex must compile")
+    });
+    static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"Bearer [^\s]+")
+            .expect("bearer regex must compile")
+    });
+
+    let result = BOT_TOKEN_RE.replace_all(input, "[REDACTED_BOT_TOKEN]");
+    let result = HEX_TOKEN_RE.replace_all(&result, "[REDACTED_HEX_TOKEN]");
+    let result = BEARER_RE.replace_all(&result, "Bearer [REDACTED]");
+    result.into_owned()
+}
 
 /// Status response returned by `discord_bridge_status`.
 ///
@@ -51,36 +123,46 @@ pub struct BridgeStatus {
 pub async fn discord_bridge_set_bot_token(
     token: String,
 ) -> Result<(), String> {
+    set_bot_token_inner(token).await.map_err(|e| e.to_string())
+}
+
+/// Inner implementation using typed errors. The `#[tauri::command]`
+/// wrapper converts `BridgeCommandError` to `String` at the boundary.
+async fn set_bot_token_inner(token: String) -> Result<(), BridgeCommandError> {
     // Basic validation — reject obviously broken tokens before touching
     // any config files. Discord bot tokens are typically 60-80 chars but
     // we allow a generous range to avoid rejecting valid tokens from
     // future Discord API versions.
     let trimmed = token.trim();
     if trimmed.is_empty() {
-        return Err("bot token must not be empty".to_string());
+        return Err(BridgeCommandError::TokenValidation(
+            "bot token must not be empty".to_string(),
+        ));
     }
     if trimmed.len() < 30 {
-        return Err(
+        return Err(BridgeCommandError::TokenValidation(
             "bot token is too short — Discord bot tokens are typically 60+ characters"
                 .to_string(),
-        );
+        ));
     }
     if trimmed.len() > 200 {
-        return Err(
+        return Err(BridgeCommandError::TokenValidation(
             "bot token is too long — check that you pasted only the token"
                 .to_string(),
-        );
+        ));
     }
 
     // Write the token to the bridge data dir's config.yaml so it is
     // available on the next bridge start. The token replaces the
     // placeholder in the config written by Wave 3.
     let data_dir = crate::servitude::transport::discord_bridge::DiscordBridgeTransport::resolve_data_dir()
-        .map_err(|e| format!("cannot resolve bridge data dir: {}", e))?;
+        .map_err(|e| BridgeCommandError::DataDirResolution(e.to_string()))?;
 
     tokio::fs::create_dir_all(&data_dir)
         .await
-        .map_err(|e| format!("cannot create bridge data dir: {}", e))?;
+        .map_err(|e| BridgeCommandError::DataDirResolution(
+            format!("cannot create bridge data dir: {}", e),
+        ))?;
 
     // Generate random AS tokens if they don't already exist.
     let as_token = generate_hex_token();
@@ -183,9 +265,14 @@ pub async fn discord_bridge_set_bot_token(
 pub async fn discord_bridge_enable(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    enable_inner(app).await.map_err(|e| e.to_string())
+}
+
+async fn enable_inner(app: tauri::AppHandle) -> Result<(), BridgeCommandError> {
     use crate::servitude::config::Transport;
 
-    let mut config = ServitudeConfig::from_store(&app).map_err(|e| e.to_string())?;
+    let mut config = ServitudeConfig::from_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
 
     // Ensure MatrixFederation is enabled (bridge depends on it).
     if !config
@@ -205,7 +292,8 @@ pub async fn discord_bridge_enable(
         config.enabled_transports.push(Transport::DiscordBridge);
     }
 
-    config.save_to_store(&app).map_err(|e| e.to_string())?;
+    config.save_to_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
 
     log::info!(
         target: "concord::bridge",
@@ -222,15 +310,21 @@ pub async fn discord_bridge_enable(
 pub async fn discord_bridge_disable(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    disable_inner(app).await.map_err(|e| e.to_string())
+}
+
+async fn disable_inner(app: tauri::AppHandle) -> Result<(), BridgeCommandError> {
     use crate::servitude::config::Transport;
 
-    let mut config = ServitudeConfig::from_store(&app).map_err(|e| e.to_string())?;
+    let mut config = ServitudeConfig::from_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
 
     config
         .enabled_transports
         .retain(|t| *t != Transport::DiscordBridge);
 
-    config.save_to_store(&app).map_err(|e| e.to_string())?;
+    config.save_to_store(&app)
+        .map_err(|e| BridgeCommandError::StoreAccess(e.to_string()))?;
 
     log::info!(
         target: "concord::bridge",
@@ -330,22 +424,28 @@ fn extract_yaml_value(yaml: &str, key: &str) -> Option<String> {
 async fn write_file_0600(
     path: &std::path::Path,
     contents: &[u8],
-) -> Result<(), String> {
+) -> Result<(), BridgeCommandError> {
     tokio::fs::write(path, contents)
         .await
-        .map_err(|e| format!("failed to write {:?}: {}", path, e))?;
+        .map_err(|e| BridgeCommandError::ConfigWrite(
+            format!("failed to write config file: {}", e),
+        ))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = tokio::fs::metadata(path)
             .await
-            .map_err(|e| format!("failed to stat {:?}: {}", path, e))?
+            .map_err(|e| BridgeCommandError::ConfigWrite(
+                format!("failed to stat config file: {}", e),
+            ))?
             .permissions();
         perms.set_mode(0o600);
         tokio::fs::set_permissions(path, perms)
             .await
-            .map_err(|e| format!("failed to chmod {:?}: {}", path, e))?;
+            .map_err(|e| BridgeCommandError::ConfigWrite(
+                format!("failed to set file permissions: {}", e),
+            ))?;
     }
 
     Ok(())
@@ -445,5 +545,116 @@ mod tests {
         let yaml = "  as_token: CONCORD_PLACEHOLDER_AS_TOKEN\n";
         let token = extract_yaml_value(yaml, "as_token").unwrap();
         assert!(token.contains("PLACEHOLDER"));
+    }
+
+    // ---------------------------------------------------------------
+    // INS-024 Wave 5 — redact_for_logging tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_redact_strips_bot_token() {
+        // Build a fake Discord bot token at runtime to avoid triggering
+        // GitHub Push Protection's secret scanner on the literal string.
+        let fake_token = format!(
+            "{}.{}.{}",
+            "MTIzNDU2Nzg5MDEyMzQ1Njc4", // base64("1234567890123456789")
+            "GA1234",
+            "abcdefghijklmnopqrstuvwxyz12"
+        );
+        let input = format!("token is {}", fake_token);
+        let output = redact_for_logging(&input);
+        assert!(
+            output.contains("[REDACTED_BOT_TOKEN]"),
+            "bot token must be redacted, got: {}",
+            output
+        );
+        assert!(
+            !output.contains("MTIzNDU2"),
+            "original token must not appear in output: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_redact_strips_hex_token() {
+        let hex_token = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        let input = format!("as_token: {}", hex_token);
+        let output = redact_for_logging(&input);
+        assert!(
+            output.contains("[REDACTED_HEX_TOKEN]"),
+            "hex token must be redacted, got: {}",
+            output
+        );
+        assert!(
+            !output.contains(hex_token),
+            "original hex token must not appear: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_redact_strips_bearer() {
+        let input = "Authorization: Bearer abc123xyz_super_secret_token";
+        let output = redact_for_logging(input);
+        assert!(
+            output.contains("Bearer [REDACTED]"),
+            "bearer token must be redacted, got: {}",
+            output
+        );
+        assert!(
+            !output.contains("abc123xyz"),
+            "original bearer value must not appear: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_redact_preserves_normal_text() {
+        let input = "discord bridge started successfully on port 29334";
+        let output = redact_for_logging(input);
+        assert_eq!(
+            output, input,
+            "normal log text must pass through unchanged"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // INS-024 Wave 5 — BridgeCommandError tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_bridge_command_error_display() {
+        let err = BridgeCommandError::TokenValidation("too short".to_string());
+        assert_eq!(err.to_string(), "token validation failed: too short");
+
+        let err = BridgeCommandError::ConfigWrite("disk full".to_string());
+        assert_eq!(err.to_string(), "bridge config write failed: disk full");
+
+        let err = BridgeCommandError::DataDirResolution("HOME not set".to_string());
+        assert_eq!(
+            err.to_string(),
+            "cannot resolve bridge data directory: HOME not set"
+        );
+
+        let err = BridgeCommandError::StoreAccess("locked".to_string());
+        assert_eq!(err.to_string(), "settings store error: locked");
+    }
+
+    #[test]
+    fn test_bridge_command_error_from_transport() {
+        use crate::servitude::transport::TransportError;
+        let transport_err = TransportError::BinaryNotFound("missing".to_string());
+        let bridge_err: BridgeCommandError = transport_err.into();
+        match bridge_err {
+            BridgeCommandError::Transport(_) => {} // expected
+            other => panic!("expected Transport variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_bridge_command_error_to_string() {
+        let err = BridgeCommandError::TokenValidation("empty".to_string());
+        let s: String = err.into();
+        assert!(s.contains("token validation failed"));
     }
 }

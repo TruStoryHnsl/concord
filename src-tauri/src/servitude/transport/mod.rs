@@ -184,6 +184,19 @@ impl TransportRuntime {
         }
     }
 
+    /// Register an Application Service registration YAML path with
+    /// the MatrixFederation transport inside this runtime. Called by
+    /// the cross-transport pre-pass so the embedded tuwunel knows
+    /// about bridges when it starts.
+    ///
+    /// No-op for non-MatrixFederation variants — only the homeserver
+    /// transport needs to load AS registrations.
+    pub fn add_appservice_registration(&mut self, path: std::path::PathBuf) {
+        if let TransportRuntime::MatrixFederation(t) = self {
+            t.add_appservice_registration(path);
+        }
+    }
+
     /// Human-readable name for logs — matches
     /// [`Transport::name`] on the active variant.
     pub fn name(&self) -> &'static str {

@@ -44,6 +44,8 @@ use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout, Instant};
 
+use serde_json;
+
 use crate::servitude::config::ServitudeConfig;
 
 use super::{Transport, TransportError};
@@ -89,6 +91,13 @@ pub struct MatrixFederationTransport {
     data_dir: Option<PathBuf>,
     /// Child process handle. `Some` while running, `None` while stopped.
     child: Option<Child>,
+    /// Paths to Application Service registration YAML files that
+    /// tuwunel should load on startup. Populated by the cross-transport
+    /// pre-pass in `ServitudeHandle::start` when a bridge transport
+    /// (e.g. `DiscordBridge`) is enabled alongside this transport.
+    /// Passed to tuwunel via the `CONDUWUIT_APPSERVICES` env var as a
+    /// JSON array of absolute paths.
+    appservice_registrations: Vec<PathBuf>,
 }
 
 impl MatrixFederationTransport {
@@ -105,6 +114,7 @@ impl MatrixFederationTransport {
             server_name: format!("localhost:{}", port),
             data_dir: None,
             child: None,
+            appservice_registrations: Vec::new(),
         }
     }
 
@@ -174,6 +184,25 @@ impl MatrixFederationTransport {
         ))
     }
 
+    /// Register an Application Service registration YAML file that
+    /// tuwunel should load on startup. Called by the cross-transport
+    /// pre-pass in `ServitudeHandle::start` before the transport's
+    /// own `start()` method runs.
+    ///
+    /// The path must be an absolute path to a valid registration YAML.
+    /// No validation is done here — tuwunel will reject malformed
+    /// registrations at startup and surface the error in its logs.
+    pub fn add_appservice_registration(&mut self, path: PathBuf) {
+        self.appservice_registrations.push(path);
+    }
+
+    /// Read-only accessor for the registered appservice paths. Used
+    /// by tests to verify the cross-transport pre-pass wired the
+    /// registration correctly.
+    pub fn appservice_registrations(&self) -> &[PathBuf] {
+        &self.appservice_registrations
+    }
+
     /// Build the env var map passed to the child tuwunel process.
     /// Mirrors the keys the production `docker-compose.yml` sets, minus
     /// federation-allowlist keys (those live in the runtime-swapped
@@ -181,7 +210,7 @@ impl MatrixFederationTransport {
     /// federation disabled by default).
     fn env_vars(&self, data_dir: &Path) -> Vec<(String, String)> {
         let db_path = data_dir.join("database");
-        vec![
+        let mut envs = vec![
             ("CONDUWUIT_SERVER_NAME".to_string(), self.server_name.clone()),
             (
                 "CONDUWUIT_DATABASE_PATH".to_string(),
@@ -214,7 +243,30 @@ impl MatrixFederationTransport {
             ),
             ("CONDUWUIT_LOG".to_string(), "info".to_string()),
             ("CONDUWUIT_TRUSTED_SERVERS".to_string(), "[]".to_string()),
-        ]
+        ];
+
+        // INS-024 Wave 5: wire Application Service registrations into
+        // tuwunel so the embedded homeserver knows about bridges.
+        // Conduwuit reads `CONDUWUIT_APPSERVICES` as a JSON array of
+        // file paths, each pointing to a registration YAML. The
+        // cross-transport pre-pass in `ServitudeHandle::start` populates
+        // `self.appservice_registrations` before this method is called.
+        if !self.appservice_registrations.is_empty() {
+            let paths_json: Vec<String> = self
+                .appservice_registrations
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            // Serialize as a JSON array so conduwuit can parse it.
+            let json_array = serde_json::to_string(&paths_json)
+                .unwrap_or_else(|_| "[]".to_string());
+            envs.push((
+                "CONDUWUIT_APPSERVICES".to_string(),
+                json_array,
+            ));
+        }
+
+        envs
     }
 
     /// Cheap TCP reachability probe against the tuwunel listen port.
@@ -647,5 +699,79 @@ mod tests {
         // Second stop returns NotRunning — lifecycle safety.
         let err = t.stop().await.expect_err("double-stop must fail");
         assert!(matches!(err, TransportError::NotRunning));
+    }
+
+    // -----------------------------------------------------------------
+    // INS-024 Wave 5 — appservice registration wiring tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_env_vars_omit_appservices_when_none_registered() {
+        let t = MatrixFederationTransport::from_config(&config_on_port(8765));
+        let tmp = std::env::temp_dir().join("concord-env-test-no-as");
+        let envs = t.env_vars(&tmp);
+        let keys: Vec<&str> = envs.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            !keys.contains(&"CONDUWUIT_APPSERVICES"),
+            "CONDUWUIT_APPSERVICES must NOT be present when no \
+             registrations are added"
+        );
+    }
+
+    #[test]
+    fn test_env_vars_include_appservices_when_registered() {
+        let mut t = MatrixFederationTransport::from_config(&config_on_port(8765));
+        let reg_path = PathBuf::from("/data/concord/discord-bridge/registration.yaml");
+        t.add_appservice_registration(reg_path.clone());
+
+        let tmp = std::env::temp_dir().join("concord-env-test-with-as");
+        let envs = t.env_vars(&tmp);
+        let keys: Vec<&str> = envs.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            keys.contains(&"CONDUWUIT_APPSERVICES"),
+            "CONDUWUIT_APPSERVICES must be present after add_appservice_registration"
+        );
+
+        let value = envs
+            .iter()
+            .find(|(k, _)| k == "CONDUWUIT_APPSERVICES")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        // Must be a valid JSON array containing the registration path.
+        let parsed: Vec<String> = serde_json::from_str(value)
+            .expect("CONDUWUIT_APPSERVICES must be valid JSON");
+        assert_eq!(parsed.len(), 1, "exactly one registration path expected");
+        assert_eq!(
+            parsed[0],
+            reg_path.to_string_lossy(),
+            "registration path must match"
+        );
+    }
+
+    #[test]
+    fn test_env_vars_include_multiple_appservices() {
+        let mut t = MatrixFederationTransport::from_config(&config_on_port(8765));
+        t.add_appservice_registration(PathBuf::from("/data/discord/registration.yaml"));
+        t.add_appservice_registration(PathBuf::from("/data/telegram/registration.yaml"));
+
+        let tmp = std::env::temp_dir().join("concord-env-test-multi-as");
+        let envs = t.env_vars(&tmp);
+        let value = envs
+            .iter()
+            .find(|(k, _)| k == "CONDUWUIT_APPSERVICES")
+            .map(|(_, v)| v.as_str())
+            .expect("CONDUWUIT_APPSERVICES must be present");
+        let parsed: Vec<String> = serde_json::from_str(value)
+            .expect("must be valid JSON");
+        assert_eq!(parsed.len(), 2, "two registration paths expected");
+    }
+
+    #[test]
+    fn test_appservice_registrations_accessor() {
+        let mut t = MatrixFederationTransport::from_config(&config_on_port(8765));
+        assert!(t.appservice_registrations().is_empty());
+        let p = PathBuf::from("/test/registration.yaml");
+        t.add_appservice_registration(p.clone());
+        assert_eq!(t.appservice_registrations(), &[p]);
     }
 }
