@@ -1,0 +1,226 @@
+/**
+ * Concord TV Mode — 10-foot UI overrides.
+ *
+ * Active when <html data-tv="true"> is set by App.tsx when
+ * usePlatform().isTV returns true. All rules are scoped behind
+ * that attribute so they have zero cost on non-TV platforms.
+ *
+ * Design constraints for 10-foot UIs:
+ *   - Minimum readable text: 24px (body), 32px (headings)
+ *   - Minimum focus target: 48x48 CSS px
+ *   - High-contrast text: pure white on dark surfaces
+ *   - No scrollbars (DPAD cannot interact with them)
+ *   - Reduced motion (TV remotes feel sluggish with long anims)
+ *   - Focus ring must be visible from 10+ feet on a 1080p display
+ *
+ * The focus ring styles live in index.css (html[data-tv="true"]
+ * *:focus-visible) — they were placed there with the INS-020 batch
+ * and are not duplicated here.
+ */
+
+/* ── Typography scale ── */
+html[data-tv="true"] {
+  font-size: 24px;
+  line-height: 1.5;
+}
+
+html[data-tv="true"] h1,
+html[data-tv="true"] .tv-heading-1 {
+  font-size: 3rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+html[data-tv="true"] h2,
+html[data-tv="true"] .tv-heading-2 {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+html[data-tv="true"] h3,
+html[data-tv="true"] .tv-heading-3 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+/* ── High-contrast text ── */
+html[data-tv="true"] body {
+  color: #ffffff;
+  background-color: #121214;
+}
+
+html[data-tv="true"] .text-on-surface-variant,
+html[data-tv="true"] .text-muted {
+  color: #d0d0d4;
+}
+
+/* ── Minimum focus targets ── */
+html[data-tv="true"] button,
+html[data-tv="true"] a,
+html[data-tv="true"] [role="button"],
+html[data-tv="true"] [data-focusable="true"] {
+  min-height: 48px;
+  min-width: 48px;
+}
+
+/* ── Hidden scrollbars (DPAD cannot interact with them) ── */
+html[data-tv="true"] ::-webkit-scrollbar {
+  display: none;
+}
+html[data-tv="true"] * {
+  scrollbar-width: none;
+}
+
+/* ── Reduced animation ── */
+html[data-tv="true"] *,
+html[data-tv="true"] *::before,
+html[data-tv="true"] *::after {
+  animation-duration: 150ms !important;
+  transition-duration: 150ms !important;
+}
+
+/* ── TV layout helpers ── */
+
+/* Full-screen single-pane layout for TV */
+html[data-tv="true"] .tv-layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* TV sidebar rail — narrow, icon-heavy */
+html[data-tv="true"] .tv-sidebar-rail {
+  width: 80px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 0;
+  background: #171a1d;
+  border-right: 1px solid #23262a;
+}
+
+/* TV channel sidebar */
+html[data-tv="true"] .tv-channel-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #111417;
+  border-right: 1px solid #23262a;
+  overflow-y: auto;
+}
+
+/* TV content area */
+html[data-tv="true"] .tv-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* TV channel list item — large, clearly separated */
+html[data-tv="true"] .tv-channel-item {
+  padding: 1rem 1.5rem;
+  border-radius: 0.5rem;
+  margin: 0.125rem 0.5rem;
+  font-size: 1.125rem;
+}
+
+html[data-tv="true"] .tv-channel-item:focus-visible {
+  background: rgba(164, 165, 255, 0.12);
+}
+
+/* TV message — generous padding for readability */
+html[data-tv="true"] .tv-message {
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+/* ── TV capability banner ── */
+.tv-capability-banner {
+  display: none;
+}
+
+html[data-tv="true"] .tv-capability-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: rgba(215, 56, 59, 0.15);
+  border: 1px solid rgba(255, 113, 108, 0.3);
+  border-radius: 0.5rem;
+  color: #ffa8a3;
+  font-size: 1rem;
+  margin: 0.5rem 1rem;
+}
+
+html[data-tv="true"] .tv-capability-banner-icon {
+  font-size: 1.5rem;
+  color: #ff716c;
+  flex-shrink: 0;
+}
+
+html[data-tv="true"] .tv-capability-banner-dismiss {
+  margin-left: auto;
+  color: #ffa8a3;
+  opacity: 0.7;
+  cursor: pointer;
+  font-size: 1.25rem;
+}
+
+html[data-tv="true"] .tv-capability-banner-dismiss:focus-visible {
+  opacity: 1;
+}
+
+/* ── Disable touch-specific affordances on TV ── */
+html[data-tv="true"] .btn-press:active {
+  transform: none;
+}
+
+/* ── TV server picker ── */
+html[data-tv="true"] .tv-server-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 2rem;
+  padding: 4rem;
+}
+
+html[data-tv="true"] .tv-server-picker input {
+  font-size: 1.25rem;
+  padding: 1rem 1.5rem;
+  min-width: 400px;
+  border-radius: 0.5rem;
+  background: #1d2024;
+  border: 2px solid #46484b;
+  color: #ffffff;
+}
+
+html[data-tv="true"] .tv-server-picker input:focus {
+  border-color: #7c4dff;
+  outline: none;
+}
+
+html[data-tv="true"] .tv-server-picker button {
+  font-size: 1.125rem;
+  padding: 1rem 2.5rem;
+  border-radius: 0.5rem;
+}
+
+/* ── TV header bar ── */
+html[data-tv="true"] .tv-header {
+  display: flex;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #23262a;
+  font-size: 1.25rem;
+  font-weight: 600;
+  min-height: 64px;
+}

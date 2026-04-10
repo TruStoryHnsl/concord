@@ -15,6 +15,7 @@ import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useServerConfigStore } from "../../stores/serverConfig";
 import { usePlatform } from "../../hooks/usePlatform";
+import { useDpadNav } from "../../hooks/useDpadNav";
 import { useSendReadReceipt } from "../../hooks/useUnreadCounts";
 import { useNotifications } from "../../hooks/useNotifications";
 import { useSettingsStore } from "../../stores/settings";
@@ -90,6 +91,7 @@ export function ChatLayout() {
   // stable regardless of transient viewport width changes.
   const platform = usePlatform();
   const prefersTabletLayout = platform.isIPad;
+  const isTV = platform.isTV;
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [showBugReport, setShowBugReport] = useState(false);
@@ -180,6 +182,26 @@ export function ChatLayout() {
   const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
   const closeServerSettings = useSettingsStore((s) => s.closeServerSettings);
   const openSettings = useSettingsStore((s) => s.openSettings);
+
+  // TV capability banner state — shown when a TV user selects a voice channel
+  const [tvBannerDismissed, setTvBannerDismissed] = useState(false);
+
+  // TASK T2: DPAD navigation for TV builds. When isTV is true, the hook
+  // registers a keydown listener that takes over arrow keys for spatial
+  // focus navigation across the three-pane layout. onBack navigates up
+  // through the pane hierarchy (chat → channels → servers).
+  const handleTvBack = useCallback(() => {
+    if (mobileView === "chat") setMobileView("channels");
+    else if (mobileView === "channels") setMobileView("servers");
+    else if (mobileView === "settings") { closeSettings(); closeServerSettings(); setMobileView("chat"); }
+    else if (mobileView === "dms") setMobileView("chat");
+  }, [mobileView, closeSettings, closeServerSettings]);
+
+  useDpadNav({
+    enabled: isTV,
+    group: "tv-main",
+    onBack: handleTvBack,
+  });
 
   // Gate read receipts on the user actually looking at chat. On desktop,
   // mobileView stays "chat" unless the user opens a settings view (which
@@ -693,13 +715,63 @@ export function ChatLayout() {
     );
   };
 
+  // TV layout — three-pane desktop layout with DPAD focus attributes.
+  // Uses the same three-pane approach as desktop but adds data-focusable
+  // and data-focus-group attributes for the DPAD nav hook, plus the TV
+  // capability banner for voice channels.
+  const renderTVLayout = () => (
+    <div className="h-full flex overflow-hidden bg-surface text-on-surface tv-layout" data-concord-layout="tv">
+      {/* Server sidebar — TV: icon-only rail with focus targets */}
+      <SilentBoundary>
+        <div data-focus-group="tv-main">
+          <ServerSidebar />
+        </div>
+      </SilentBoundary>
+
+      {/* Channel sidebar */}
+      <div className="flex min-h-0 tv-channel-sidebar" style={{ width: 320, minWidth: 200 }}>
+        <SilentBoundary>
+          <div className="w-full" data-focus-group="tv-main">
+            {dmActive ? <DMSidebar /> : <ChannelSidebar />}
+          </div>
+        </SilentBoundary>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 tv-content">
+        {/* TV capability banner — voice/video unavailable */}
+        {isTV && isVoiceChannel && !tvBannerDismissed && (
+          <div className="tv-capability-banner" role="alert">
+            <span className="material-symbols-outlined tv-capability-banner-icon">volume_off</span>
+            <span>Voice and video channels are not available on TV devices. Text chat works normally.</span>
+            <button
+              className="tv-capability-banner-dismiss"
+              onClick={() => setTvBannerDismissed(true)}
+              aria-label="Dismiss"
+              data-focusable="true"
+              data-focus-group="tv-main"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        )}
+        <div data-focus-group="tv-main">
+          {renderMainContent()}
+        </div>
+      </div>
+    </div>
+  );
+
   // INS-020: iPad explicitly renders the desktop three-pane layout so
   // the native iOS Tauri build gets the tablet UX regardless of CSS
   // breakpoints. Non-iPad clients use the existing Tailwind `md:`
   // split that already handles desktop browsers and phones.
   return (
     <>
-      {prefersTabletLayout ? (
+      {isTV ? (
+        // TV — three-pane with DPAD navigation and capability banners.
+        renderTVLayout()
+      ) : prefersTabletLayout ? (
         // iPad native — always three-pane, regardless of viewport width.
         <div className="h-full" data-concord-layout="tablet">
           {renderDesktopLayout()}

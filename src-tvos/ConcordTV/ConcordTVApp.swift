@@ -1,21 +1,35 @@
 // ConcordTVApp.swift
 // Concord tvOS — SwiftUI app entry point (Path C shell).
 //
-// This is the top-level SwiftUI App that hosts the Concord web client
-// inside a full-screen WKWebView. The web bundle loaded is the same
-// `client/dist` output shipped in all other Concord platforms.
+// Top-level SwiftUI App that drives the Concord Apple TV client.
+// Since WebKit is unavailable on tvOS, this is a fully native SwiftUI
+// frontend (not a webview wrapper). The app flow is:
 //
-// Implementation status: SCAFFOLD ONLY — structure committed, logic
-// deferred to post-v0.3 per the feasibility study at
-// docs/native-apps/appletv-feasibility.md.
+//   1. ServerPickerView — first-launch server configuration
+//   2. MainView (placeholder) — will host channel list + chat
+//
+// The bridge protocol (JSBridge.swift) persists server config to
+// UserDefaults so returning users skip the picker on subsequent launches.
 
 import SwiftUI
 
 @main
 struct ConcordTVApp: App {
+    @State private var serverConnected = false
+
     var body: some Scene {
         WindowGroup {
-            WebViewHost()
+            if serverConnected {
+                // Post-connection: show the main UI (channel list placeholder).
+                // WebViewHost serves as the placeholder until the native
+                // channel list and message view are implemented.
+                WebViewHost()
+            } else {
+                // First launch or no saved config: show the server picker.
+                ServerPickerView(onConnected: {
+                    serverConnected = true
+                })
+            }
         }
     }
 }

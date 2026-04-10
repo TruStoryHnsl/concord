@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/tv.css";
 
 @theme {
   /* ── Surface Hierarchy (Kinetic Node) ── */

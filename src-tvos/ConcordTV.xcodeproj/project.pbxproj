@@ -26,6 +26,8 @@
 		A1000001 /* ConcordTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
 		A1000002 /* WebViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
 		A1000003 /* JSBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
+		A1000004 /* ServerPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000006; };
+		A1000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000007; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +36,8 @@
 		A2000003 /* JSBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSBridge.swift; sourceTree = "<group>"; };
 		A2000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000005 /* ConcordTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ConcordTV.entitlements; sourceTree = "<group>"; };
+		A2000006 /* ServerPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerPickerView.swift; sourceTree = "<group>"; };
+		A2000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000010 /* ConcordTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ConcordTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -52,8 +56,10 @@
 				A2000001 /* ConcordTVApp.swift */,
 				A2000002 /* WebViewHost.swift */,
 				A2000003 /* JSBridge.swift */,
+				A2000006 /* ServerPickerView.swift */,
 				A2000004 /* Info.plist */,
 				A2000005 /* ConcordTV.entitlements */,
+				A2000007 /* Assets.xcassets */,
 			);
 			path = ConcordTV;
 			sourceTree = "<group>";
@@ -122,6 +128,7 @@
 				A1000001 /* ConcordTVApp.swift in Sources */,
 				A1000002 /* WebViewHost.swift in Sources */,
 				A1000003 /* JSBridge.swift in Sources */,
+				A1000004 /* ServerPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -142,6 +149,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1000005 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

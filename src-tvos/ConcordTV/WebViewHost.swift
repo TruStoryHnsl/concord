@@ -1,54 +1,73 @@
 // WebViewHost.swift
-// Concord tvOS — web content host view.
+// Concord tvOS — main content placeholder (post-server-picker).
 //
-// Hosts the Concord client UI on Apple TV. The tvOS SDK does NOT
-// include WebKit.framework (WKWebView is API_UNAVAILABLE(tvos)),
-// so the production path will either:
-//   (a) use JavaScriptCore + TVMLKit for a TVML-based shell, or
-//   (b) use a native SwiftUI frontend that talks directly to the
-//       Concord server API (no webview at all).
+// This view is shown after the user connects to a homeserver via
+// ServerPickerView. It serves as the placeholder for the native
+// SwiftUI channel list and message view that will be implemented
+// in a future sprint.
 //
-// The feasibility study (docs/native-apps/appletv-feasibility.md)
-// assumed WKWebView was available on tvOS — this scaffold corrects
-// that assumption. Path C is revised: SwiftUI-native frontend
-// backed by URLSession against the Concord API, not a webview shell.
+// The tvOS SDK does NOT include WebKit.framework, so the production
+// Concord tvOS client is a fully native SwiftUI frontend that talks
+// directly to the Concord/Matrix API via URLSession — not a webview.
 //
-// Implementation status: SCAFFOLD ONLY — placeholder UI committed,
-// real implementation deferred to post-v0.3.
+// Implementation status: PLACEHOLDER — shows connected server info
+// and a "coming soon" message. Real channel list + message view
+// will be implemented when the tvOS track becomes active.
 
 import SwiftUI
 
-/// SwiftUI view that will host the Concord client UI on Apple TV.
+/// Post-connection main view for the Concord tvOS app.
 ///
-/// The view is responsible for:
-///   1. Presenting the server picker on first launch
-///   2. Rendering chat channels, messages, and settings natively
-///   3. Handling tvOS focus/DPAD navigation via the UIFocus system
-///
-/// Since WebKit is unavailable on tvOS, this will be a native SwiftUI
-/// frontend — not a webview wrapper. The JS bridge protocol in
-/// JSBridge.swift is retained as the interface contract for the
-/// TypeScript side (tvOSHost.ts), which will be adapted to use
-/// URLSession-backed native calls instead of postMessage.
+/// Responsibilities (when fully implemented):
+///   1. Display the channel list from the connected homeserver
+///   2. Render messages in the selected channel
+///   3. Handle DPAD navigation via the tvOS UIFocus system
+///   4. Show settings and server management options
 struct WebViewHost: View {
+    private let bridge = ConcordJSBridge()
+
     var body: some View {
-        // TODO(post-v0.3): Replace with the native SwiftUI Concord
-        // client (server picker → channel list → message view).
-        VStack(spacing: 16) {
-            Image(systemName: "tv")
-                .font(.system(size: 80))
-                .foregroundColor(Color(red: 0x7C/255, green: 0x4D/255, blue: 0xFF/255))
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 64))
+                .foregroundColor(Color(red: 0x08/255, green: 0xC8/255, blue: 0x38/255))
+
             Text("Concord")
                 .font(.largeTitle)
                 .fontWeight(.bold)
                 .foregroundColor(.white)
+
+            // Show connected server URL from persisted config
+            if let config = bridge.getServerConfig(),
+               let serverName = config["serverName"] as? String ?? config["homeserverUrl"] as? String {
+                Text("Connected to \(serverName)")
+                    .font(.headline)
+                    .foregroundColor(Color(red: 0xA4/255, green: 0xA5/255, blue: 0xFF/255))
+            }
+
             Text("Apple TV")
                 .font(.headline)
                 .foregroundColor(.gray)
-            Text("Connect to a server to get started.")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-                .padding(.top, 8)
+
+            VStack(spacing: 8) {
+                Text("Channel list and messaging coming soon.")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+
+                Text("Voice and video channels are not available on Apple TV.")
+                    .font(.caption)
+                    .foregroundColor(Color(red: 0xFF/255, green: 0xA8/255, blue: 0xA3/255))
+            }
+            .padding(.top, 16)
+
+            Spacer()
+
+            Text("Press Menu to return to the server picker.")
+                .font(.caption)
+                .foregroundColor(Color(white: 0.5))
+                .padding(.bottom, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0x12/255, green: 0x12/255, blue: 0x14/255))

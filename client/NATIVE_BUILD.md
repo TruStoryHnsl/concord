@@ -550,36 +550,56 @@ If the smoke test passes, the AppImage and `.deb` in
 
 ## 9a. Apple TV (tvOS) scaffolding status
 
-**Status:** SCAFFOLDED — project structure committed at `src-tvos/`,
-implementation deferred to post-v0.3.
+**Status:** ACTIVE — native SwiftUI shell with server picker, bridge
+implementation, asset catalog, and build script committed.
 
 The Apple TV client follows **Path C** from the feasibility study
-(`docs/native-apps/appletv-feasibility.md`): a standalone SwiftUI +
-WKWebView app that loads the same `client/dist` bundle used by all
-other platforms. Unlike the Google TV target, tvOS cannot use the
+(`docs/native-apps/appletv-feasibility.md`): a standalone SwiftUI
+native frontend. Unlike the Google TV target, tvOS cannot use the
 Tauri Android shell — it is a completely separate Xcode project with
-no Rust runtime.
+no Rust runtime. Since WebKit is unavailable on tvOS, the app is a
+fully native SwiftUI frontend (not a webview wrapper) that talks to
+the Concord/Matrix API via URLSession.
 
-**What is committed now:**
+**What is committed:**
 
 - `src-tvos/ConcordTV.xcodeproj/` — Xcode project targeting tvOS 17.0+
-- `src-tvos/ConcordTV/ConcordTVApp.swift` — SwiftUI `@main` app entry
-- `src-tvos/ConcordTV/WebViewHost.swift` — WKWebView host (placeholder)
-- `src-tvos/ConcordTV/JSBridge.swift` — 4-function bridge protocol + stubs
+- `src-tvos/ConcordTV/ConcordTVApp.swift` — SwiftUI `@main` app entry with server picker flow
+- `src-tvos/ConcordTV/ServerPickerView.swift` — Native server picker (URL input, validation, persistence)
+- `src-tvos/ConcordTV/WebViewHost.swift` — Post-connection placeholder (channel list + chat coming later)
+- `src-tvos/ConcordTV/JSBridge.swift` — 4-function bridge with real UserDefaults + ASWebAuthenticationSession
 - `src-tvos/ConcordTV/Info.plist` — tvOS plist with network keys
 - `src-tvos/ConcordTV/ConcordTV.entitlements` — keychain + multicast
+- `src-tvos/ConcordTV/Assets.xcassets/` — Asset catalog with App Icon + Top Shelf Image placeholders
 - `client/src/api/tvOSHost.ts` — TypeScript bridge client (no-ops on non-tvOS)
+- `client/src/styles/tv.css` — 10-foot UI CSS overrides (active when `data-tv="true"`)
+- `client/src/components/tv/TVCapabilityBanner.tsx` — Voice/video unavailability banner for TV
+- `scripts/build_tvos_native.sh` — Build script for orrpheus
 
 **What is NOT committed yet:**
 
-- Real WKWebView instantiation + bundle loading
-- Bridge function implementations (UserDefaults, ASWebAuthenticationSession)
-- UIFocus <-> DOM focus bridging
-- Asset catalogs (App Icon, Top Shelf Image)
+- Native channel list + message view (server picker + placeholder only)
+- Real UIFocus <-> SwiftUI focus bridging (focusChanged is a stub)
+- Actual App Icon and Top Shelf artwork (catalog structure is placeholder)
 - CI/CD pipeline for tvOS
 
-**When to begin:** see `src-tvos/README.md` and the feasibility study
-for the prerequisites checklist. Target: no earlier than Q3 2026.
+**Build command (orrpheus):**
+
+```bash
+# Release build (device):
+./scripts/build_tvos_native.sh
+
+# Debug build (simulator):
+./scripts/build_tvos_native.sh --sim
+
+# Show help:
+./scripts/build_tvos_native.sh --help
+```
+
+Artifacts land in `src-tvos/build/Build/Products/`.
+
+**When to begin full implementation:** see `src-tvos/README.md` and the
+feasibility study for the prerequisites checklist.
 
 ---
 

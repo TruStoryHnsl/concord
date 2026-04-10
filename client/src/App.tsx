@@ -46,7 +46,7 @@ export default function App() {
   // implicit origin-based server to fall back to. The decision is
   // extracted into `computeInitialServerConnected` for unit testing.
   const hasNewConfig = useServerConfigStore((s) => s.config !== null);
-  const { isMobile } = usePlatform();
+  const { isMobile, isTV } = usePlatform();
   const [serverConnected, setServerConnected] = useState(() =>
     computeInitialServerConnected({
       isDesktop: isDesktopMode(),
@@ -91,6 +91,21 @@ export default function App() {
       `${chatFontSize}px`,
     );
   }, [chatFontSize]);
+
+  // TV mode: set the data-tv attribute on <html> so all TV CSS rules
+  // in styles/tv.css and the focus ring styles in index.css activate.
+  // Removed when the flag flips false (e.g. window resize in dev tools).
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (isTV) {
+      document.documentElement.setAttribute("data-tv", "true");
+    } else {
+      document.documentElement.removeAttribute("data-tv");
+    }
+    return () => {
+      document.documentElement.removeAttribute("data-tv");
+    };
+  }, [isTV]);
 
   useEffect(() => {
     restoreSession();
