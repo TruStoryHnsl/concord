@@ -497,7 +497,9 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
         )}
       </div>
 
-      {!mobile && <UserBar userId={userId} logout={logout} />}
+      {/* UserBar is rendered by ChatLayout so it can span the full
+          width of Sources + ServerSidebar + ChannelSidebar. The
+          inline mount that used to live here has been removed. */}
 
       {showInviteModal && (
         <InviteModal serverId={server.id} onClose={() => setShowInviteModal(false)} />

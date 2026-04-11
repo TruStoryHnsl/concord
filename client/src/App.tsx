@@ -282,7 +282,19 @@ export default function App() {
   // states — but they no longer gate ChatLayout visibility.
   const [addSourceModalOpen, setAddSourceModalOpen] = useState(false);
   const openAddSourceModal = useCallback(() => setAddSourceModalOpen(true), []);
-  const closeAddSourceModal = useCallback(() => setAddSourceModalOpen(false), []);
+  // Cancelling the modal must also reset `serverConnected` back to
+  // `false`. Without this, the modal's internal ternary —
+  //   !isLoggedIn && !serverConnected → ServerPickerScreen
+  //   !isLoggedIn                     → LoginForm
+  // — would open directly to LoginForm on the NEXT `+` tile click,
+  // because the earlier picker run had already flipped the flag true.
+  // Resetting on close means every re-open starts at the picker,
+  // which is what the user expects when they abort mid-wizard and
+  // come back later.
+  const closeAddSourceModal = useCallback(() => {
+    setAddSourceModalOpen(false);
+    setServerConnected(false);
+  }, []);
 
   // Auto-close the add-source modal once the user is authenticated.
   // `isLoggedIn` flips true from inside LoginForm's successful-login
@@ -353,7 +365,15 @@ export default function App() {
         >
           <span className="material-symbols-outlined text-on-surface">close</span>
         </button>
-        {!isLoggedIn && !serverConnected ? (
+        {/* Wizard stages keyed only on `serverConnected` so the modal
+            renders the picker even when the user is already logged in
+            on a prior source (add-second-source flow). Previously the
+            ternary checked `!isLoggedIn && !serverConnected` which
+            fell through to `null` for an already-authed user, leaving
+            the modal visually empty. Stage 3 (`serverConnected &&
+            isLoggedIn`) is handled by the useEffect above which
+            auto-closes the modal. */}
+        {!serverConnected ? (
           <ServerPickerScreen onConnected={() => setServerConnected(true)} />
         ) : !isLoggedIn ? (
           <LoginForm />

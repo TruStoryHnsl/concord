@@ -373,8 +373,14 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // origin IS the source and a picker column has no meaning there.
   const renderDesktopLayout = () => (
     <div className="h-full flex overflow-hidden bg-surface text-on-surface">
-      {/* Left stack — columns on top, UserBar below */}
-      <div className="flex flex-col min-h-0">
+      {/* Left stack — columns on top, UserBar below.
+          `flex-shrink-0` is load-bearing: without it, a narrow
+          viewport (split screen, small tablet) can compress the
+          stack below the sum of its children's intrinsic widths and
+          the UserBar ends up narrower than the three columns above
+          it — exactly the defect the spanning layout was introduced
+          to prevent. */}
+      <div className="flex flex-col min-h-0 flex-shrink-0">
         <div className="flex flex-1 min-h-0">
           {/* Sources column — native only */}
           {platform.isTauri && (
