@@ -220,7 +220,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
                 type="text"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                placeholder="concorrd.com"
+                placeholder="chat.example.com"
                 autoFocus
                 required
                 data-testid="server-picker-hostname-input"

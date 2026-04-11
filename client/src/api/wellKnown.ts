@@ -222,7 +222,7 @@ async function fetchWellKnown<T>(
 /**
  * Discover the homeserver + Concord API endpoints for `host`.
  *
- * @param host User-entered hostname, no scheme prefix (e.g. `concorrd.com`).
+ * @param host User-entered hostname, no scheme prefix (e.g. `chat.example.com`).
  * @returns A fully-populated {@link HomeserverConfig}.
  *
  * @throws {@link DnsResolutionError} if the host cannot be reached at all.

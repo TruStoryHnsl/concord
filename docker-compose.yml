@@ -145,6 +145,13 @@ services:
     command: caddy run --config /etc/concord-config/Caddyfile --adapter caddyfile
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
+      # Substituted into the inline `.well-known/matrix/*` responses
+      # so the federation discovery documents advertise the operator's
+      # actual hostname. Without this passthrough, Caddy expands
+      # {$CONDUWUIT_SERVER_NAME} to empty and m.homeserver.base_url
+      # becomes literally "https://" — breaking native clients that
+      # try to resolve the homeserver from well-known discovery.
+      CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
     depends_on:
       conduwuit:
         condition: service_started

@@ -1099,8 +1099,8 @@ function QuickActionButton({
  *      the web deploy where the picker is never shown.
  *
  * Rendered inline in the top bar, small and unobtrusive. On mobile
- * the label truncates at the first dot so "concorrd.com" becomes
- * "concorrd" to save horizontal space; tapping is NOT wired to
+ * the label truncates at the first dot so "chat.example.com" becomes
+ * "chat" to save horizontal space; tapping is NOT wired to
  * anything (purely informational for now).
  */
 function ConnectedHostLabel({ compact = false }: { compact?: boolean }) {

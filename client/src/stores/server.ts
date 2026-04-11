@@ -189,8 +189,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
 
     const userId = client.getUserId() ?? "";
-    // Derive the local homeserver domain from the user id ("@corr:concorrd.com"
-    // -> "concorrd.com"). Any joined room whose id shares this suffix lives on
+    // Derive the local homeserver domain from the user id ("@user:chat.example.com"
+    // -> "chat.example.com"). Any joined room whose id shares this suffix lives on
     // the local homeserver and is, by definition, NOT federated. Such rooms
     // fall into two categories:
     //

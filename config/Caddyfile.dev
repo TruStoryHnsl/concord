@@ -26,18 +26,17 @@
 
     # Matrix well-known — see Caddyfile (production) for the full
     # rationale. tl;dr: these are static files, not dynamic endpoints.
-    # Serving them inline from Caddy unblocks federation discovery —
-    # without them, peers fall back to port 8448 which is not exposed
-    # through the Cloudflare proxy. INS-026, 2026-04-08.
+    # Instance-agnostic via CONDUWUIT_SERVER_NAME env var so the dev
+    # compose override works on any operator's deployment.
     handle /.well-known/matrix/server {
         header Content-Type "application/json"
         header Access-Control-Allow-Origin "*"
-        respond `{"m.server":"concorrd.com:443"}` 200
+        respond `{"m.server":"{$CONDUWUIT_SERVER_NAME}:443"}` 200
     }
     handle /.well-known/matrix/client {
         header Content-Type "application/json"
         header Access-Control-Allow-Origin "*"
-        respond `{"m.homeserver":{"base_url":"https://concorrd.com"}}` 200
+        respond `{"m.homeserver":{"base_url":"https://{$CONDUWUIT_SERVER_NAME}"}}` 200
     }
 
     # Concord-specific well-known (INS-027) — dynamic endpoint served

@@ -615,11 +615,13 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     )
     return JSONResponse(status_code=500, content=safe_response.model_dump())
 
+# Default CORS origins for local development only. Operators deploying
+# this as a generic application MUST set `CORS_ORIGINS` in the .env file
+# to add their public domain(s). Hardcoding an instance-specific host
+# here would leak that host into every distributed copy of the source.
 _default_origins = (
-    "https://concorrd.com,"
-    "https://www.concorrd.com,"
-    "http://localhost:5173,"
-    "http://localhost:8080"
+    "http://localhost:5173,"   # Vite dev server
+    "http://localhost:8080"    # Caddy dev / staging
 )
 allowed_origins = os.getenv("CORS_ORIGINS", _default_origins).split(",")
 

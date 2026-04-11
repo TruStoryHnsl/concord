@@ -43,7 +43,7 @@ async def test_returns_200_without_auth(client, monkeypatch):
     problem where the client can't discover the auth endpoint without
     auth'ing to the auth endpoint.
     """
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
 
     resp = await client.get("/.well-known/concord/client")
     assert resp.status_code == 200, resp.text
@@ -58,8 +58,8 @@ async def test_response_shape_matches_contract(client, monkeypatch):
     ``client/src/api/wellKnown.ts``) depends on this exact shape —
     any drift breaks every native build in the wild.
     """
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
-    monkeypatch.setenv("INSTANCE_NAME", "Concorrd Test")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
+    monkeypatch.setenv("INSTANCE_NAME", "Example Instance")
 
     resp = await client.get("/.well-known/concord/client")
     assert resp.status_code == 200
@@ -82,9 +82,9 @@ async def test_response_shape_matches_contract(client, monkeypatch):
         assert isinstance(f, str) and len(f) > 0
 
     # Value checks against the mocked env.
-    assert body["api_base"] == "https://concorrd.com/api"
-    assert body["livekit_url"] == "wss://concorrd.com/livekit/"
-    assert body["instance_name"] == "Concorrd Test"
+    assert body["api_base"] == "https://chat.example.com/api"
+    assert body["livekit_url"] == "wss://chat.example.com/livekit/"
+    assert body["instance_name"] == "Example Instance"
 
 
 async def test_public_base_url_override_wins(client, monkeypatch):
@@ -95,7 +95,7 @@ async def test_public_base_url_override_wins(client, monkeypatch):
     (e.g. ``https://homelab.example.net/concord``) where the server
     name alone can't synthesise the right public URL.
     """
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://homelab.example.net/concord")
 
     resp = await client.get("/.well-known/concord/client")
@@ -106,7 +106,7 @@ async def test_public_base_url_override_wins(client, monkeypatch):
     # LiveKit resolution is still keyed on CONDUWUIT_SERVER_NAME —
     # documented behaviour, pinned here so future refactors that
     # change the resolution source are caught.
-    assert body["livekit_url"] == "wss://concorrd.com/livekit/"
+    assert body["livekit_url"] == "wss://chat.example.com/livekit/"
 
 
 async def test_public_base_url_trailing_slash_stripped(client, monkeypatch):
@@ -156,7 +156,7 @@ async def test_instance_name_optional(client, monkeypatch):
     collapse those into one case and cause the picker UI to display
     the hostname label twice.
     """
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
     # No INSTANCE_NAME set.
 
     resp = await client.get("/.well-known/concord/client")
@@ -175,7 +175,7 @@ async def test_features_list_is_stable(client, monkeypatch):
     feature, update the assertion AND document the removal in PLAN.md
     so downstream clients know to drop their check.
     """
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
 
     resp = await client.get("/.well-known/concord/client")
     body = resp.json()
