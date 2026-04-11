@@ -102,7 +102,11 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
             Use the <strong className="text-on-surface">+</strong> button to create or join a server
           </p>
         </div>
-        {!mobile && <UserBar userId={userId} logout={logout} />}
+        {/* UserBar is now rendered by ChatLayout so it can span
+            Sources + ServerSidebar + ChannelSidebar columns. Mobile
+            still renders UserBar out of the account sheet / settings
+            surface, not here — the drawer + tab-bar structure is a
+            separate UX model. */}
       </div>
     );
   }
@@ -502,7 +506,9 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
         )}
       </div>
 
-      {!mobile && <UserBar userId={userId} logout={logout} />}
+      {/* UserBar is rendered by ChatLayout so it can span the full
+          width of Sources + ServerSidebar + ChannelSidebar. The
+          inline mount that used to live here has been removed. */}
 
       {showInviteModal && (
         <InviteModal serverId={server.id} onClose={() => setShowInviteModal(false)} />
@@ -730,6 +736,20 @@ function SortableChannelRow({
   );
 }
 
+/**
+ * UserBar — the bottom strip showing avatar, display name, settings
+ * gear, switch-server button, and logout.
+ *
+ * Historically this was rendered inline at the bottom of ChannelSidebar
+ * and was therefore confined to the channel-column width. The current
+ * contract (2026-04-10 user spec) puts it below the full "left stack"
+ * of Sources + ServerSidebar + ChannelSidebar columns, spanning all
+ * three horizontally and stopping at the left edge of the message
+ * input pane. ChatLayout owns the placement now, so this function is
+ * exported rather than kept local. The two inline mounts inside
+ * ChannelSidebar's own render tree were removed — ChatLayout renders
+ * UserBar exactly once in the desktop layout.
+ */
 export function UserBar({
   userId,
   logout,
@@ -738,22 +758,32 @@ export function UserBar({
   logout: () => void;
 }) {
   const openSettings = useSettingsStore((s) => s.openSettings);
-  const isNative = typeof window !== "undefined" && "__TAURI__" in window;
+  // `__TAURI_INTERNALS__` is the canonical Tauri v2 global; see the
+  // comment in `client/src/api/serverUrl.ts` for the full history.
+  const isNative =
+    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-  // "Switch server" — full disconnect from the current Concord
-  // instance. Wipes the sources store + serverConfig + Tauri-persisted
-  // `server_url`, then logs the user out and reloads the webview.
-  // The reload is necessary because `App.tsx` computes `serverConnected`
-  // once at mount; without a fresh mount the picker never re-appears.
-  // Native-only: "switching server" is meaningless in the browser
-  // since the origin IS the server.
+  // "Switch server" — full disconnect from the current Concord instance.
+  // Clears the INS-027 serverConfig store (which also bridges the
+  // blank string through to Tauri's persisted `server_url`), then
+  // logs the user out and reloads the webview.
+  //
+  // The reload is necessary because `App.tsx` computes
+  // `serverConnected` once at mount via `computeInitialServerConnected`;
+  // without a fresh mount the picker never re-appears and the user
+  // would see the LoginForm pointed at the same host instead of
+  // being able to choose a different one.
+  //
+  // Dynamic import of the serverConfig store keeps ChannelSidebar's
+  // static dependency graph lean — this path only fires on explicit
+  // user click, so paying the sync-import cost on every render would
+  // be wasteful.
+  //
+  // Native-only: in the browser the origin IS the server — switching
+  // would mean navigating to a different domain, which is outside
+  // this app's responsibility.
   const handleSwitchServer = async () => {
-    const { useSourcesStore } = await import("../../stores/sources");
     const { useServerConfigStore } = await import("../../stores/serverConfig");
-    const sourcesState = useSourcesStore.getState();
-    for (const src of sourcesState.sources) {
-      sourcesState.removeSource(src.id);
-    }
     useServerConfigStore.getState().clearHomeserver();
     logout();
     if (typeof window !== "undefined") {

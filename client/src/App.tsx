@@ -6,7 +6,7 @@ import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
 import { useServerConfigStore } from "./stores/serverConfig";
-import { isDesktopMode, hasServerUrl } from "./api/serverUrl";
+import { isDesktopMode } from "./api/serverUrl";
 import { usePlatform } from "./hooks/usePlatform";
 import { computeInitialServerConnected } from "./serverPickerGate";
 import { redeemInvite } from "./api/concord";
@@ -35,17 +35,19 @@ export { INVITE_STORAGE_KEY };
 
 export default function App() {
   // Desktop/native mode: require a server picker pass before anything
-  // else. INS-027 landed the `serverConfig` store + ServerPickerScreen
-  // as the modern first-launch flow; the picker is skipped when the
-  // store already has a config, OR when the legacy `_serverUrl` is set
-  // (for Tauri users who configured a server before INS-027 shipped —
-  // their existing URL keeps working without being kicked through the
-  // picker again).
+  // else. Native apps ALWAYS start hollow — no pre-configured server,
+  // no "implicit" target. The picker is the first thing a Tauri build
+  // sees on first launch, and the only way to skip it is to have
+  // completed the picker in a previous session (persisted via the
+  // zustand `serverConfig` store, NOT via the legacy Tauri
+  // plugin-store `server_url` slot, which has been retired because it
+  // could silently skip the picker forever if a stale value leaked
+  // through Syncthing or a prior install).
   //
-  // INS-020 extension: native mobile Tauri builds AND mobile browsers
-  // also need the picker on first launch because they have no
-  // implicit origin-based server to fall back to. The decision is
-  // extracted into `computeInitialServerConnected` for unit testing.
+  // Mobile web also goes through the picker — it has no implicit
+  // origin-based server association either. Desktop web (non-Tauri,
+  // non-mobile) is the one case that boots straight into the chat
+  // shell because its origin IS the server.
   const hasNewConfig = useServerConfigStore((s) => s.config !== null);
   const { isMobile, isTV } = usePlatform();
   const [serverConnected, setServerConnected] = useState(() =>
@@ -53,7 +55,6 @@ export default function App() {
       isDesktop: isDesktopMode(),
       isMobile,
       hasNewConfig,
-      hasLegacyUrl: hasServerUrl(),
     }),
   );
 
@@ -287,16 +288,50 @@ export default function App() {
     />
   ) : null;
 
-  // Native mode: show the first-launch server picker when no
-  // HomeserverConfig has been selected yet.
-  if (!serverConnected) {
-    return (
-      <>
-        <ServerPickerScreen onConnected={() => setServerConnected(true)} />
-        {launchOverlay}
-      </>
-    );
-  }
+  // Hollow-shell-first contract (2026-04-10 user spec): native builds
+  // ALWAYS render the full ChatLayout on boot, regardless of whether a
+  // server has been picked or the user is logged in. The "add source"
+  // flow lives inside the Sources column's `+` tile and opens the
+  // ServerPickerScreen as a modal overlay. The old boot-time gate
+  // (`if (!serverConnected) return <ServerPickerScreen />`) has been
+  // retired — the picker is no longer a pre-shell modal.
+  //
+  // `addSourceModalOpen` drives the modal. ChatLayout's SourcesPanel
+  // calls back into `openAddSourceModal` when the user clicks `+`.
+  //
+  // `serverConnected` and `setServerConnected` remain as state so the
+  // existing modal-success path can still flip App out of any transient
+  // states — but they no longer gate ChatLayout visibility.
+  const [addSourceModalOpen, setAddSourceModalOpen] = useState(false);
+  const openAddSourceModal = useCallback(() => setAddSourceModalOpen(true), []);
+  // Cancelling the modal must also reset `serverConnected` back to
+  // `false`. Without this, the modal's internal ternary —
+  //   !isLoggedIn && !serverConnected → ServerPickerScreen
+  //   !isLoggedIn                     → LoginForm
+  // — would open directly to LoginForm on the NEXT `+` tile click,
+  // because the earlier picker run had already flipped the flag true.
+  // Resetting on close means every re-open starts at the picker,
+  // which is what the user expects when they abort mid-wizard and
+  // come back later.
+  const closeAddSourceModal = useCallback(() => {
+    setAddSourceModalOpen(false);
+    setServerConnected(false);
+  }, []);
+
+  // Auto-close the add-source modal once the user is authenticated.
+  // `isLoggedIn` flips true from inside LoginForm's successful-login
+  // path. This effect MUST be declared before the early returns below
+  // (`if (isLoading) return ...`, `if (path.startsWith("/submit/"))
+  // return ...`) — React's rules of hooks require a consistent hook
+  // call order between renders, and an early return followed by a
+  // useEffect trips "Rendered more hooks than during the previous
+  // render" the instant `isLoading` flips, which ErrorBoundary catches
+  // and renders as a blank surface.
+  useEffect(() => {
+    if (isLoggedIn && addSourceModalOpen) {
+      closeAddSourceModal();
+    }
+  }, [isLoggedIn, addSourceModalOpen, closeAddSourceModal]);
 
   // Public submit page — no auth required
   const path = window.location.pathname;
@@ -321,58 +356,97 @@ export default function App() {
     );
   }
 
-  // Authenticated content, optionally wrapped in LiveKitRoom
-  const authenticatedContent = (
+  // Shell content. Rendered at all times per the hollow-shell-first
+  // contract (2026-04-10). The child components — SourcesPanel,
+  // ServerSidebar, ChannelSidebar, main content area — each handle
+  // their own empty states when there is no source / no server / no
+  // authenticated Matrix client, so this tree renders cleanly even
+  // during the first-launch hollow state.
+  const shellContent = (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
-        <ChatLayout />
+        <ChatLayout onAddSource={openAddSourceModal} />
       </div>
       <VoiceConnectionBar />
       <DirectInviteBanner />
     </div>
   );
 
+  // The "add source" wizard modal. Opened by the `+` tile in
+  // SourcesPanel; advances through the existing ServerPickerScreen and
+  // (if the user is not already authenticated on the picked instance)
+  // the LoginForm. Both sub-components stay fullscreen-shaped but are
+  // displayed as a centred overlay inside the modal container. On
+  // successful picker connection the flow falls through to LoginForm;
+  // when `isLoggedIn` flips true the modal auto-closes via the effect
+  // below.
+  const addSourceModal = addSourceModalOpen ? (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center">
+      <div className="relative w-full h-full overflow-auto">
+        <button
+          type="button"
+          onClick={closeAddSourceModal}
+          className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors"
+          title="Cancel"
+          aria-label="Cancel add source"
+        >
+          <span className="material-symbols-outlined text-on-surface">close</span>
+        </button>
+        {/* Wizard stages keyed only on `serverConnected` so the modal
+            renders the picker even when the user is already logged in
+            on a prior source (add-second-source flow). Previously the
+            ternary checked `!isLoggedIn && !serverConnected` which
+            fell through to `null` for an already-authed user, leaving
+            the modal visually empty. Stage 3 (`serverConnected &&
+            isLoggedIn`) is handled by the useEffect above which
+            auto-closes the modal. */}
+        {!serverConnected ? (
+          <ServerPickerScreen onConnected={() => setServerConnected(true)} />
+        ) : !isLoggedIn ? (
+          <LoginForm />
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <>
       <ErrorBoundary>
-        {isLoggedIn ? (
-          voiceConnected && voiceToken && livekitUrl ? (
-            <LiveKitRoom
-              token={voiceToken}
-              serverUrl={livekitUrl}
-              connectOptions={{
-                autoSubscribe: true,
-                ...(iceServers.length > 0 && {
-                  rtcConfig: {
-                    iceServers: [
-                      { urls: "stun:stun.l.google.com:19302" },
-                      ...iceServers,
-                    ],
-                  },
-                }),
-              }}
-              audio={micGranted}
-              video={false}
-              options={{
-                audioCaptureDefaults: {
-                  echoCancellation,
-                  noiseSuppression,
-                  autoGainControl,
-                  ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
+        {voiceConnected && voiceToken && livekitUrl ? (
+          <LiveKitRoom
+            token={voiceToken}
+            serverUrl={livekitUrl}
+            connectOptions={{
+              autoSubscribe: true,
+              ...(iceServers.length > 0 && {
+                rtcConfig: {
+                  iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                    ...iceServers,
+                  ],
                 },
-              }}
-              onDisconnected={handleVoiceDisconnect}
-              style={{ display: "contents" }}
-            >
-              <CustomAudioRenderer />
-              {authenticatedContent}
-            </LiveKitRoom>
-          ) : (
-            authenticatedContent
-          )
+              }),
+            }}
+            audio={micGranted}
+            video={false}
+            options={{
+              audioCaptureDefaults: {
+                echoCancellation,
+                noiseSuppression,
+                autoGainControl,
+                ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
+              },
+            }}
+            onDisconnected={handleVoiceDisconnect}
+            style={{ display: "contents" }}
+          >
+            <CustomAudioRenderer />
+            {shellContent}
+          </LiveKitRoom>
         ) : (
-          <LoginForm />
+          shellContent
         )}
+        {addSourceModal}
         <ToastContainer />
       </ErrorBoundary>
       {launchOverlay}

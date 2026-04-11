@@ -23,15 +23,6 @@ from routers import servers, invites, registration, voice, soundboard, webhooks,
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Auto-migrate old database filename from pre-rename era (concorrd → concord)
-    from config import DATA_DIR
-    old_db = DATA_DIR / "concorrd.db"
-    new_db = DATA_DIR / "concord.db"
-    if old_db.exists() and not new_db.exists():
-        old_db.rename(new_db)
-        import logging
-        logging.getLogger(__name__).info("Migrated database: concorrd.db -> concord.db")
-
     await init_db()
 
     # Migrate existing tables: add new columns if missing
@@ -615,11 +606,13 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     )
     return JSONResponse(status_code=500, content=safe_response.model_dump())
 
+# Default CORS origins for local development only. Operators deploying
+# this as a generic application MUST set `CORS_ORIGINS` in the .env file
+# to add their public domain(s). Hardcoding an instance-specific host
+# here would leak that host into every distributed copy of the source.
 _default_origins = (
-    "https://concorrd.com,"
-    "https://www.concorrd.com,"
-    "http://localhost:5173,"
-    "http://localhost:8080"
+    "http://localhost:5173,"   # Vite dev server
+    "http://localhost:8080"    # Caddy dev / staging
 )
 allowed_origins = os.getenv("CORS_ORIGINS", _default_origins).split(",")
 

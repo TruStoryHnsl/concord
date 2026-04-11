@@ -194,27 +194,17 @@ export function useMatrixSync() {
         .join(",");
       if (sig === prevIdsSig) return;
       prevIdsSig = sig;
-      // Dynamic imports so this file doesn't pull the whole
-      // server store into every consumer of useMatrixSync.
-      Promise.all([
-        import("../stores/server"),
-        import("../stores/federatedInstances"),
-      ])
-        .then(([{ useServerStore }, { useFederatedInstanceStore }]) => {
+      // Dynamic import so this file doesn't pull the whole server
+      // store into every consumer of useMatrixSync. The old
+      // federatedInstances catalog probe loop (per-host
+      // `/.well-known/concord/client` probes) has been removed
+      // along with the store under the 2026-04-11 architecture
+      // rule — federated homeservers are their own Sources now,
+      // not an ambient catalog the client probes in the background.
+      import("../stores/server")
+        .then(({ useServerStore }) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           useServerStore.getState().hydrateFederatedRooms(client as any);
-          const instanceStore = useFederatedInstanceStore.getState();
-          // Probe each catalog host for /.well-known/concord/client
-          // exactly once per session — skip hosts that have already
-          // been classified as Concord (isConcord=true) or already
-          // have a live status.
-          for (const [host, inst] of Object.entries(
-            instanceStore.instances,
-          )) {
-            if (inst.isConcord) continue;
-            if (inst.status === "live") continue;
-            instanceStore.probeConcordHost(host);
-          }
         })
         .catch((err) => {
           console.warn("federated hydration failed:", err);

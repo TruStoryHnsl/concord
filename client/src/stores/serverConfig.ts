@@ -27,9 +27,13 @@
  *   strictly additive.
  *
  * Detection of the Tauri branch follows the same convention as
- * `serverUrl.ts`: `typeof window !== "undefined" && "__TAURI__" in window`.
- * This is checked lazily at runtime rather than at module import so
- * tests (which run in jsdom) can stub it.
+ * `serverUrl.ts`: `typeof window !== "undefined" && "__TAURI_INTERNALS__"
+ * in window`. `__TAURI_INTERNALS__` is the canonical Tauri v2 global
+ * (the `@tauri-apps/api` package itself reads from it); the legacy
+ * `__TAURI__` key is only present when `app.withGlobalTauri: true` is
+ * explicitly opted into in `tauri.conf.json`. This is checked lazily at
+ * runtime rather than at module import so tests (which run in jsdom)
+ * can stub it.
  */
 
 import { create } from "zustand";
@@ -70,12 +74,15 @@ const STORAGE_KEY = "concord_server_config";
 
 /**
  * Detect whether the current runtime is Tauri. Matches the convention
- * in `serverUrl.ts` (`typeof window !== "undefined" && "__TAURI__" in
- * window`). Pulled out as a function so tests can mock it via
- * `vi.stubGlobal` without having to rewrite the module import chain.
+ * in `serverUrl.ts` — uses `__TAURI_INTERNALS__`, the canonical Tauri v2
+ * global that `@tauri-apps/api` itself consults. The v1 `__TAURI__` key
+ * is NOT present unless `app.withGlobalTauri: true` is opted into, which
+ * this project does not set. Pulled out as a function so tests can mock
+ * it via `vi.stubGlobal` without having to rewrite the module import
+ * chain.
  */
 export function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI__" in window;
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 export const useServerConfigStore = create<ServerConfigState>()(
@@ -85,20 +92,21 @@ export const useServerConfigStore = create<ServerConfigState>()(
 
       setHomeserver: (config) => {
         set({ config });
-        // Best-effort bridge to the Tauri-side store. The legacy
-        // `setServerUrl` helper persists to Tauri's own store via
-        // `invoke("set_server_url")`; we fire-and-forget so web builds
-        // don't pay any cost. Persistence failures are non-fatal —
-        // the in-memory store is still updated and the current
-        // session continues. The user will need to re-pick on next
-        // launch; surfacing this as a toast is UI-level concern.
+        // In-process only: update the legacy `_serverUrl` module var
+        // so code paths that still read `getHomeserverUrl()` (some
+        // Matrix SDK bootstrap paths) see the chosen host. Native
+        // only — web mode reads `window.location.origin` instead of
+        // `_serverUrl`, so the update would be a noop on the browser.
+        //
+        // Does NOT write to Tauri's plugin-store. See the comments
+        // on `setServerUrl` in `serverUrl.ts` and on
+        // `computeInitialServerConnected` in `serverPickerGate.ts`
+        // for the full rationale — the TL;DR is that a persisted
+        // `server_url` slot was what kept leaking the operator's
+        // instance hostname between installs.
         if (isTauriRuntime()) {
-          // Use the homeserver URL as the Tauri-side server URL so
-          // Matrix SDK code paths reading `getHomeserverUrl()`
-          // continue to work. The Concord API base lives in this
-          // store for the `getApiBase()` refactor to read.
           void setServerUrl(config.homeserver_url).catch(() => {
-            /* non-fatal — see comment above */
+            /* non-fatal */
           });
         }
       },
@@ -107,7 +115,7 @@ export const useServerConfigStore = create<ServerConfigState>()(
         set({ config: null });
         if (isTauriRuntime()) {
           void setServerUrl("").catch(() => {
-            /* non-fatal — see setHomeserver */
+            /* non-fatal */
           });
         }
       },

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-DATA_DIR = Path(os.getenv("CONCORD_DATA_DIR", os.getenv("CONCORRD_DATA_DIR", "/data")))
+DATA_DIR = Path(os.getenv("CONCORD_DATA_DIR", "/data"))
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'concord.db'}"
 SOUNDBOARD_DIR = DATA_DIR / "soundboard"
 

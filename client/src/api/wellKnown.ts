@@ -54,7 +54,7 @@ export interface HomeserverConfig {
   identity_server_url?: string;
   /** Optional LiveKit signaling URL (wss:// or https://). */
   livekit_url?: string;
-  /** Optional human-readable instance name (e.g. "Concorrd"). */
+  /** Optional human-readable instance name (e.g. "Example Community"). */
   instance_name?: string;
   /** Optional list of advertised feature flags. */
   features?: string[];
@@ -252,7 +252,7 @@ async function fetchWellKnown<T>(
 /**
  * Discover the homeserver + Concord API endpoints for `host`.
  *
- * @param host User-entered hostname, no scheme prefix (e.g. `concorrd.com`).
+ * @param host User-entered hostname, no scheme prefix (e.g. `chat.example.com`).
  * @returns A fully-populated {@link HomeserverConfig}.
  *
  * @throws {@link DnsResolutionError} if the host cannot be reached at all.

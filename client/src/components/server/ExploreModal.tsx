@@ -189,7 +189,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
         //
         // matrix-js-sdk's `joinRoom` returns the joined Room object,
         // whose `.roomId` is the canonical matrix room id. Even when
-        // `roomIdOrAlias` is an alias (e.g. `#welcome:mozilla.org`),
+        // `roomIdOrAlias` is an alias (e.g. `#welcome:remote.example`),
         // the resolved roomId is what Concord stores in
         // `Channel.matrix_room_id`, so that's the key we use for
         // sidebar navigation below.

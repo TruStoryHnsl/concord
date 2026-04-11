@@ -76,8 +76,8 @@ def _generate_turn_credentials(user_id: str) -> list[IceServer]:
     turn_host = os.getenv("TURN_HOST", TURN_DOMAIN)
     return [
         # TURNS (TLS) on port 443 — sslh on the host multiplexes by SNI:
-        #   turn.concorrd.com → coturn TLS (port 5349)
-        #   everything else   → npm (HTTPS)
+        #   turn.<domain> → coturn TLS (port 5349)
+        #   everything else → reverse proxy (HTTPS)
         # This works through any firewall since 443 is always open.
         IceServer(
             urls=[
