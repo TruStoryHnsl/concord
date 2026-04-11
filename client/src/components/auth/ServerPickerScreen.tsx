@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   discoverHomeserver,
   DnsResolutionError,
@@ -8,6 +8,7 @@ import {
   type HomeserverConfig,
 } from "../../api/wellKnown";
 import { useServerConfigStore } from "../../stores/serverConfig";
+import { usePlatform } from "../../hooks/usePlatform";
 
 /**
  * First-launch server picker for native Concord builds (INS-027).
@@ -98,6 +99,22 @@ export function ServerPickerScreen({ onConnected }: Props) {
   const [pasteBlob, setPasteBlob] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const setHomeserver = useServerConfigStore((s) => s.setHomeserver);
+
+  // TV shell: a TV device picks up the wrapper class + focus-group
+  // attributes below so DPAD navigation (useDpadNav) has a target
+  // group to hand focus to, and tv.css can style the picker as a
+  // 10-foot screen. Desktop / mobile flags are ignored here — this
+  // branch is purely additive.
+  const { isTV } = usePlatform();
+  const hostInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (!isTV || state.phase !== "input") return;
+    // On TV the autofocus attribute alone isn't always honored by
+    // WebKit-based TV shells; explicitly pull focus into the input
+    // once the input phase mounts so the DPAD ring has somewhere to
+    // land immediately.
+    hostInputRef.current?.focus();
+  }, [isTV, state.phase]);
 
   const handleConnect = useCallback(
     async (e: React.FormEvent) => {
@@ -198,8 +215,26 @@ export function ServerPickerScreen({ onConnected }: Props) {
     }
   }, [pasteBlob]);
 
+  // TV mode applies a second class to the outer wrapper so the
+  // `.tv-server-picker` rules in `client/src/styles/tv.css` take
+  // effect (large fonts, high-contrast inputs, vertical centering
+  // scaled for 10-foot viewing). data-focus-group on the wrapper
+  // scopes DPAD navigation to this screen only. The extra class is
+  // additive — desktop / mobile viewports render identically to the
+  // pre-TV layout.
+  const rootClassName = isTV
+    ? "h-screen bg-surface flex items-center justify-center mesh-background tv-server-picker"
+    : "h-screen bg-surface flex items-center justify-center mesh-background";
+  const tvFocusProps = isTV
+    ? { "data-focusable": "true", "data-focus-group": "tv-server-picker" }
+    : {};
+
   return (
-    <div className="h-screen bg-surface flex items-center justify-center mesh-background" data-testid="server-picker-screen">
+    <div
+      className={rootClassName}
+      data-testid="server-picker-screen"
+      data-tv-picker={isTV ? "true" : undefined}
+    >
       <div className="relative z-10 w-full max-w-md px-6">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-headline font-bold text-on-surface mb-2">
@@ -218,12 +253,14 @@ export function ServerPickerScreen({ onConnected }: Props) {
               </label>
               <input
                 type="text"
+                ref={hostInputRef}
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
                 placeholder="concorrd.com"
                 autoFocus
                 required
                 data-testid="server-picker-hostname-input"
+                {...tvFocusProps}
                 className="w-full px-4 py-3 bg-surface-container border border-outline-variant rounded-lg text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
               />
               <p className="text-xs text-on-surface-variant mt-1.5">
@@ -235,6 +272,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
               type="submit"
               disabled={host.trim().length === 0}
               data-testid="server-picker-connect-button"
+              {...tvFocusProps}
               className="w-full py-3 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface font-medium rounded-lg transition-all text-sm"
             >
               Connect
@@ -292,6 +330,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
               type="button"
               onClick={handleReset}
               data-testid="server-picker-retry-button"
+              {...tvFocusProps}
               className="w-full py-3 bg-surface-container-high hover:bg-surface-container-highest text-on-surface rounded-lg text-sm font-medium"
             >
               Try again
@@ -372,6 +411,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
                 type="button"
                 onClick={handleReset}
                 data-testid="server-picker-change-button"
+                {...tvFocusProps}
                 className="flex-1 py-3 bg-surface-container-high hover:bg-surface-container-highest text-on-surface rounded-lg text-sm font-medium"
               >
                 Change
@@ -380,6 +420,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
                 type="button"
                 onClick={handleConfirm}
                 data-testid="server-picker-confirm-button"
+                {...tvFocusProps}
                 className="flex-1 py-3 primary-glow hover:brightness-110 text-on-surface font-medium rounded-lg text-sm"
               >
                 Confirm

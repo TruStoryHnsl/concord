@@ -23,6 +23,7 @@ import { useSettingsStore } from "../../stores/settings";
 import { Avatar } from "../ui/Avatar";
 import { useUnreadCounts } from "../../hooks/useUnreadCounts";
 import { useVoiceParticipants } from "../../hooks/useVoiceParticipants";
+import { usePlatform } from "../../hooks/usePlatform";
 import { InviteModal } from "../server/InviteModal";
 
 interface ChannelSidebarProps {
@@ -45,6 +46,13 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
   const accessToken = useAuthStore((s) => s.accessToken);
   const logout = useAuthStore((s) => s.logout);
   const addToast = useToastStore((s) => s.addToast);
+
+  // TV mode — a 10-foot rendering flag pulled from the platform hook.
+  // When true, each channel row gets the `.tv-channel-item` class
+  // (styled in `client/src/styles/tv.css`) plus DPAD focus attributes
+  // so `useDpadNav({ group: "tv-main" })` can reach every row. The
+  // non-TV path is untouched.
+  const { isTV } = usePlatform();
 
   const unreadCounts = useUnreadCounts();
 
@@ -244,6 +252,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
         confirmDelete={confirmDeleteChannelId === ch.id}
         onSetConfirmDelete={(v) => setConfirmDeleteChannelId(v ? ch.id : null)}
         onDelete={() => handleDeleteChannel(ch.id)}
+        isTV={isTV}
       >
         {extras}
       </SortableChannelRow>
@@ -527,6 +536,10 @@ interface SortableChannelRowProps {
   confirmDelete: boolean;
   onSetConfirmDelete: (v: boolean) => void;
   onDelete: () => void;
+  // TV mode (INS-023): apply the `.tv-channel-item` class + DPAD focus
+  // attributes so the row is picked up by `useDpadNav({ group: "tv-main" })`
+  // and styled by the 10-foot rules in `client/src/styles/tv.css`.
+  isTV?: boolean;
   children?: ReactNode;
 }
 
@@ -551,6 +564,7 @@ function SortableChannelRow({
   confirmDelete,
   onSetConfirmDelete,
   onDelete,
+  isTV = false,
   children,
 }: SortableChannelRowProps) {
   const {
@@ -609,7 +623,11 @@ function SortableChannelRow({
       ) : (
         <button
           onClick={onChannelClick}
+          data-focusable={isTV ? "true" : undefined}
+          data-focus-group={isTV ? "tv-main" : undefined}
           className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
+            isTV ? "tv-channel-item " : ""
+          }${
             isActive
               ? "bg-surface-container-highest text-on-surface"
               : unread > 0
@@ -712,7 +730,7 @@ function SortableChannelRow({
   );
 }
 
-function UserBar({
+export function UserBar({
   userId,
   logout,
 }: {
@@ -720,6 +738,28 @@ function UserBar({
   logout: () => void;
 }) {
   const openSettings = useSettingsStore((s) => s.openSettings);
+  const isNative = typeof window !== "undefined" && "__TAURI__" in window;
+
+  // "Switch server" — full disconnect from the current Concord
+  // instance. Wipes the sources store + serverConfig + Tauri-persisted
+  // `server_url`, then logs the user out and reloads the webview.
+  // The reload is necessary because `App.tsx` computes `serverConnected`
+  // once at mount; without a fresh mount the picker never re-appears.
+  // Native-only: "switching server" is meaningless in the browser
+  // since the origin IS the server.
+  const handleSwitchServer = async () => {
+    const { useSourcesStore } = await import("../../stores/sources");
+    const { useServerConfigStore } = await import("../../stores/serverConfig");
+    const sourcesState = useSourcesStore.getState();
+    for (const src of sourcesState.sources) {
+      sourcesState.removeSource(src.id);
+    }
+    useServerConfigStore.getState().clearHomeserver();
+    logout();
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
+  };
 
   return (
     <div className="p-3 bg-surface-container flex items-center justify-between">
@@ -737,9 +777,19 @@ function UserBar({
         >
           <span className="material-symbols-outlined text-lg">settings</span>
         </button>
+        {isNative && (
+          <button
+            onClick={handleSwitchServer}
+            title="Disconnect from this instance and return to the server picker"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-lg">swap_horiz</span>
+          </button>
+        )}
         <button
           onClick={logout}
           className="px-2 py-1 rounded-lg text-xs text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors font-label"
+          title="Sign out of your account on this instance"
         >
           Logout
         </button>

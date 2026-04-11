@@ -28,6 +28,7 @@
 		A1000003 /* JSBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
 		A1000004 /* ServerPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000006; };
 		A1000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000007; };
+		A1000006 /* ChannelListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000008; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		A2000005 /* ConcordTV.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ConcordTV.entitlements; sourceTree = "<group>"; };
 		A2000006 /* ServerPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerPickerView.swift; sourceTree = "<group>"; };
 		A2000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A2000008 /* ChannelListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelListView.swift; sourceTree = "<group>"; };
 		A2000010 /* ConcordTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ConcordTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -57,6 +59,7 @@
 				A2000002 /* WebViewHost.swift */,
 				A2000003 /* JSBridge.swift */,
 				A2000006 /* ServerPickerView.swift */,
+				A2000008 /* ChannelListView.swift */,
 				A2000004 /* Info.plist */,
 				A2000005 /* ConcordTV.entitlements */,
 				A2000007 /* Assets.xcassets */,
@@ -129,6 +132,7 @@
 				A1000002 /* WebViewHost.swift in Sources */,
 				A1000003 /* JSBridge.swift in Sources */,
 				A1000004 /* ServerPickerView.swift in Sources */,
+				A1000006 /* ChannelListView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

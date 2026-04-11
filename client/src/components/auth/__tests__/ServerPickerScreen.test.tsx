@@ -10,6 +10,7 @@ import {
   type HomeserverConfig,
 } from "../../../api/wellKnown";
 import { useServerConfigStore } from "../../../stores/serverConfig";
+import * as platformHook from "../../../hooks/usePlatform";
 
 /**
  * Mock the discovery helper. Individual tests set the return value /
@@ -36,7 +37,48 @@ vi.mock("../../../api/serverUrl", () => ({
   hasServerUrl: vi.fn(() => true),
 }));
 
+// Mock usePlatform so individual tests can flip the TV flag without
+// having to set up matchMedia + navigator spoofing the way the
+// usePlatform.test.ts file does. This keeps the ServerPickerScreen
+// tests focused on rendering behavior rather than platform detection.
+vi.mock("../../../hooks/usePlatform", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../hooks/usePlatform")>();
+  return {
+    ...actual,
+    usePlatform: vi.fn(() => ({
+      isTauri: false,
+      isMobile: false,
+      isIOS: false,
+      isAndroid: false,
+      isIPad: false,
+      isTV: false,
+      isAndroidTV: false,
+      isAppleTV: false,
+      hasPointer: true,
+      hasTouchOnly: false,
+    })),
+  };
+});
+
 const mockedDiscover = vi.mocked(wellKnownApi.discoverHomeserver);
+const mockedPlatform = vi.mocked(platformHook.usePlatform);
+
+function mockPlatformFlags(overrides: Partial<ReturnType<typeof platformHook.usePlatform>> = {}) {
+  mockedPlatform.mockReturnValue({
+    isTauri: false,
+    isMobile: false,
+    isIOS: false,
+    isAndroid: false,
+    isIPad: false,
+    isTV: false,
+    isAndroidTV: false,
+    isAppleTV: false,
+    hasPointer: true,
+    hasTouchOnly: false,
+    ...overrides,
+  });
+}
 
 function makeConfig(overrides?: Partial<HomeserverConfig>): HomeserverConfig {
   return {
@@ -53,6 +95,8 @@ function makeConfig(overrides?: Partial<HomeserverConfig>): HomeserverConfig {
 describe("<ServerPickerScreen />", () => {
   beforeEach(() => {
     mockedDiscover.mockReset();
+    // Default to non-TV. Individual TV tests override via mockPlatformFlags.
+    mockPlatformFlags();
     // Reset the store between tests so each test starts from a known
     // blank-slate state.
     useServerConfigStore.setState({ config: null });
@@ -300,5 +344,74 @@ describe("<ServerPickerScreen />", () => {
       expect(screen.getByTestId("server-picker-error")).toBeInTheDocument(),
     );
     expect(screen.getByText(/non-HTTPS URLs/i)).toBeInTheDocument();
+  });
+
+  // ------------------------------------------------------------------
+  // TV mode (INS-023)
+  // ------------------------------------------------------------------
+
+  describe("TV mode", () => {
+    it("applies the tv-server-picker wrapper class when isTV is true", () => {
+      mockPlatformFlags({ isTV: true });
+      render(<ServerPickerScreen onConnected={vi.fn()} />);
+
+      const root = screen.getByTestId("server-picker-screen");
+      expect(root.className).toContain("tv-server-picker");
+      expect(root.getAttribute("data-tv-picker")).toBe("true");
+    });
+
+    it("does NOT apply the tv-server-picker class when isTV is false", () => {
+      mockPlatformFlags({ isTV: false });
+      render(<ServerPickerScreen onConnected={vi.fn()} />);
+
+      const root = screen.getByTestId("server-picker-screen");
+      expect(root.className).not.toContain("tv-server-picker");
+      expect(root.getAttribute("data-tv-picker")).toBeNull();
+    });
+
+    it("marks the hostname input and Connect button as data-focusable under TV", () => {
+      mockPlatformFlags({ isTV: true });
+      render(<ServerPickerScreen onConnected={vi.fn()} />);
+
+      const input = screen.getByTestId("server-picker-hostname-input");
+      const button = screen.getByTestId("server-picker-connect-button");
+      expect(input.getAttribute("data-focusable")).toBe("true");
+      expect(input.getAttribute("data-focus-group")).toBe("tv-server-picker");
+      expect(button.getAttribute("data-focusable")).toBe("true");
+      expect(button.getAttribute("data-focus-group")).toBe("tv-server-picker");
+    });
+
+    it("does NOT mark inputs as data-focusable under non-TV", () => {
+      mockPlatformFlags({ isTV: false });
+      render(<ServerPickerScreen onConnected={vi.fn()} />);
+
+      const input = screen.getByTestId("server-picker-hostname-input");
+      const button = screen.getByTestId("server-picker-connect-button");
+      expect(input.getAttribute("data-focusable")).toBeNull();
+      expect(button.getAttribute("data-focusable")).toBeNull();
+    });
+
+    it("exposes data-focusable buttons on the success screen so DPAD can navigate to Confirm", async () => {
+      mockPlatformFlags({ isTV: true });
+      mockedDiscover.mockResolvedValueOnce(makeConfig());
+
+      const user = userEvent.setup();
+      render(<ServerPickerScreen onConnected={vi.fn()} />);
+
+      await user.type(
+        screen.getByTestId("server-picker-hostname-input"),
+        "concorrd.example",
+      );
+      await user.click(screen.getByTestId("server-picker-connect-button"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("server-picker-success")).toBeInTheDocument(),
+      );
+
+      const confirm = screen.getByTestId("server-picker-confirm-button");
+      const change = screen.getByTestId("server-picker-change-button");
+      expect(confirm.getAttribute("data-focusable")).toBe("true");
+      expect(change.getAttribute("data-focusable")).toBe("true");
+    });
   });
 });

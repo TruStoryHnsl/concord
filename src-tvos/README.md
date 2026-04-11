@@ -1,6 +1,6 @@
 # Concord tvOS (Apple TV) — Path C Native SwiftUI Shell
 
-**Status:** ACTIVE — server picker, bridge implementation, asset catalog, and build script committed. Channel list + message view are placeholders.
+**Status:** ACTIVE — server picker, bridge implementation, asset catalog, build script, AND a two-column native channel-list placeholder (INS-023, 2026-04-10) are all committed. Real `/api/servers` fetch + message view remain pending and track with the post-v0.3 tvOS roadmap in `docs/native-apps/appletv-feasibility.md`.
 
 This directory contains the tvOS Xcode project for Concord's Apple TV client. It follows **Path C** from the feasibility study (`docs/native-apps/appletv-feasibility.md`): a standalone native SwiftUI frontend. Since WebKit is unavailable on tvOS (`WKWebView` is `API_UNAVAILABLE(tvos)`), the app talks directly to the Concord/Matrix API via `URLSession` rather than loading a webview.
 
@@ -12,12 +12,24 @@ src-tvos/
   ConcordTV/
     ConcordTVApp.swift      — @main SwiftUI App entry (server picker flow)
     ServerPickerView.swift  — Native server picker (URL input + validation)
-    WebViewHost.swift       — Post-connection placeholder (channel list coming)
+    ChannelListView.swift   — Post-connect two-column server/channel browser (NEW 2026-04-10)
+    WebViewHost.swift       — Post-connect container — now composes ChannelListView
     JSBridge.swift          — 4-function bridge protocol + real implementation
     Info.plist              — tvOS-specific plist keys
     ConcordTV.entitlements  — Keychain + multicast entitlements
     Assets.xcassets/        — App Icon + Top Shelf Image (placeholder art)
 ```
+
+## Implementation status (INS-023)
+
+| Surface | Status | Notes |
+|---|---|---|
+| Server picker | Shipped | `ServerPickerView.swift`, native URL input + validation, persists via UserDefaults through `ConcordJSBridge`. |
+| Post-connect shell | Shipped | `WebViewHost.swift` now composes `ChannelListView`. |
+| Channel list (placeholder) | Shipped 2026-04-10 | `ChannelListView.swift` — two-column SwiftUI layout (servers left, channels right), three hard-coded rows, Focus-Engine navigable via `.focusable(true)` + `@FocusState`. Voice row is flagged "unavailable on Apple TV" per the WebRTC-gap capability notice. |
+| Real `/api/servers` fetch | Pending | Planned for the tvOS v0.3+ track. The placeholder list uses `TVChannel.placeholder` as the join point — replace with a `URLSession` call and keep the view intact. |
+| Message list | Pending | Needs Matrix sync integration, deferred with the feasibility-study roadmap. |
+| Settings / profile | Pending | Deferred. |
 
 ## Bridge API (4 functions)
 
