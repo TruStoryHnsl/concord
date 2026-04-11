@@ -16,7 +16,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { useServerConfigStore } from "./serverConfig";
-import { useFederatedInstanceStore } from "./federatedInstances";
 
 export interface ConcordSource {
   /** Unique ID for this source connection. */
@@ -180,52 +179,35 @@ export const useSourcesStore = create<SourcesState>()(
       /**
        * One-time migration: populate sources from the active session.
        * Called on native app startup when the sources store is empty
-       * but an existing serverConfig + federated instances exist.
-       * Creates source entries for the primary instance and each
-       * federated server so the Sources panel reflects reality.
+       * but an existing serverConfig has been set (typically by a
+       * prior picker-confirm that wrote the config but never hit
+       * `addSource`). Only ever writes ONE entry: the primary source
+       * for `serverConfig.config`. Federated instance entries are
+       * NOT migrated — the old federatedInstances catalog has been
+       * deleted under the 2026-04-11 architecture rule, and federated
+       * homeservers are now added by the user through the Sources
+       * `+` tile rather than auto-populated from a catalog.
        */
       migrateFromSession: () => {
         if (get().sources.length > 0) return; // already populated
 
         const config = useServerConfigStore.getState().config;
-        const instances = useFederatedInstanceStore.getState().instances;
+        if (!config) return;
 
-        // Primary instance from serverConfig
-        if (config) {
-          const id = generateSourceId();
-          const primary: ConcordSource = {
-            id,
-            host: config.host,
-            instanceName: config.instance_name,
-            inviteToken: "",
-            accessToken: undefined,
-            apiBase: config.api_base,
-            homeserverUrl: config.homeserver_url,
-            status: "connected",
-            enabled: true,
-            addedAt: new Date().toISOString(),
-          };
-          set((state) => ({ sources: [...state.sources, primary] }));
-        }
-
-        // Federated instances
-        for (const [hostname, inst] of Object.entries(instances)) {
-          // Skip the primary instance if it's also in the federated catalog
-          if (config && hostname === config.host) continue;
-          const id = generateSourceId();
-          const federated: ConcordSource = {
-            id,
-            host: hostname,
-            instanceName: inst.displayName || hostname,
-            inviteToken: "",
-            apiBase: `https://${hostname}/api`,
-            homeserverUrl: `https://${hostname}`,
-            status: inst.status === "live" ? "connected" : "disconnected",
-            enabled: true,
-            addedAt: new Date().toISOString(),
-          };
-          set((state) => ({ sources: [...state.sources, federated] }));
-        }
+        const id = generateSourceId();
+        const primary: ConcordSource = {
+          id,
+          host: config.host,
+          instanceName: config.instance_name,
+          inviteToken: "",
+          accessToken: undefined,
+          apiBase: config.api_base,
+          homeserverUrl: config.homeserver_url,
+          status: "connected",
+          enabled: true,
+          addedAt: new Date().toISOString(),
+        };
+        set((state) => ({ sources: [...state.sources, primary] }));
       },
     }),
     {

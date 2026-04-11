@@ -1,10 +1,6 @@
 import { create } from "zustand";
 import type { Server, Channel, ServerMember } from "../api/concord";
 import {
-  hostnameFromRoomId,
-  useFederatedInstanceStore,
-} from "./federatedInstances";
-import {
   listServers,
   createServer as apiCreateServer,
   createChannel as apiCreateChannel,
@@ -202,7 +198,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     // after the first successful federated-room join, because matrix-js-sdk
     // still considers the user "joined" to them. We filter them out here
     // by domain suffix: federated rooms live on OTHER homeservers
-    // (mozilla.org, matrix.org, friend.example.com) and therefore never
+    // (remote.example, other.example, friend.example.com) and therefore never
     // match the local domain.
     const localDomain = userId.includes(":") ? userId.split(":")[1] : "";
 
@@ -381,10 +377,10 @@ export const useServerStore = create<ServerState>((set, get) => ({
     //   (b) HOMESERVER grouping for every remaining room — rooms
     //       that survived without being placed under a space
     //       collapse into one synthetic server per unique
-    //       homeserver domain. All rooms on mozilla.org become
-    //       channels under a single "mozilla.org" tile; all rooms
-    //       on matrix.org become channels under a single
-    //       "matrix.org" tile. Matches the user's mental model
+    //       homeserver domain. All rooms on remote.example become
+    //       channels under a single "remote.example" tile; all rooms
+    //       on other.example become channels under a single
+    //       "other.example" tile. Matches the user's mental model
     //       of "one federated instance = one sidebar server",
     //       which is the right default for the very common case
     //       where a Matrix host publishes its public rooms as a
@@ -399,8 +395,26 @@ export const useServerStore = create<ServerState>((set, get) => ({
     const synthetic: Server[] = [];
     const placedRoomIds = new Set<string>();
 
-    // --- Pass 3a: space-based grouping (from Pass 2a + 2b) -----------
+    // --- Pass 3a: LOCAL-DOMAIN space-based grouping only -------------
+    //
+    // Only synthesise tiles for spaces whose parent roomId lives on
+    // the LOCAL homeserver (`:${localDomain}`). The only code path
+    // that currently creates local-domain spaces is the Discord
+    // bridge — mautrix-discord builds one `m.space` per guild on the
+    // embedded homeserver, with each guild channel as a child room.
+    // Those spaces are tied to the active source's own bridge
+    // infrastructure, so they belong to the source and are allowed
+    // to render as tiles.
+    //
+    // Any space whose parent is on a DIFFERENT homeserver (another
+    // Matrix instance, another Concord instance, etc.) is skipped — it
+    // would be a federated space, and federated entities do not
+    // surface as server tiles under the 2026-04-11 architecture
+    // rule.
     for (const [parentId, childIds] of parentIdToChildren) {
+      // Hard gate: local homeserver only.
+      if (!localDomain || !parentId.endsWith(`:${localDomain}`)) continue;
+
       // Dedupe child ids while preserving insertion order —
       // m.space.child + m.space.parent walks can both point at the
       // same room, and we only want to render it once per space.
@@ -416,6 +430,13 @@ export const useServerStore = create<ServerState>((set, get) => ({
       for (const childId of orderedChildIds) {
         const childRoom = roomById.get(childId);
         if (!childRoom) continue; // user isn't joined to this child
+        // Children must also live on the local domain to be counted
+        // as channels of this bridge tile. Bridge guild channels
+        // always share the homeserver with their parent space, so
+        // this filter is a no-op for valid bridge data but prevents
+        // a cross-homeserver m.space.child pointer from sneaking
+        // federated state back into the rail.
+        if (!childId.endsWith(`:${localDomain}`)) continue;
         const channelName = childRoom.name || childId;
         channels.push({
           // id=0 + unique position is a sentinel for synthetic channels.
@@ -433,24 +454,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
       // Skip empty parents — container with no joined children.
       if (channels.length === 0) continue;
 
-      // Name resolution:
-      //   1. If we have a joined-space name, use it.
-      //   2. Else try the parent id's inferred domain-portion as a
-      //      best-effort label ("!foo:mozilla.org" → "mozilla.org").
-      //   3. Fall back to the raw parent id.
+      // Name resolution: prefer the joined-space's own name, fall
+      // back to stripping the local suffix off the parent id. We
+      // never fall back to the raw hostname here because that'd
+      // leak the local homeserver's hostname as a visible label —
+      // and the hostname for a Tauri native build could be something
+      // like `localhost:8765` which makes no sense as a user-facing
+      // tile name.
       const joinedSpaceName = parentIdToName.get(parentId);
-      let name = joinedSpaceName;
-      if (!name) {
-        const colonIdx = parentId.lastIndexOf(":");
-        name = colonIdx >= 0 ? parentId.slice(colonIdx + 1) : parentId;
-      }
-
-      // Detect Discord bridge: local-domain spaces are bridge-created
-      // (Concord itself doesn't use Matrix spaces — it uses the API).
-      // Currently Discord is the only bridge, so local-domain space =
-      // Discord guild. Refine this if more bridges are added.
-      const isLocalSpace =
-        localDomain && parentId.endsWith(`:${localDomain}`);
+      const name = joinedSpaceName ?? "Bridge";
 
       synthetic.push({
         id: `${FEDERATED_SERVER_ID_PREFIX}${parentId}`,
@@ -458,116 +470,43 @@ export const useServerStore = create<ServerState>((set, get) => ({
         icon_url: null,
         owner_id: userId,
         visibility: "public",
-        abbreviation: isLocalSpace ? "D" : name.charAt(0).toUpperCase() || "#",
+        abbreviation: "D",
         media_uploads_enabled: false,
         channels,
         federated: true,
-        ...(isLocalSpace && { bridgeType: "discord" as const }),
+        bridgeType: "discord" as const,
       });
     }
 
-    // --- Pass 3b: homeserver-based grouping for remaining rooms ------
-    // Group every regular room that wasn't placed under a space by
-    // its homeserver domain (the part after the last `:` in the
-    // room id). One synthetic server per unique host.
-    const hostToRooms = new Map<string, FederatedRoomLike[]>();
-    for (const room of regularRooms) {
-      if (placedRoomIds.has(room.roomId)) continue;
-      if (childrenOfSpaces.has(room.roomId)) continue;
-      const colonIdx = room.roomId.lastIndexOf(":");
-      const host = colonIdx >= 0 ? room.roomId.slice(colonIdx + 1) : "";
-      if (!host) continue;
-      const existing = hostToRooms.get(host) ?? [];
-      existing.push(room);
-      hostToRooms.set(host, existing);
-    }
-
-    // Read the federated-instance catalog once so each synthetic
-    // can pick up the best available display name (instance_name
-    // from a Concord well-known probe, else the bare hostname).
-    const instanceCatalog = useFederatedInstanceStore.getState().instances;
-
-    for (const [host, rooms] of hostToRooms) {
-      // Sort rooms within the host alphabetically by name so the
-      // channel order inside the tile is stable across sync ticks.
-      // matrix-js-sdk's getRooms() ordering isn't guaranteed stable,
-      // which would otherwise make the channel list visually
-      // shuffle on every hydration.
-      const sorted = [...rooms].sort((a, b) =>
-        (a.name ?? a.roomId).localeCompare(b.name ?? b.roomId),
-      );
-      const channels: Channel[] = sorted.map((room, position) => ({
-        id: 0,
-        name: room.name || room.roomId,
-        channel_type: "text",
-        matrix_room_id: room.roomId,
-        position,
-      }));
-
-      // Display name: use the catalog's displayName ONLY if this
-      // host has been confirmed as a Concord instance (the
-      // well-known probe set isConcord=true and stored an
-      // `instance_name` as the displayName). For vanilla Matrix
-      // hosts, always use the bare hostname — trusting the
-      // catalog's displayName for non-Concord hosts picks up
-      // stale room names from earlier versions of the code that
-      // incorrectly stored per-room labels in the catalog.
-      const catalog = instanceCatalog[host.toLowerCase()];
-      const name =
-        catalog?.isConcord && catalog.displayName
-          ? catalog.displayName
-          : host;
-
-      synthetic.push({
-        // Key the synthetic server id by the HOST so repeated
-        // hydrations return stable ids and activeServerId survives
-        // re-hydration cleanly. `homeserver:` sub-prefix keeps it
-        // distinct from per-room synthetic ids produced by Pass 3a.
-        id: `${FEDERATED_SERVER_ID_PREFIX}homeserver:${host}`,
-        name,
-        icon_url: null,
-        owner_id: userId,
-        visibility: "public",
-        abbreviation: name.charAt(0).toUpperCase() || "#",
-        media_uploads_enabled: false,
-        channels,
-        federated: true,
-      });
-    }
-
-    // Record every hostname we just rendered a synthetic for in the
-    // persistent federated-instance catalog. The sidebar reads from
-    // the catalog at mount time so tiles appear immediately on page
-    // load, before the Matrix client has finished syncing. Also
-    // enables the search filter and the is-Concord distinction.
+    // NOTE (2026-04-11 restructure): the previous "Pass 3b" collapsed
+    // every loose federated room into a synthetic tile grouped by its
+    // homeserver domain — so if the user's Matrix account happened to
+    // be a member of a room on a remote homeserver (via plain
+    // Matrix federation, not through Concord's Sources flow), a tile
+    // for that homeserver would appear in the server rail. That was
+    // wrong under the architecture rule: a Source is the unit of
+    // "connection to another Concord/Matrix instance", and server
+    // tiles must only surface things the user joined THROUGH an
+    // active source's UI. Matrix federation is a network-layer
+    // concern; it should not create sidebar tiles on its own.
     //
-    // Only `hostname` is passed to recordSeen — no displayName. This
-    // is deliberate: the catalog's displayName should come from the
-    // `.well-known/concord/client` probe (for Concord instances) or
-    // fall back to the hostname (for vanilla Matrix hosts). Passing
-    // a stale room name or synthetic server name here would clobber
-    // those good values. The probe-authored names are preserved by
-    // `recordSeen`'s isConcord branch.
+    // The entire Pass 3b block has been removed. The federated-
+    // instance catalog (`client/src/stores/federatedInstances.ts`)
+    // was its only consumer and has been deleted. Any rooms that
+    // previously would have landed in homeserver-grouped tiles now
+    // silently do not appear in the sidebar — they still exist in
+    // the Matrix sync state and can be reached via DMs or through
+    // a future Matrix-as-Source flow, but they are no longer
+    // promoted to the rail.
     //
-    // Collect unique hostnames first to avoid N calls into the
-    // persist middleware when a host group has many channels.
-    const seenHosts = new Set<string>();
-    for (const srv of synthetic) {
-      const strippedId = srv.id.slice(FEDERATED_SERVER_ID_PREFIX.length);
-      // New host-grouped ids look like `homeserver:mozilla.org`;
-      // older space-based ids look like `!roomId:host`. Both end
-      // with `:host`, so `hostnameFromRoomId` works for both.
-      const host = hostnameFromRoomId(strippedId);
-      if (host) seenHosts.add(host);
-      for (const ch of srv.channels) {
-        const childHost = hostnameFromRoomId(ch.matrix_room_id);
-        if (childHost) seenHosts.add(childHost);
-      }
-    }
-    const instanceStore = useFederatedInstanceStore.getState();
-    for (const host of seenHosts) {
-      instanceStore.recordSeen(host);
-    }
+    // Pass 3a (space-based grouping) is also tightened: we now only
+    // synthesise tiles for spaces whose roomId lives on the LOCAL
+    // homeserver domain. The only code path that currently produces
+    // local-domain spaces is the Discord bridge (mautrix-discord
+    // creates an `m.space` per guild on the embedded homeserver,
+    // with channel rooms as its children). Federated spaces on
+    // other homeservers are treated the same as any other federated
+    // room now: not rendered as a tile.
 
     set({ servers: [...concordServers, ...synthetic] });
   },
