@@ -16,6 +16,7 @@ import { ServerPickerScreen } from "./components/auth/ServerPickerScreen";
 import { SubmitPage } from "./components/public/SubmitPage";
 import { ChatLayout } from "./components/layout/ChatLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LaunchAnimation } from "./components/LaunchAnimation";
 import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
@@ -55,6 +56,16 @@ export default function App() {
       hasLegacyUrl: hasServerUrl(),
     }),
   );
+
+  // INS-023 launch animation: a cross-platform boot splash that
+  // covers the first-paint gap and any subsequent isLoading window.
+  // `launchDone` flips true once the `<LaunchAnimation/>` has
+  // finished its dismiss animation; the overlay then unmounts so
+  // interactive elements underneath stop sitting beneath a z-9999
+  // invisible layer. The `index.html` inline <style> block paints
+  // the dark background before React even boots, so the splash
+  // merely sits on top of a dark page instead of over a white flash.
+  const [launchDone, setLaunchDone] = useState(false);
 
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -265,27 +276,48 @@ export default function App() {
     })();
   }, [isLoggedIn, accessToken, voiceConnected, voiceConnect]);
 
+  // Compose the launch splash overlay once so every early return
+  // path below can reuse it. Must be emitted as a Fragment sibling
+  // of the actual screen so it stays layered on top via its own
+  // position:fixed styling.
+  const launchOverlay = !launchDone ? (
+    <LaunchAnimation
+      isLoading={isLoading}
+      onDone={() => setLaunchDone(true)}
+    />
+  ) : null;
+
   // Native mode: show the first-launch server picker when no
   // HomeserverConfig has been selected yet.
   if (!serverConnected) {
-    return <ServerPickerScreen onConnected={() => setServerConnected(true)} />;
+    return (
+      <>
+        <ServerPickerScreen onConnected={() => setServerConnected(true)} />
+        {launchOverlay}
+      </>
+    );
   }
 
   // Public submit page — no auth required
   const path = window.location.pathname;
   if (path.startsWith("/submit/")) {
     const webhookId = path.slice("/submit/".length);
-    return <SubmitPage webhookId={webhookId} />;
+    return (
+      <>
+        <SubmitPage webhookId={webhookId} />
+        {launchOverlay}
+      </>
+    );
   }
 
   if (isLoading) {
+    // No inline spinner — the LaunchAnimation below handles the
+    // "we're booting" affordance uniformly across every platform.
     return (
-      <div className="h-full bg-surface flex items-center justify-center mesh-background">
-        <div className="flex flex-col items-center gap-3 relative z-10">
-          <span className="inline-block w-6 h-6 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
-          <span className="text-on-surface-variant text-sm font-body">Loading...</span>
-        </div>
-      </div>
+      <>
+        <div className="h-full bg-surface mesh-background" aria-hidden="true" />
+        {launchOverlay}
+      </>
     );
   }
 
@@ -301,46 +333,49 @@ export default function App() {
   );
 
   return (
-    <ErrorBoundary>
-      {isLoggedIn ? (
-        voiceConnected && voiceToken && livekitUrl ? (
-          <LiveKitRoom
-            token={voiceToken}
-            serverUrl={livekitUrl}
-            connectOptions={{
-              autoSubscribe: true,
-              ...(iceServers.length > 0 && {
-                rtcConfig: {
-                  iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    ...iceServers,
-                  ],
+    <>
+      <ErrorBoundary>
+        {isLoggedIn ? (
+          voiceConnected && voiceToken && livekitUrl ? (
+            <LiveKitRoom
+              token={voiceToken}
+              serverUrl={livekitUrl}
+              connectOptions={{
+                autoSubscribe: true,
+                ...(iceServers.length > 0 && {
+                  rtcConfig: {
+                    iceServers: [
+                      { urls: "stun:stun.l.google.com:19302" },
+                      ...iceServers,
+                    ],
+                  },
+                }),
+              }}
+              audio={micGranted}
+              video={false}
+              options={{
+                audioCaptureDefaults: {
+                  echoCancellation,
+                  noiseSuppression,
+                  autoGainControl,
+                  ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
                 },
-              }),
-            }}
-            audio={micGranted}
-            video={false}
-            options={{
-              audioCaptureDefaults: {
-                echoCancellation,
-                noiseSuppression,
-                autoGainControl,
-                ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
-              },
-            }}
-            onDisconnected={handleVoiceDisconnect}
-            style={{ display: "contents" }}
-          >
-            <CustomAudioRenderer />
-            {authenticatedContent}
-          </LiveKitRoom>
+              }}
+              onDisconnected={handleVoiceDisconnect}
+              style={{ display: "contents" }}
+            >
+              <CustomAudioRenderer />
+              {authenticatedContent}
+            </LiveKitRoom>
+          ) : (
+            authenticatedContent
+          )
         ) : (
-          authenticatedContent
-        )
-      ) : (
-        <LoginForm />
-      )}
-      <ToastContainer />
-    </ErrorBoundary>
+          <LoginForm />
+        )}
+        <ToastContainer />
+      </ErrorBoundary>
+      {launchOverlay}
+    </>
   );
 }
