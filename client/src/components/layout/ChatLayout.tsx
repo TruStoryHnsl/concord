@@ -23,7 +23,8 @@ import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
 import { useDisplayName } from "../../hooks/useDisplayName";
 import { ServerSidebar } from "./ServerSidebar";
-import { ChannelSidebar } from "./ChannelSidebar";
+import { ChannelSidebar, UserBar } from "./ChannelSidebar";
+import { SourcesPanel } from "./SourcesPanel";
 import { DMSidebar } from "../dm/DMSidebar";
 import { MessageList } from "../chat/MessageList";
 import { MessageInput } from "../chat/MessageInput";
@@ -49,11 +50,21 @@ class SilentBoundary extends Component<{ children: ReactNode; fallback?: ReactNo
 
 type MobileView = "servers" | "channels" | "chat" | "dms" | "settings";
 
-export function ChatLayout() {
+/**
+ * ChatLayout — the top-level shell.
+ *
+ * `onAddSource` is the callback that fires when the user taps the `+` tile
+ * on the SourcesPanel (empty state or add-another button). App.tsx holds
+ * the modal state and passes this down; when clicked it opens the combined
+ * "pick an instance + authenticate" wizard. Optional so the component still
+ * renders in any test/story that doesn't supply it.
+ */
+export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const syncing = useMatrixSync();
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
+  const logout = useAuthStore((s) => s.logout);
   const loadServers = useServerStore((s) => s.loadServers);
   const activeChannelId = useServerStore((s) => s.activeChannelId);
   const servers = useServerStore((s) => s.servers);
@@ -325,19 +336,74 @@ export function ChatLayout() {
     if (settingsOpen || serverSettingsId) setMobileView("settings");
   }, [settingsOpen, serverSettingsId]);
 
-  // Desktop layout
+  // Desktop layout.
+  //
+  // Structure:
+  //
+  //   ┌─────────────────────────────────────────────────────────────┐
+  //   │ LEFT STACK (flex-col)              │ │ MAIN CONTENT         │
+  //   │ ┌───────┬───────┬───────┐          │ │                      │
+  //   │ │Sources│ Srvrs │ Chan. │          │ │ Chat pane /          │
+  //   │ │(native│ rail  │ side- │          │ │ empty state          │
+  //   │ │ only) │       │ bar   │          │ │                      │
+  //   │ │       │       │       │          │ │                      │
+  //   │ ├───────┴───────┴───────┤          │ │                      │
+  //   │ │      UserBar          │          │ │                      │
+  //   │ └───────────────────────┘          │ │                      │
+  //   └────────────────────────────────────┴─┴──────────────────────┘
+  //                                        ^
+  //                                        └ resize handle
+  //
+  // Why a left stack rather than plain sibling flex children:
+  //
+  //   User spec (2026-04-10) puts the UserBar under Sources + Server
+  //   rail + Channel sidebar, spanning all three horizontally, and
+  //   stopping at the left edge of the message input pane. The only
+  //   way to make UserBar's width match the sum of the three columns
+  //   above it — including when the channel sidebar is resized — is
+  //   to put the three columns inside a `flex-col` container whose
+  //   width is determined by the row of columns above, then render
+  //   UserBar as that container's bottom row. Both rows share the
+  //   same parent so the span is automatic.
+  //
+  //   ChannelSidebar no longer renders UserBar inline (see the two
+  //   replaced mounts inside ChannelSidebar.tsx) — it lives here.
+  //
+  // Sources column is Tauri-only because on web builds the browser's
+  // origin IS the source and a picker column has no meaning there.
   const renderDesktopLayout = () => (
     <div className="h-full flex overflow-hidden bg-surface text-on-surface">
-      {/* Server sidebar */}
-      <SilentBoundary>
-        <ServerSidebar />
-      </SilentBoundary>
+      {/* Left stack — columns on top, UserBar below */}
+      <div className="flex flex-col min-h-0">
+        <div className="flex flex-1 min-h-0">
+          {/* Sources column — native only */}
+          {platform.isTauri && (
+            <div className="w-72 flex-shrink-0 border-r border-outline-variant/20">
+              <SilentBoundary>
+                <SourcesPanel onAddSource={onAddSource ?? (() => {})} />
+              </SilentBoundary>
+            </div>
+          )}
 
-      {/* Channel / DM sidebar */}
-      <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
-        <SilentBoundary>
-          {dmActive ? <DMSidebar /> : <ChannelSidebar />}
-        </SilentBoundary>
+          {/* Server sidebar */}
+          <SilentBoundary>
+            <ServerSidebar />
+          </SilentBoundary>
+
+          {/* Channel / DM sidebar */}
+          <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
+            <SilentBoundary>
+              {dmActive ? <DMSidebar /> : <ChannelSidebar />}
+            </SilentBoundary>
+          </div>
+        </div>
+
+        {/* User banner — spans Sources + Servers + Channels. The
+            `flex-shrink-0` keeps it at its natural height while the
+            row above takes `flex-1`. */}
+        <div className="flex-shrink-0 border-t border-outline-variant/20">
+          <UserBar userId={userId} logout={logout} />
+        </div>
       </div>
 
       {/* Resize handle */}

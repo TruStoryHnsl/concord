@@ -8,6 +8,7 @@ import {
   type HomeserverConfig,
 } from "../../api/wellKnown";
 import { useServerConfigStore } from "../../stores/serverConfig";
+import { useSourcesStore } from "../../stores/sources";
 import { usePlatform } from "../../hooks/usePlatform";
 import { ConcordLogo } from "../brand/ConcordLogo";
 import {
@@ -157,6 +158,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
   const [pasteBlob, setPasteBlob] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const setHomeserver = useServerConfigStore((s) => s.setHomeserver);
+  const ensurePrimarySource = useSourcesStore((s) => s.ensurePrimarySource);
 
   // Cancellation token for the hosting poll loop. React state reads
   // inside closures capture at spawn time, so we can't gate on
@@ -203,8 +205,21 @@ export function ServerPickerScreen({ onConnected }: Props) {
       api_base: state.apiBaseOverride.replace(/\/+$/, ""),
     };
     setHomeserver(finalConfig);
+    // INS-020: mirror the connection into the Sources store so the
+    // Sources column reflects the new primary connection immediately.
+    // `ensurePrimarySource` is idempotent — if the same host already
+    // has a primary source entry, it's updated in place; otherwise a
+    // new one is added with `origin: "primary"` so the Sources column
+    // can render the distinction from federated/extension-added
+    // sources in a later phase.
+    ensurePrimarySource({
+      host: finalConfig.host,
+      instance_name: finalConfig.instance_name ?? undefined,
+      api_base: finalConfig.api_base,
+      homeserver_url: finalConfig.homeserver_url,
+    });
     onConnected();
-  }, [state, setHomeserver, onConnected]);
+  }, [state, setHomeserver, ensurePrimarySource, onConnected]);
 
   // "Back" from the input / error / hosting screens: on hosts that
   // can host, return to the top-level menu; on mobile-only builds,
@@ -358,6 +373,14 @@ export function ServerPickerScreen({ onConnected }: Props) {
               features: [],
             };
             setHomeserver(localConfig);
+            // INS-020: mirror into Sources store so the leftmost
+            // column reflects the new local host immediately.
+            ensurePrimarySource({
+              host: localConfig.host,
+              instance_name: localConfig.instance_name ?? undefined,
+              api_base: localConfig.api_base,
+              homeserver_url: localConfig.homeserver_url,
+            });
             onConnected();
             return;
           }
@@ -387,7 +410,7 @@ export function ServerPickerScreen({ onConnected }: Props) {
           `Local instance did not start within ${TIMEOUT_MS / 1000}s. Check the app logs and try again.`,
       });
     })();
-  }, [setHomeserver, onConnected]);
+  }, [setHomeserver, ensurePrimarySource, onConnected]);
 
   // Advanced: attach to an externally-managed docker-compose stack.
   // Used when the operator already has a full Concord stack running

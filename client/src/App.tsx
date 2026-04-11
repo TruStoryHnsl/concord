@@ -266,11 +266,38 @@ export default function App() {
     })();
   }, [isLoggedIn, accessToken, voiceConnected, voiceConnect]);
 
-  // Native mode: show the first-launch server picker when no
-  // HomeserverConfig has been selected yet.
-  if (!serverConnected) {
-    return <ServerPickerScreen onConnected={() => setServerConnected(true)} />;
-  }
+  // Hollow-shell-first contract (2026-04-10 user spec): native builds
+  // ALWAYS render the full ChatLayout on boot, regardless of whether a
+  // server has been picked or the user is logged in. The "add source"
+  // flow lives inside the Sources column's `+` tile and opens the
+  // ServerPickerScreen as a modal overlay. The old boot-time gate
+  // (`if (!serverConnected) return <ServerPickerScreen />`) has been
+  // retired — the picker is no longer a pre-shell modal.
+  //
+  // `addSourceModalOpen` drives the modal. ChatLayout's SourcesPanel
+  // calls back into `openAddSourceModal` when the user clicks `+`.
+  //
+  // `serverConnected` and `setServerConnected` remain as state so the
+  // existing modal-success path can still flip App out of any transient
+  // states — but they no longer gate ChatLayout visibility.
+  const [addSourceModalOpen, setAddSourceModalOpen] = useState(false);
+  const openAddSourceModal = useCallback(() => setAddSourceModalOpen(true), []);
+  const closeAddSourceModal = useCallback(() => setAddSourceModalOpen(false), []);
+
+  // Auto-close the add-source modal once the user is authenticated.
+  // `isLoggedIn` flips true from inside LoginForm's successful-login
+  // path. This effect MUST be declared before the early returns below
+  // (`if (isLoading) return ...`, `if (path.startsWith("/submit/"))
+  // return ...`) — React's rules of hooks require a consistent hook
+  // call order between renders, and an early return followed by a
+  // useEffect trips "Rendered more hooks than during the previous
+  // render" the instant `isLoading` flips, which ErrorBoundary catches
+  // and renders as a blank surface.
+  useEffect(() => {
+    if (isLoggedIn && addSourceModalOpen) {
+      closeAddSourceModal();
+    }
+  }, [isLoggedIn, addSourceModalOpen, closeAddSourceModal]);
 
   // Public submit page — no auth required
   const path = window.location.pathname;
@@ -290,57 +317,88 @@ export default function App() {
     );
   }
 
-  // Authenticated content, optionally wrapped in LiveKitRoom
-  const authenticatedContent = (
+  // Shell content. Rendered at all times per the hollow-shell-first
+  // contract (2026-04-10). The child components — SourcesPanel,
+  // ServerSidebar, ChannelSidebar, main content area — each handle
+  // their own empty states when there is no source / no server / no
+  // authenticated Matrix client, so this tree renders cleanly even
+  // during the first-launch hollow state.
+  const shellContent = (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
-        <ChatLayout />
+        <ChatLayout onAddSource={openAddSourceModal} />
       </div>
       <VoiceConnectionBar />
       <DirectInviteBanner />
     </div>
   );
 
+  // The "add source" wizard modal. Opened by the `+` tile in
+  // SourcesPanel; advances through the existing ServerPickerScreen and
+  // (if the user is not already authenticated on the picked instance)
+  // the LoginForm. Both sub-components stay fullscreen-shaped but are
+  // displayed as a centred overlay inside the modal container. On
+  // successful picker connection the flow falls through to LoginForm;
+  // when `isLoggedIn` flips true the modal auto-closes via the effect
+  // below.
+  const addSourceModal = addSourceModalOpen ? (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center">
+      <div className="relative w-full h-full overflow-auto">
+        <button
+          type="button"
+          onClick={closeAddSourceModal}
+          className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors"
+          title="Cancel"
+          aria-label="Cancel add source"
+        >
+          <span className="material-symbols-outlined text-on-surface">close</span>
+        </button>
+        {!isLoggedIn && !serverConnected ? (
+          <ServerPickerScreen onConnected={() => setServerConnected(true)} />
+        ) : !isLoggedIn ? (
+          <LoginForm />
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <ErrorBoundary>
-      {isLoggedIn ? (
-        voiceConnected && voiceToken && livekitUrl ? (
-          <LiveKitRoom
-            token={voiceToken}
-            serverUrl={livekitUrl}
-            connectOptions={{
-              autoSubscribe: true,
-              ...(iceServers.length > 0 && {
-                rtcConfig: {
-                  iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    ...iceServers,
-                  ],
-                },
-              }),
-            }}
-            audio={micGranted}
-            video={false}
-            options={{
-              audioCaptureDefaults: {
-                echoCancellation,
-                noiseSuppression,
-                autoGainControl,
-                ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
+      {voiceConnected && voiceToken && livekitUrl ? (
+        <LiveKitRoom
+          token={voiceToken}
+          serverUrl={livekitUrl}
+          connectOptions={{
+            autoSubscribe: true,
+            ...(iceServers.length > 0 && {
+              rtcConfig: {
+                iceServers: [
+                  { urls: "stun:stun.l.google.com:19302" },
+                  ...iceServers,
+                ],
               },
-            }}
-            onDisconnected={handleVoiceDisconnect}
-            style={{ display: "contents" }}
-          >
-            <CustomAudioRenderer />
-            {authenticatedContent}
-          </LiveKitRoom>
-        ) : (
-          authenticatedContent
-        )
+            }),
+          }}
+          audio={micGranted}
+          video={false}
+          options={{
+            audioCaptureDefaults: {
+              echoCancellation,
+              noiseSuppression,
+              autoGainControl,
+              ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
+            },
+          }}
+          onDisconnected={handleVoiceDisconnect}
+          style={{ display: "contents" }}
+        >
+          <CustomAudioRenderer />
+          {shellContent}
+        </LiveKitRoom>
       ) : (
-        <LoginForm />
+        shellContent
       )}
+      {addSourceModal}
       <ToastContainer />
     </ErrorBoundary>
   );

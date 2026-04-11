@@ -94,7 +94,11 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile, onChannelSe
             Use the <strong className="text-on-surface">+</strong> button to create or join a server
           </p>
         </div>
-        {!mobile && <UserBar userId={userId} logout={logout} />}
+        {/* UserBar is now rendered by ChatLayout so it can span
+            Sources + ServerSidebar + ChannelSidebar columns. Mobile
+            still renders UserBar out of the account sheet / settings
+            surface, not here — the drawer + tab-bar structure is a
+            separate UX model. */}
       </div>
     );
   }
@@ -712,7 +716,21 @@ function SortableChannelRow({
   );
 }
 
-function UserBar({
+/**
+ * UserBar — the bottom strip showing avatar, display name, settings
+ * gear, switch-server button, and logout.
+ *
+ * Historically this was rendered inline at the bottom of ChannelSidebar
+ * and was therefore confined to the channel-column width. The current
+ * contract (2026-04-10 user spec) puts it below the full "left stack"
+ * of Sources + ServerSidebar + ChannelSidebar columns, spanning all
+ * three horizontally and stopping at the left edge of the message
+ * input pane. ChatLayout owns the placement now, so this function is
+ * exported rather than kept local. The two inline mounts inside
+ * ChannelSidebar's own render tree were removed — ChatLayout renders
+ * UserBar exactly once in the desktop layout.
+ */
+export function UserBar({
   userId,
   logout,
 }: {
