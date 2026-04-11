@@ -85,20 +85,21 @@ export const useServerConfigStore = create<ServerConfigState>()(
 
       setHomeserver: (config) => {
         set({ config });
-        // Best-effort bridge to the Tauri-side store. The legacy
-        // `setServerUrl` helper persists to Tauri's own store via
-        // `invoke("set_server_url")`; we fire-and-forget so web builds
-        // don't pay any cost. Persistence failures are non-fatal —
-        // the in-memory store is still updated and the current
-        // session continues. The user will need to re-pick on next
-        // launch; surfacing this as a toast is UI-level concern.
+        // In-process only: update the legacy `_serverUrl` module var
+        // so code paths that still read `getHomeserverUrl()` (some
+        // Matrix SDK bootstrap paths) see the chosen host. Native
+        // only — web mode reads `window.location.origin` instead of
+        // `_serverUrl`, so the update would be a noop on the browser.
+        //
+        // Does NOT write to Tauri's plugin-store. See the comments
+        // on `setServerUrl` in `serverUrl.ts` and on
+        // `computeInitialServerConnected` in `serverPickerGate.ts`
+        // for the full rationale — the TL;DR is that a persisted
+        // `server_url` slot was what kept leaking the operator's
+        // instance hostname between installs.
         if (isTauriRuntime()) {
-          // Use the homeserver URL as the Tauri-side server URL so
-          // Matrix SDK code paths reading `getHomeserverUrl()`
-          // continue to work. The Concord API base lives in this
-          // store for the `getApiBase()` refactor to read.
           void setServerUrl(config.homeserver_url).catch(() => {
-            /* non-fatal — see comment above */
+            /* non-fatal */
           });
         }
       },
@@ -107,7 +108,7 @@ export const useServerConfigStore = create<ServerConfigState>()(
         set({ config: null });
         if (isTauriRuntime()) {
           void setServerUrl("").catch(() => {
-            /* non-fatal — see setHomeserver */
+            /* non-fatal */
           });
         }
       },
