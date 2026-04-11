@@ -17,6 +17,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { useServerConfigStore } from "./serverConfig";
 import { useFederatedInstanceStore } from "./federatedInstances";
+import { getServerUrl } from "../api/serverUrl";
 
 export interface ConcordSource {
   /** Unique ID for this source connection. */
@@ -132,7 +133,30 @@ export const useSourcesStore = create<SourcesState>()(
         const config = useServerConfigStore.getState().config;
         const instances = useFederatedInstanceStore.getState().instances;
 
-        // Primary instance from serverConfig
+        // Primary instance resolution:
+        //
+        // Preferred path — `serverConfig.config` (post-INS-027). The
+        // server picker flow populates this from a live
+        // `.well-known/concord/client` discovery, so it carries the
+        // full instance metadata (display name, LiveKit URL, etc.)
+        // alongside the API base.
+        //
+        // Legacy fallback — when `config` is null (noon-base native
+        // builds that never shipped the picker, and pre-INS-027 Tauri
+        // installs that configured their server via settings.json
+        // before the picker existed), synthesize a minimal primary
+        // source from the legacy `_serverUrl` that `initServerUrl()`
+        // populated from the Tauri plugin-store on module load.
+        // Without this fallback, such builds strand the user on the
+        // Sources empty state after a successful login because the
+        // source row is what the sidebar keys off of, and nothing
+        // else in the boot path would create one. The synthesized
+        // source has no `instanceName` yet — LoginForm will fill
+        // that in via `getInstanceInfo()` if a later UX iteration
+        // wires a post-login update, but for the minimum viable
+        // state-of-three-platforms-working it is enough to have
+        // `host`, `apiBase`, and `homeserverUrl` populated so the
+        // sidebar can render servers + channels.
         if (config) {
           const id = generateSourceId();
           const primary: ConcordSource = {
@@ -148,6 +172,34 @@ export const useSourcesStore = create<SourcesState>()(
             addedAt: new Date().toISOString(),
           };
           set((state) => ({ sources: [...state.sources, primary] }));
+        } else {
+          const legacyUrl = getServerUrl();
+          if (legacyUrl) {
+            let host = legacyUrl;
+            try {
+              host = new URL(legacyUrl).hostname;
+            } catch {
+              // URL parse failed — fall back to the raw string rather
+              // than crashing the migration path. A malformed server
+              // URL here is a deep configuration bug elsewhere; this
+              // `try`/`catch` just prevents a thrown exception from
+              // stranding the entire startup sequence.
+            }
+            const id = generateSourceId();
+            const primary: ConcordSource = {
+              id,
+              host,
+              instanceName: undefined,
+              inviteToken: "",
+              accessToken: undefined,
+              apiBase: `${legacyUrl}/api`,
+              homeserverUrl: legacyUrl,
+              status: "connected",
+              enabled: true,
+              addedAt: new Date().toISOString(),
+            };
+            set((state) => ({ sources: [...state.sources, primary] }));
+          }
         }
 
         // Federated instances
