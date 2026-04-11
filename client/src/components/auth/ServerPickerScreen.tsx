@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   discoverHomeserver,
   DnsResolutionError,
@@ -10,6 +10,12 @@ import {
 import { useServerConfigStore } from "../../stores/serverConfig";
 import { usePlatform } from "../../hooks/usePlatform";
 import { ConcordLogo } from "../brand/ConcordLogo";
+import {
+  isTauri as isTauriRuntime,
+  servitudeStart,
+  servitudeStatus,
+  type ServitudeState,
+} from "../../api/servitude";
 
 /**
  * First-launch server picker for native Concord builds (INS-027).
@@ -50,11 +56,21 @@ interface Props {
 /**
  * Which path into the picker the user took. Threaded through every
  * phase so UI copy (placeholder text, helper hints, error guidance)
- * can adapt: the Host path pre-fills `localhost:8080` and speaks in
- * "your local Concord stack" language, the Join path speaks in "the
- * instance's operator" language.
+ * can adapt:
+ *
+ *   "join"  — the user wants to connect to an existing Concord
+ *             instance run by someone else (friend, community,
+ *             public directory). Hostname input flow.
+ *   "host"  — the user wants THIS device to be the server. The
+ *             picker starts the embedded servitude (bundled
+ *             tuwunel Matrix homeserver) as a child process and
+ *             connects to `http://localhost:<port>` once it's up.
+ *   "bridge" — escape hatch: connect to an externally-managed
+ *              Docker Compose stack that the user has already
+ *              started at `localhost:8080`. Full-fidelity Concord
+ *              stack, but the user is responsible for starting it.
  */
-type ServerOrigin = "join" | "host";
+type ServerOrigin = "join" | "host" | "bridge";
 
 /**
  * UI state machine for the first-launch flow.
@@ -62,17 +78,21 @@ type ServerOrigin = "join" | "host";
  *   menu        → top-level "Join or Host" choice (desktop only;
  *                 mobile and browser builds skip straight to `input`
  *                 because hosting a full Concord stack requires a
- *                 machine that can run Docker Compose).
- *   input       → hostname text field + form.
+ *                 machine that can run the bundled servitude).
+ *   hosting     → embedded servitude startup: polls the Rust-side
+ *                 `servitude_status` command and shows live progress
+ *                 text as the lifecycle transitions stopped →
+ *                 starting → running. On `running`, the picker
+ *                 synthesises a local HomeserverConfig pointing at
+ *                 `http://localhost:<port>` and confirms.
+ *   input       → hostname text field + form. Used by join + bridge.
  *   connecting  → spinner while `discoverHomeserver()` runs.
  *   success     → discovered config preview + Confirm / Change.
- *   error       → failure message + retry. On the Host path, the
- *                 error screen also shows `docker compose up -d`
- *                 instructions so the user knows how to start a
- *                 local stack.
+ *   error       → failure message + retry. The copy adapts to origin.
  */
 type UiState =
   | { phase: "menu" }
+  | { phase: "hosting"; stage: "preparing" | "starting" | "waiting" | "running" | "failed"; message: string }
   | { phase: "input"; origin: ServerOrigin }
   | { phase: "connecting"; origin: ServerOrigin }
   | { phase: "success"; discovered: HomeserverConfig; apiBaseOverride: string; origin: ServerOrigin }
@@ -138,6 +158,14 @@ export function ServerPickerScreen({ onConnected }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const setHomeserver = useServerConfigStore((s) => s.setHomeserver);
 
+  // Cancellation token for the hosting poll loop. React state reads
+  // inside closures capture at spawn time, so we can't gate on
+  // `state.phase` from inside the async poll. Instead we flip a
+  // ref-held counter every time the user leaves the hosting phase;
+  // the poll loop checks its captured generation against the current
+  // generation on each iteration and bails out on mismatch.
+  const hostingGenerationRef = useRef(0);
+
   const handleConnect = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -178,10 +206,14 @@ export function ServerPickerScreen({ onConnected }: Props) {
     onConnected();
   }, [state, setHomeserver, onConnected]);
 
-  // "Back" from the input / error screens: on hosts that can host,
-  // return to the top-level menu; on mobile-only builds, clear state
-  // and stay in the input form (since the menu is skipped there).
+  // "Back" from the input / error / hosting screens: on hosts that
+  // can host, return to the top-level menu; on mobile-only builds,
+  // clear state and stay in the input form (since the menu is
+  // skipped there). Bumping the hosting generation cancels any
+  // in-flight servitude poll loop so it doesn't race back into the
+  // hosting phase after the user has already navigated away.
   const handleReset = useCallback(() => {
+    hostingGenerationRef.current += 1;
     if (canHost) {
       setState({ phase: "menu" });
       setHost("");
@@ -203,14 +235,169 @@ export function ServerPickerScreen({ onConnected }: Props) {
     setState({ phase: "input", origin: "join" });
   }, []);
 
-  // "Host your own" kicks the user into the hostname input with
-  // `localhost:8080` pre-filled — that's where the Docker Compose
-  // stack lands by default. If discovery fails, the error screen
-  // shows `docker compose up -d` instructions so the user knows
-  // how to start a stack. A full one-click launcher is deferred.
+  // "Host your own" → start the embedded servitude as a child
+  // process and connect to it once it reports Running.
+  //
+  // Sequence:
+  //   1. Transition the UI to the `hosting` phase with stage=preparing.
+  //   2. Call `servitudeStart` — this spawns the bundled tuwunel
+  //      Matrix homeserver as a subprocess of the Tauri shell.
+  //   3. Poll `servitudeStatus` on a 500ms cadence; advance the
+  //      stage label as the lifecycle transitions
+  //      stopped → starting → running.
+  //   4. On `running`, synthesise a local HomeserverConfig pointing
+  //      at `http://127.0.0.1:8765` (the default embedded port) and
+  //      call `setHomeserver` + `onConnected`.
+  //   5. On any poll error or explicit "failed" state, fall through
+  //      to the hosting-phase "failed" sub-state with a readable
+  //      message — the user can cancel and pick another path.
+  //
+  // IMPORTANT: the bundled host is Matrix-only at the moment.
+  // concord-api and LiveKit are NOT embedded yet, so Concord-specific
+  // features (server list, voice channels, extensions, soundboard,
+  // federation UI) will fail until those services are also bundled.
+  // See PLAN.md §INS-030 for the follow-up.
+  //
+  // The fallback for users who want the full stack is the "Bridge
+  // to docker-compose" path exposed as an Advanced affordance on
+  // the menu — that route assumes the user is already running
+  // `docker compose up -d` somewhere and just wants the picker to
+  // point at `localhost:8080`.
   const handleChooseHost = useCallback(() => {
+    if (!isTauriRuntime()) {
+      setState({
+        phase: "error",
+        message:
+          "Embedded hosting is only available in the native desktop app. Use a browser to connect to an existing instance instead.",
+        recoverable: false,
+        origin: "host",
+      });
+      return;
+    }
+
+    // Bump the generation so any already-running poll loop from a
+    // previous Host click will bail out on its next iteration.
+    hostingGenerationRef.current += 1;
+    const generation = hostingGenerationRef.current;
+
+    setState({
+      phase: "hosting",
+      stage: "preparing",
+      message: "Preparing local instance…",
+    });
+
+    // Fire-and-forget the start call; the poll loop below is the
+    // source of truth for lifecycle progress. If `servitudeStart`
+    // itself rejects we surface that to the failed sub-state.
+    void (async () => {
+      try {
+        await servitudeStart();
+      } catch (err) {
+        if (hostingGenerationRef.current !== generation) return;
+        setState({
+          phase: "hosting",
+          stage: "failed",
+          message:
+            err instanceof Error
+              ? `Couldn't start the embedded host: ${err.message}`
+              : "Couldn't start the embedded host.",
+        });
+        return;
+      }
+
+      // Poll the Rust-side lifecycle until we see `running` or we
+      // hit the 60s cap. Startup usually takes 2-5s on a warm
+      // install (tuwunel boot + key generation), longer on cold.
+      const POLL_MS = 500;
+      const TIMEOUT_MS = 60_000;
+      const startedAt = Date.now();
+
+      const stageFor = (s: ServitudeState): {
+        stage: "preparing" | "starting" | "waiting" | "running" | "failed";
+        message: string;
+      } => {
+        switch (s) {
+          case "stopped":
+            return { stage: "preparing", message: "Preparing local instance…" };
+          case "starting":
+            return {
+              stage: "starting",
+              message: "Starting bundled Matrix homeserver…",
+            };
+          case "running":
+            return { stage: "running", message: "Local instance ready." };
+          case "stopping":
+            return {
+              stage: "failed",
+              message: "Local instance stopped unexpectedly while starting.",
+            };
+        }
+      };
+
+      while (Date.now() - startedAt < TIMEOUT_MS) {
+        // Honor cancellation (user clicked Cancel / Back).
+        if (hostingGenerationRef.current !== generation) return;
+        try {
+          const s = await servitudeStatus();
+          if (hostingGenerationRef.current !== generation) return;
+          const next = stageFor(s);
+          setState({ phase: "hosting", stage: next.stage, message: next.message });
+          if (s === "running") {
+            // Synthesise a local HomeserverConfig. The port is the
+            // default 8765 — operators who changed it in Settings →
+            // Node Hosting need to reconnect via that tab for now;
+            // reading the configured port from here needs a new
+            // Tauri command (TODO).
+            const localPort = 8765;
+            const localHost = `localhost:${localPort}`;
+            const localConfig: HomeserverConfig = {
+              host: localHost,
+              homeserver_url: `http://${localHost}`,
+              api_base: `http://${localHost}/api`,
+              instance_name: "Local Concord Node",
+              features: [],
+            };
+            setHomeserver(localConfig);
+            onConnected();
+            return;
+          }
+          if (s === "stopping") {
+            return; // already reflected in state above
+          }
+        } catch (err) {
+          if (hostingGenerationRef.current !== generation) return;
+          setState({
+            phase: "hosting",
+            stage: "failed",
+            message:
+              err instanceof Error
+                ? `Status poll failed: ${err.message}`
+                : "Status poll failed.",
+          });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, POLL_MS));
+      }
+
+      if (hostingGenerationRef.current !== generation) return;
+      setState({
+        phase: "hosting",
+        stage: "failed",
+        message:
+          `Local instance did not start within ${TIMEOUT_MS / 1000}s. Check the app logs and try again.`,
+      });
+    })();
+  }, [setHomeserver, onConnected]);
+
+  // Advanced: attach to an externally-managed docker-compose stack.
+  // Used when the operator already has a full Concord stack running
+  // at `localhost:8080` (via `docker compose up -d`) and just wants
+  // the picker to point at it. Distinct from the embedded-host path
+  // above because this one talks to a real concord-api + LiveKit,
+  // which the embedded servitude doesn't bundle yet.
+  const handleChooseBridge = useCallback(() => {
     setHost("localhost:8080");
-    setState({ phase: "input", origin: "host" });
+    setState({ phase: "input", origin: "bridge" });
   }, []);
 
   const handlePasteBlob = useCallback(() => {
@@ -283,19 +470,21 @@ export function ServerPickerScreen({ onConnected }: Props) {
     switch (state.phase) {
       case "menu":
         return "Join a Concord community or host your own.";
+      case "hosting":
+        return "Spinning up your local instance.";
       case "input":
-        return state.origin === "host"
-          ? "Connect to your local Concord instance."
+        return state.origin === "bridge"
+          ? "Connect to your local Docker Compose stack."
           : "Connect to an existing Concord server.";
       case "connecting":
-        return state.origin === "host"
-          ? "Looking for your local instance…"
+        return state.origin === "bridge"
+          ? "Looking for your local stack…"
           : "Discovering endpoints…";
       case "success":
         return "Ready to connect.";
       case "error":
-        return state.origin === "host"
-          ? "Couldn't find a local instance."
+        return state.origin === "bridge"
+          ? "Couldn't find a local stack."
           : "Couldn't reach that server.";
     }
   })();
@@ -351,10 +540,111 @@ export function ServerPickerScreen({ onConnected }: Props) {
                     Host your own
                   </div>
                   <div className="text-xs text-on-surface-variant">
-                    Connect to a local Concord stack running on this machine. Requires <code>docker compose up</code> in the Concord repo.
+                    Turn this device into a Concord node. Starts a bundled Matrix homeserver — no Docker required.
+                  </div>
+                  <div className="text-[11px] text-on-surface-variant/70 mt-1">
+                    Experimental · Matrix-only · Full Concord features require an external stack
                   </div>
                 </div>
               </div>
+            </button>
+
+            <details className="pt-1">
+              <summary className="cursor-pointer text-xs text-on-surface-variant hover:text-on-surface px-2">
+                Advanced
+              </summary>
+              <button
+                type="button"
+                onClick={handleChooseBridge}
+                data-testid="server-picker-choose-bridge"
+                className="w-full mt-2 p-4 bg-surface-container-low hover:bg-surface-container border border-outline-variant/10 rounded-xl text-left transition-colors"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-on-surface-variant text-xl shrink-0 mt-0.5">
+                    cable
+                  </span>
+                  <div>
+                    <div className="text-sm font-medium text-on-surface mb-0.5">
+                      Bridge to a local Docker stack
+                    </div>
+                    <div className="text-xs text-on-surface-variant">
+                      For users already running <code>docker compose up -d</code> in the Concord repo. Connects to <code>localhost:8080</code> and gives the full Concord feature set.
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </details>
+          </div>
+        )}
+
+        {state.phase === "hosting" && (
+          <div className="space-y-4" data-testid="server-picker-hosting">
+            {state.stage !== "failed" ? (
+              <>
+                <div className="flex flex-col items-center gap-3 py-6">
+                  {state.stage === "running" ? (
+                    <span className="material-symbols-outlined text-primary text-5xl">
+                      check_circle
+                    </span>
+                  ) : (
+                    <span className="inline-block w-8 h-8 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
+                  )}
+                  <p className="text-sm text-on-surface font-medium">
+                    {state.message}
+                  </p>
+                  <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                    <span className={state.stage !== "preparing" ? "text-primary" : ""}>
+                      prepare
+                    </span>
+                    <span>›</span>
+                    <span className={state.stage === "starting" || state.stage === "waiting" || state.stage === "running" ? "text-primary" : ""}>
+                      start
+                    </span>
+                    <span>›</span>
+                    <span className={state.stage === "running" ? "text-primary" : ""}>
+                      ready
+                    </span>
+                  </div>
+                </div>
+
+                {/* Scope note — be explicit about the Matrix-only
+                    limitation so the user isn't surprised when
+                    Concord-specific features don't light up. */}
+                <div className="rounded-lg bg-surface-container-low/60 border border-outline-variant/15 px-4 py-3">
+                  <p className="text-xs text-on-surface-variant leading-relaxed">
+                    The bundled host runs a Matrix homeserver only.
+                    Concord-specific features (server list, voice,
+                    extensions, federation UI) aren't embedded yet
+                    and will be unavailable until the full stack is
+                    packaged. For a fully-featured host today, use
+                    the "Bridge to a local Docker stack" option on
+                    the menu.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="px-4 py-3 rounded-lg bg-error-container/10 border border-error/20">
+                <p className="text-sm text-error font-medium">
+                  Couldn't start the local instance
+                </p>
+                <p className="text-sm text-on-surface-variant mt-1 break-words">
+                  {state.message}
+                </p>
+                <p className="text-xs text-on-surface-variant mt-3">
+                  Try restarting the app, or check
+                  Settings → Node Hosting for more control over
+                  the embedded servitude.
+                </p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleReset}
+              data-testid="server-picker-hosting-back-button"
+              className="w-full py-3 bg-surface-container-high hover:bg-surface-container-highest text-on-surface rounded-lg text-sm font-medium"
+            >
+              {state.stage === "failed" ? "Back to menu" : "Cancel"}
             </button>
           </div>
         )}
@@ -363,20 +653,20 @@ export function ServerPickerScreen({ onConnected }: Props) {
           <form onSubmit={handleConnect} className="space-y-4" data-testid="server-picker-input-form">
             <div>
               <label className="block text-sm font-medium text-on-surface mb-1.5">
-                {state.origin === "host" ? "Local address" : "Hostname"}
+                {state.origin === "bridge" ? "Local address" : "Hostname"}
               </label>
               <input
                 type="text"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                placeholder={state.origin === "host" ? "localhost:8080" : "chat.example.com"}
+                placeholder={state.origin === "bridge" ? "localhost:8080" : "chat.example.com"}
                 autoFocus
                 required
                 data-testid="server-picker-hostname-input"
                 className="w-full px-4 py-3 bg-surface-container border border-outline-variant rounded-lg text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono text-sm"
               />
               <p className="text-xs text-on-surface-variant mt-1.5">
-                {state.origin === "host"
+                {state.origin === "bridge"
                   ? "Default docker-compose deployments run on localhost:8080. Change if you set a custom port."
                   : "Enter a hostname with no scheme — we'll discover the Concord API endpoints automatically."}
               </p>
@@ -447,15 +737,15 @@ export function ServerPickerScreen({ onConnected }: Props) {
           <div className="space-y-4" data-testid="server-picker-error">
             <div className="px-4 py-3 rounded-lg bg-error-container/10 border border-error/20">
               <p className="text-sm text-error font-medium">
-                {state.origin === "host" ? "No local instance found" : "Discovery failed"}
+                {state.origin === "bridge" ? "No local stack found" : "Discovery failed"}
               </p>
               <p className="text-sm text-on-surface-variant mt-1 break-words">
                 {state.message}
               </p>
-              {state.origin === "host" && (
+              {state.origin === "bridge" && (
                 <div className="mt-3 pt-3 border-t border-outline-variant/20">
                   <p className="text-xs text-on-surface-variant mb-2">
-                    To host your own instance, clone the Concord repo and run:
+                    To bring up a local Docker stack, clone the Concord repo and run:
                   </p>
                   <pre className="text-xs bg-surface-container-high rounded px-2 py-1.5 font-mono text-on-surface overflow-x-auto">docker compose up -d</pre>
                   <p className="text-xs text-on-surface-variant mt-2">
