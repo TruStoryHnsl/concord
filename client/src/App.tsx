@@ -6,7 +6,7 @@ import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession, MAX_RECONNECT_ATTEMPTS, RECONNECT_BASE_DELAY_MS } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
 import { useServerConfigStore } from "./stores/serverConfig";
-import { isDesktopMode, hasServerUrl, getHomeserverUrl } from "./api/serverUrl";
+import { isDesktopMode, getHomeserverUrl } from "./api/serverUrl";
 import { usePlatform } from "./hooks/usePlatform";
 import { computeInitialServerConnected } from "./serverPickerGate";
 import { redeemInvite } from "./api/concord";
@@ -34,17 +34,19 @@ export { INVITE_STORAGE_KEY };
 
 export default function App() {
   // Desktop/native mode: require a server picker pass before anything
-  // else. INS-027 landed the `serverConfig` store + ServerPickerScreen
-  // as the modern first-launch flow; the picker is skipped when the
-  // store already has a config, OR when the legacy `_serverUrl` is set
-  // (for Tauri users who configured a server before INS-027 shipped —
-  // their existing URL keeps working without being kicked through the
-  // picker again).
+  // else. Native apps ALWAYS start hollow — no pre-configured server,
+  // no "implicit" target. The picker is the first thing a Tauri build
+  // sees on first launch, and the only way to skip it is to have
+  // completed the picker in a previous session (persisted via the
+  // zustand `serverConfig` store, NOT via the legacy Tauri
+  // plugin-store `server_url` slot, which has been retired because it
+  // could silently skip the picker forever if a stale value leaked
+  // through Syncthing or a prior install).
   //
-  // INS-020 extension: native mobile Tauri builds AND mobile browsers
-  // also need the picker on first launch because they have no
-  // implicit origin-based server to fall back to. The decision is
-  // extracted into `computeInitialServerConnected` for unit testing.
+  // Mobile web also goes through the picker — it has no implicit
+  // origin-based server association either. Desktop web (non-Tauri,
+  // non-mobile) is the one case that boots straight into the chat
+  // shell because its origin IS the server.
   const hasNewConfig = useServerConfigStore((s) => s.config !== null);
   const { isMobile } = usePlatform();
   const [serverConnected, setServerConnected] = useState(() =>
@@ -52,7 +54,6 @@ export default function App() {
       isDesktop: isDesktopMode(),
       isMobile,
       hasNewConfig,
-      hasLegacyUrl: hasServerUrl(),
     }),
   );
 

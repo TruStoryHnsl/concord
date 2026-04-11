@@ -2,16 +2,26 @@
  * Server URL management for web and desktop (Tauri) modes.
  *
  * Web mode: uses relative URLs (same origin, proxied by Caddy)
- * Desktop mode: uses a configured remote server URL stored via Tauri plugin-store
+ * Desktop mode: the zustand `serverConfig` store (`stores/serverConfig.ts`)
+ * is the sole source of truth — see `getApiBase()` below.
  *
- * The server URL is the base for both the Concord API (/api/*) and
- * the Matrix homeserver (/_matrix/*) since Caddy proxies both.
+ * INS-027 note: this module keeps a legacy `_serverUrl` module var
+ * around so `getHomeserverUrl()` (consumed by some Matrix SDK code
+ * paths that haven't been migrated to the config store yet) can
+ * return a usable value. That module var is now populated ONLY by
+ * the in-session `setHomeserver` call — it is no longer read from
+ * or written to Tauri's persistent plugin-store. The Tauri plugin
+ * commands still exist for backward compatibility with any extension
+ * that uses them directly, but this module refuses to touch them.
  *
- * INS-027 note: this module now consults the `serverConfig` Zustand
- * store inside `getApiBase()`. The store is the source of truth for
- * the first-launch server-picker flow; the legacy `_serverUrl`
- * module-var path remains as a fallback for Tauri builds that haven't
- * been through the picker yet and for the web deployment.
+ * Why: a persisted `server_url` slot in Tauri's `settings.json` was
+ * the bug that kept leaking the operator's instance hostname between
+ * installs and Syncthing-linked machines, silently skipping the
+ * picker on every launch because `hasLegacyUrl` was true on the
+ * picker gate. The persistent-store bridge is gone; the native app
+ * always starts hollow on a fresh install. See the comment on
+ * `computeInitialServerConnected` in `serverPickerGate.ts` for the
+ * full rationale.
  */
 
 import { useServerConfigStore } from "../stores/serverConfig";
@@ -30,43 +40,31 @@ import { useServerConfigStore } from "../stores/serverConfig";
 const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-// Cached server URL — set on app startup in desktop mode
+// In-session cached server URL. Populated by `setServerUrl()` which
+// the server picker calls on confirm. NOT restored from Tauri's
+// plugin-store across app launches — that's the whole point.
 let _serverUrl = "";
 
 /**
- * Initialize the server URL. Call this on app startup before any API calls.
- * In web mode, this is a no-op (relative URLs work).
- * In desktop mode, reads the stored URL from Tauri settings.
+ * Initialize the server URL. Previously read Tauri's plugin-store
+ * `server_url` slot on startup; now a no-op on every platform
+ * because a native app must always start hollow. The picker writes
+ * the chosen host into `_serverUrl` via `setHomeserver` →
+ * `setServerUrl` during the session, and the zustand persist
+ * middleware takes care of cross-session persistence.
  */
 export async function initServerUrl(): Promise<void> {
-  if (!isTauri) return; // web mode — relative URLs
-
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const url = await invoke<string>("get_server_url");
-    if (url) {
-      _serverUrl = url.replace(/\/$/, ""); // strip trailing slash
-    }
-  } catch (e) {
-    console.warn("Failed to load server URL from Tauri store:", e);
-  }
+  // Intentional no-op. See module docstring.
 }
 
 /**
- * Set the server URL (desktop mode only). Persists to Tauri store.
+ * Set the in-session server URL. Called by `setHomeserver` in the
+ * `serverConfig` store when the picker confirms. Does NOT persist
+ * to Tauri's plugin-store — the zustand persist middleware is the
+ * only persistence layer.
  */
 export async function setServerUrl(url: string): Promise<void> {
-  const cleaned = url.replace(/\/$/, "");
-  _serverUrl = cleaned;
-
-  if (isTauri) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("set_server_url", { url: cleaned });
-    } catch (e) {
-      console.warn("Failed to save server URL to Tauri store:", e);
-    }
-  }
+  _serverUrl = url.replace(/\/$/, "");
 }
 
 /**
