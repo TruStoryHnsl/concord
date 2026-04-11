@@ -514,6 +514,85 @@ Add affordances that let **OpenClaw** create and present visual content (charts,
 
   **Known security gotcha (not a Concord task):** `~/.openclaw/openclaw.json` stores Matrix account passwords in cleartext on the openclaw VM. Tracked separately under `~/projects/admin/openclaw-matrix-recovery/`, independent of the chart feature.
 
+## Unfinished Work — Reverted on 2026-04-10 (noon-state rewind)
+
+On 2026-04-10, the concord worktree was reset from the evening's
+feature-branch chaos back to `feat/ins-024-docker-bridge @ bbdc152`
+(committed at 05:02 AM, the state that matches the "noon / three-platforms-working" baseline). All
+work that had landed on feature branches later in the day was
+reverted OUT of the working tree. The branches themselves still exist
+on `origin` untouched — this section is the manifest of what's
+waiting to be salvaged into a clean re-implementation, cleaned from
+from scratch per the MANDATORY testing rules in
+`/home/corr/projects/CLAUDE.md` (tests for a feature must be written
+in a separate session, never in the session that built the feature).
+
+Do NOT attempt to re-merge any of these branches directly. The
+detection-key bug that triggered the revert exists on many of them,
+and the overall batch was built in a single runaway session without
+empirical verification. Re-implement each feature cleanly in a fresh
+session, starting from the noon base. Pull the commits below as
+reference material only.
+
+### Unfinished: INS-023 Apple TV / Google TV native UI
+
+- **Branch**: `origin/feat/appletv-googletv-ui-b4f2`
+- **Tip commit**: `0a3d5a0 feat(client,tvos): INS-023 Apple TV UI — native channel list + DPAD focus` (16:09)
+- **Builds on**: `70bc4a6` (tvOS WebKit guard) which IS on main and is already in the noon base via transitive history. Do not revert that.
+- **What's there**: Swift-side native channel list + D-pad focus handling for tvOS, matching the parallel SwiftUI + WKWebView shell outlined in `docs/native-apps/appletv-feasibility.md`. Complements the INS-023 Apple TV scaffolding already on `main`.
+- **Status**: built, not empirically verified on a real Apple TV device. Re-implementation should land on a fresh branch and include a device-level acceptance test (cold boot → channel list visible → D-pad navigates → first-press opens a channel) before being merged.
+
+### Unfinished: Cross-platform launch animation / boot splash
+
+- **Branch**: `origin/feat/launch-animation-b4f2`
+- **Tip commit**: `3f851b6 feat(client): cross-platform launch animation boot splash` (16:15)
+- **What's there**: A pre-render boot splash that runs on every platform before the React tree mounts. Intended to cover the jank window between Tauri window-create and Vite HMR first paint.
+- **Status**: built, not empirically verified. No INS number assigned yet — when re-implementing, route as a new instruction and give it an ID. Acceptance test should observe a cold-launch video on at least Linux (native) + iOS to confirm the splash actually replaces the default white flash.
+
+### Unfinished: Standalone service-node admin + well-known posture
+
+- **Branch**: `origin/feat/service-node-admin-b4f2`
+- **Tip commit**: `e4697e3 feat(server,client): standalone service-node admin + well-known posture` (16:16)
+- **What's there**: Admin surface for a Concord instance running as a standalone service node (no user-facing client UI), plus adjustments to how `.well-known/matrix/server` and `.well-known/matrix/client` are posed when the instance is operating in headless/service-node mode. Related to the Service Node Mode section above and likely overlaps INS-026 (Federation Endpoints Publicly Reachable).
+- **Status**: built, not empirically verified. Re-implementation must include an integration test that stands up a service-node instance and confirms a second Concord instance can federate with it via the well-known posture.
+
+### Unfinished: Hollow-start Join / Host picker + generic distribution refactor
+
+- **Branches**:
+  - `origin/feat/generic-source-logo-picker-c7a1` (picker + branding + generic refactor)
+  - `origin/feat/sources-first-launch-b4f2` (sources store + extension components + Tauri detection fix)
+- **Tip commits (chronological on generic-source-logo-picker-c7a1)**:
+  - `f66ad54 refactor: remove hardcoded concorrd.com from source for generic distribution` (18:17)
+  - `48d876a feat(client): Join or Host menu on native desktop server picker` (18:20)
+  - `453f062 feat(client,branding): ConcordLogo SVG + theme-driven colours + iOS icon migration` (18:25)
+  - `7259ed4 feat(client): switch-server button in native UserBar` (18:28)
+  - `42dad9b refactor: purge every remaining concorrd.com reference from the tree` (19:04)
+  - `b93f28c feat(client): embedded-host path in ServerPickerScreen` (19:15)
+  - `980e99a docs(plan): add INS-030 full-bundled embedded host follow-up` (19:17)
+  - `ec2845c fix(client): native apps always start hollow on the Join/Host picker` (19:58)
+- **Tip commits (sources-first-launch-b4f2)**:
+  - `bbc9d89 feat(client): sources store + join/host picker + extension components` (16:54 — built on top of the logo-picker branch)
+  - `c92ce7d fix(client): use Tauri v2 __TAURI_INTERNALS__ global for native detection` (21:37 — fix for the root cause that finally surfaced the regression, see the `project_tauri_v2_global.md` memory entry)
+- **Goal (still valid)**: Native Concord apps must boot as hollow shells on a Join/Host menu and never contain the literal `concorrd.com` anywhere in their source or built assets. `concorrd.com` is corr's personal instance; the native apps are a generic distribution that ANY operator's instance can connect to. This requirement has not changed — only the implementation is reverted.
+- **Features to re-implement (in priority order)**:
+  1. **Purge `concorrd.com` from source** — every hardcoded reference in `server/main.py` default CORS origins, Caddyfile defaults, client CSS sample values, TURN host fallback, etc. The grep pattern is strict: nothing in the repo except operator-owned `.env` / ops docs may name `concorrd.com`.
+  2. **Hollow-start gate** — native Tauri builds must open on a ServerPickerScreen. They must NOT land on LoginForm until a homeserver has been explicitly selected. The INS-027 pluggable-discovery work that exists on the noon base is the starting point — build the UI on top of it.
+  3. **Join-vs-Host menu** — the picker's first screen is a two-option menu: "Join an existing Concord" (enter a domain, runs well-known discovery) and "Host one from this device" (runs the embedded servitude module in-process and points the client at `localhost`). The embedded-host path is INS-030; the Join path exists on the noon base via INS-027 but is not yet wired to the picker UI.
+  4. **ConcordLogo SVG + theme-driven colours** — replace the current iOS-icon-only branding with a two-colour SVG that maps to two CSS variables (`--color-logo-primary`, `--color-logo-secondary`) so a future theme-picker can recolour it. Source master lives at `branding/logo.png` on the reverted branch; port it as-is.
+  5. **Switch-server button in native UserBar** — lets a signed-in native user drop their current serverConfig and return to the picker without needing to log out and relaunch. Companion of the hollow-start gate.
+  6. **Sources store + extension components** — the bbc9d89 work adds a Zustand `sources` store modeled as a replacement for the old monolithic server list, plus an extension-component registry for the Sources panel. Lower priority than the picker itself; re-evaluate whether it should land as one piece or be split.
+- **KNOWN ROOT-CAUSE TRAP — do not forget on re-implementation**: every `isTauri` guard in the client tree MUST check `"__TAURI_INTERNALS__" in window`, not `"__TAURI__"`. Tauri v2 does not inject the v1 `__TAURI__` global unless `app.withGlobalTauri: true` is set in `tauri.conf.json` (and this project does not set it). The `c92ce7d` commit on `feat/sources-first-launch-b4f2` shows exactly which five production sites need the fix and which two test files had faked the wrong key. The noon base has the same bug, but it is latent there because the noon base lacks the picker gate that reads `hasServerUrl()`; it only becomes load-bearing when the picker work is reintroduced. See the `project_tauri_v2_global.md` memory entry. A regression guard for this specific typo already exists on `feat/sources-first-launch-b4f2` at `client/src/__tests__/noLegacyTauriGlobal.test.ts` — copy that file verbatim when re-implementing. It was empirically verified to fail when the legacy key is reintroduced and pass when it isn't.
+- **Acceptance tests (must be written by a DIFFERENT session than the one that re-implements)**:
+  - Cold launch native binary → picker visible (observed with a DOM overlay or Playwright screenshot, not by inspecting state variables).
+  - Click "Join" → enter `concorrd.com` → reach LoginForm with the instance name populated from `.well-known/concord/client`.
+  - Log in → normal chat works → click "Switch server" in the UserBar → picker visible again, store cleared.
+  - Click "Host" → embedded servitude starts → client auto-connects to `localhost:<servitude-port>` → register a first account → chat works.
+  - Grep the client tree and built bundle for `concorrd.com`: exactly zero hits.
+
+### Unfinished: (non-feature) safety snapshot branch
+
+- **Branch**: `origin/recover/working-tree-snapshot-b4f2` @ `52fda80 chore(recovery): safety snapshot of main's working tree before cleanup` (16:46). Not a feature — a recovery checkpoint made by a prior session before it started cleaning up. Do not delete; it is useful context for understanding what state someone else thought was worth preserving at 16:46.
+
 ## Recent Changes
 - 2026-04-09: **Native-apps sprint (Apple platforms focus) — iOS init, build script, sideload docs, iPad layout, tvOS decision recorded.** Sprint-scoped to iOS / iPadOS / tvOS only (Android + desktop out of scope). Deliverables: (1) **`cargo tauri ios init` run on orrpheus** against `src-tauri/` — generated Xcode project committed under `src-tauri/gen/apple/concord.xcodeproj/`, `concord_iOS/Info.plist`, `concord_iOS/concord_iOS.entitlements`; the `ios-entitlements.plist` + `Info.plist.template` checklist keys merged into the generated files (UIDeviceFamily=[1,2], NSLocalNetworkUsageDescription, NSBonjourServices, privacy descriptions, UIBackgroundModes=audio, multicast + wifi-info + keychain entitlements). `developmentTeam` remains `null` pending Apple ID verification. (2) **`scripts/build_ios_native.sh`** — Tauri v2 iOS build wrapper mirroring `build_macos_native.sh`, supporting `--sim` simulator mode, producing unsigned `.app` when `APPLE_TEAM_ID` is unset (Sideloadly-ready). (3) **`client/NATIVE_BUILD.md` §8a** — sideload guide covering Sideloadly + AltStore mac-companion + 7-day re-sign caveat + eventual TestFlight upgrade trigger. (4) **iPad layout** — `ChatLayout.tsx` now consumes `usePlatform().isIPad` and branches to a three-pane tablet layout at the md/lg Tailwind breakpoints; Split View / Slide Over work because the shell never pins to `100vw`. (5) **Apple TV feasibility study** committed at `docs/native-apps/appletv-feasibility.md` — Tauri v2 cannot target tvOS; recommendation is Path C (parallel SwiftUI + WKWebView shell) when the time comes post-v0.3 no earlier than Q3 2026; **no tvOS code ships this sprint**. INS-023 updated with the deferral note. Items checked in the Mobile Testing section: none yet — the pipeline is now ready for a physical-device sideload pass, but actually installing to a phone is blocked on human hands + device. Blocked out-of-sprint: sideloading onto a physical iPhone, cross-platform interop walkthrough, and the 7-condition testing protocol (all need physical hardware).
 - 2026-04-22 (22:25 batch): **Two new instructions routed (INS-024, INS-025)** from `instructions_inbox.md` via orrchestrator COO pipeline. Source idea: `orrchestrator/plans/2026-04-22-22-25.md` (user-labeled "CONCORD - New Priority Feature"). Batch is distinct from the earlier 2026-04-22 01:27 batch (INS-020..INS-023) — same date, different priorities. ID-collision check passed: INS-024 and INS-025 are unused elsewhere in PLAN.md. Both added as new PRIORITY sections under Feature Roadmap, inserted between the INS-020..INS-023 native-suite block and the INS-013/018 chat-input-polish block. Contents: (1) **INS-024 (OPT-001) Sandboxed Discord bridge** — new Docker Compose service running a Matrix↔Discord bridge daemon (`mautrix-discord` recommended, `matrix-appservice-discord` fallback) in its own container with strict credential/dependency isolation from `tuwunel` and `concord-api`. Uses Matrix's existing Application Service API pattern — not a bespoke protocol. Bidirectional relay of guild messages, mentions, replies, and supported attachments. Separate docs task to write the sandbox boundary + operator runbook at `docs/bridges/discord.md`, including a commercial-scope license audit of the chosen bridge daemon. (2) **INS-025 (OPT-002) Federated server Explore menu** — surfaces the existing federation allowlist (shipped 2026-04 in `server/routers/admin.py` + `useFederation.ts` + `FederationBadge.tsx`) to non-admin users via a new read-only endpoint + an "Explore" navigation entry in the client. Each entry shows name/domain/description and a "Browse public rooms" action that reuses the existing Matrix `publicRooms` join flow. Mobile reachability coordinates with the INS-011/016/017 top-bar + bottom-pill work already in flight to avoid creating an orphaned surface. Cross-reference notes: INS-024 is strictly Matrix↔Discord bridging and does NOT interact with the INS-025 Explore menu (which stays inside the Matrix federation graph). INS-025 deliberately does NOT introduce a new discovery protocol — the allowlist is the source of truth until a broader discovery mechanism lands under the mesh roadmap. No open questions raised; routing was unambiguous.
