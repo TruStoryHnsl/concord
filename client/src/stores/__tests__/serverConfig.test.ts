@@ -25,11 +25,11 @@ import { setServerUrl as setServerUrlMock } from "../../api/serverUrl";
  */
 function sampleConfig(overrides?: Partial<HomeserverConfig>): HomeserverConfig {
   return {
-    host: "concorrd.example",
-    homeserver_url: "https://matrix.concorrd.example",
-    api_base: "https://concorrd.example/api",
-    livekit_url: "wss://livekit.concorrd.example",
-    instance_name: "Concorrd Example",
+    host: "example.test",
+    homeserver_url: "https://matrix.example.test",
+    api_base: "https://example.test/api",
+    livekit_url: "wss://livekit.example.test",
+    instance_name: "Example Instance",
     features: ["chat", "voice"],
     ...overrides,
   };
@@ -78,7 +78,7 @@ describe("useServerConfigStore", () => {
     // In-memory state is the same value.
     expect(useServerConfigStore.getState().config).toEqual(cfg);
     expect(useServerConfigStore.getState().selectedHost()).toBe(
-      "concorrd.example",
+      "example.test",
     );
   });
 

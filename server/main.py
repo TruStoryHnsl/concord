@@ -23,15 +23,6 @@ from routers import servers, invites, registration, voice, soundboard, webhooks,
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Auto-migrate old database filename from pre-rename era (concorrd → concord)
-    from config import DATA_DIR
-    old_db = DATA_DIR / "concorrd.db"
-    new_db = DATA_DIR / "concord.db"
-    if old_db.exists() and not new_db.exists():
-        old_db.rename(new_db)
-        import logging
-        logging.getLogger(__name__).info("Migrated database: concorrd.db -> concord.db")
-
     await init_db()
 
     # Migrate existing tables: add new columns if missing

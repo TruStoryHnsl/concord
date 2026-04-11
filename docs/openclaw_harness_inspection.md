@@ -9,7 +9,7 @@
 
 OpenClaw is an **upstream open-source npm package**, not a corr-authored project — it lives at `https://github.com/openclaw/openclaw` (MIT). The version on the VM is `2026.4.8`, installed globally via npm at `~/.npm-global/lib/node_modules/openclaw/`. There is **no `~/projects/openclaw/`** on the VM and **no orracle integration** — none of corr's `~/projects/orracle/` code is referenced anywhere. The "oracle" skill that ships with openclaw is the unrelated `@steipete/oracle` CLI.
 
-OpenClaw runs as systemd user service `openclaw-gateway.service` and hosts **9 agent personas** (`sable`, `ledger`, `advisor`, `north`, `quill`, `switch`, `recon`, `talent-manager` aka Arden, `trainer`), each logged into Concord (`https://concorrd.com`) as a distinct Matrix user `@<id>:concorrd.com` and bound to a single Matrix room. Each agent uses model `openai-codex/gpt-5.4-mini` (configurable). The Matrix transport is `matrix-js-sdk` 41.3.0-rc.0 (Node.js, not nio).
+OpenClaw runs as systemd user service `openclaw-gateway.service` and hosts **9 agent personas** (`sable`, `ledger`, `advisor`, `north`, `quill`, `switch`, `recon`, `talent-manager` aka Arden, `trainer`), each logged into Concord (`https://example.test`) as a distinct Matrix user `@<id>:example.test` and bound to a single Matrix room. Each agent uses model `openai-codex/gpt-5.4-mini` (configurable). The Matrix transport is `matrix-js-sdk` 41.3.0-rc.0 (Node.js, not nio).
 
 The **good news for INS-019b**: OpenClaw's matrix plugin already supports arbitrary `extraContent` fields on outbound events (the same wire mechanism it uses internally for `com.openclaw.finalized_preview`). The `withMatrixExtraContentFields` helper merges custom keys into the `m.room.message` content blob with no whitelist or sanitization, so a custom `com.concord.chart` field will survive end-to-end (encrypted or not).
 
@@ -43,18 +43,18 @@ The **bad news**: openclaw's existing model-callable `message.send` action does 
 
 **Concord identity (from `~/.openclaw/openclaw.json`):**
 
-- Homeserver: `https://concorrd.com`
+- Homeserver: `https://example.test`
 - Default account: `sable`
 - Bound rooms (one per agent, via `bindings[]`):
-  - `sable` → `!255OLGSJjvZow0qamN:concorrd.com`
-  - `ledger` → `!JUUpxXeJrYzXdk9Jgt:concorrd.com`
-  - `advisor` → `!NKiOKWh7o3t2MZilg6:concorrd.com`
-  - `north` → `!JL5skYachn61c9XHQy:concorrd.com`
-  - `quill` → `!pWntvUVcAN4aeQwZLd:concorrd.com`
-  - `switch` → `!40ve1T8sZaN5jO0Fhn:concorrd.com`
-  - `recon` → `!oMKcULJQCS7x48JYc9:concorrd.com`
-  - `talent-manager` → `!jUlD7dFtyoqvXDLZQl:concorrd.com`
-  - `trainer` → `!5IWfeRsYKShSAZpHje:concorrd.com`
+  - `sable` → `!255OLGSJjvZow0qamN:example.test`
+  - `ledger` → `!JUUpxXeJrYzXdk9Jgt:example.test`
+  - `advisor` → `!NKiOKWh7o3t2MZilg6:example.test`
+  - `north` → `!JL5skYachn61c9XHQy:example.test`
+  - `quill` → `!pWntvUVcAN4aeQwZLd:example.test`
+  - `switch` → `!40ve1T8sZaN5jO0Fhn:example.test`
+  - `recon` → `!oMKcULJQCS7x48JYc9:example.test`
+  - `talent-manager` → `!jUlD7dFtyoqvXDLZQl:example.test`
+  - `trainer` → `!5IWfeRsYKShSAZpHje:example.test`
 - Auth: per-account `password` field in `channels.matrix.accounts.<id>.password` (cleartext today — see `admin/openclaw-matrix-recovery/` for the access-token rotation utility). Refresh tokens are NOT used; openclaw re-logs in via password on session invalidation.
 
 ---
@@ -356,7 +356,7 @@ import {
 
 const ChartParams = Type.Object({
   to: Type.String({
-    description: "Matrix room ID (e.g. !abc:concorrd.com) the chart should be posted to. For room-bound agents this is the bound room.",
+    description: "Matrix room ID (e.g. !abc:example.test) the chart should be posted to. For room-bound agents this is the bound room.",
   }),
   type: Type.Union(
     [
@@ -544,7 +544,7 @@ if (chartContent && typeof chartContent === "object") {
 | `client.sendEvent("m.room.message", content)` | ✅ | matrix-js-sdk does not strip unknown content keys. |
 | Synapse server-side | ✅ | Matrix spec explicitly allows arbitrary additional content keys on `m.room.message`. Synapse stores them verbatim. |
 | Federation to other Matrix homeservers | ✅ | Per spec; verified by countless precedents (`org.matrix.msc*` extensions, Element's reply fallbacks, etc.). |
-| **E2EE encryption** | ✅ | Matrix encrypts the entire `content` object; custom keys are preserved. The `concorrd.com` accounts have crypto enabled (`encryptionEnabled: account.config.encryption === true` in `matrixMessageActions`). The chart payload will be E2EE if the room is encrypted. |
+| **E2EE encryption** | ✅ | Matrix encrypts the entire `content` object; custom keys are preserved. The `example.test` accounts have crypto enabled (`encryptionEnabled: account.config.encryption === true` in `matrixMessageActions`). The chart payload will be E2EE if the room is encrypted. |
 | Concord client receive (`useMatrix.ts`) | ✅ | matrix-js-sdk on the receive side parses content as `Record<string, unknown>`. Reading `event.getContent()["com.concord.chart"]` works. |
 
 **Caveat 1 — Concord client has to be the only consumer.** Other Matrix clients (Element, FluffyChat, etc.) will see only the `body` text. So `fallbackText` MUST be meaningful — otherwise non-Concord users in the same room get a confusing blank-looking message.
@@ -562,7 +562,7 @@ if (chartContent && typeof chartContent === "object") {
 | The existing `message.send` model action | **High** — the action handler does not forward `extraContent`. | Don't use it. Use the new `emit_chart` plugin tool. |
 | `chunkMatrixText` (called from `deliverMatrixReplies`) | **Medium** — it splits long text into multiple events; if you ever try to attach a chart to a *reply text*, the chart key would only land on the first chunk and confuse renderers. | The `emit_chart` tool sends a *single* text event with the chart attached, never chunks. |
 | `editMessageMatrix` redo | **Low** — edits replace `content`, but `editMessageMatrix` itself accepts an `extraContent` parameter. If a future feature needs to edit a chart, plumb `extraContent` through there too. | Currently we only `send`, not `edit`, charts. |
-| Concord federation to a DIFFERENT homeserver | **Low** — if Concord ever federates concorrd.com with another concord instance whose client doesn't understand `com.concord.chart`, fallback text appears. | Acceptable. Document the namespace in Concord's protocol notes. |
+| Concord federation to a DIFFERENT homeserver | **Low** — if Concord ever federates example.test with another concord instance whose client doesn't understand `com.concord.chart`, fallback text appears. | Acceptable. Document the namespace in Concord's protocol notes. |
 
 ### 5c. Other gotchas I noticed during inspection
 
@@ -593,7 +593,7 @@ These could not be answered by SSH inspection alone. The user (corr) should conf
 
 6. **Plugin install process automation.** Should INS-019b also include a `concord/admin/openclaw-deploy-chart-plugin.sh` script that builds + scp's + installs + enables the plugin on `corr@openclaw`? Or is that out of scope?
 
-7. **Tunnels & federation.** The chart payload survives federation per the Matrix spec, but Concord-specific. If Concord ever federates `concorrd.com` with another server running concord-client, that's fine. If it federates with element.io or matrix.org, those clients will only see fallback text. Is that acceptable for now? (My read: yes — it's a private instance.)
+7. **Tunnels & federation.** The chart payload survives federation per the Matrix spec, but Concord-specific. If Concord ever federates `example.test` with another server running concord-client, that's fine. If it federates with element.io or matrix.org, those clients will only see fallback text. Is that acceptable for now? (My read: yes — it's a private instance.)
 
 ---
 

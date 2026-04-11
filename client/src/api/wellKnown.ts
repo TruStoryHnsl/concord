@@ -54,7 +54,7 @@ export interface HomeserverConfig {
   identity_server_url?: string;
   /** Optional LiveKit signaling URL (wss:// or https://). */
   livekit_url?: string;
-  /** Optional human-readable instance name (e.g. "Concorrd"). */
+  /** Optional human-readable instance name (e.g. "Example Community"). */
   instance_name?: string;
   /** Optional list of advertised feature flags. */
   features?: string[];

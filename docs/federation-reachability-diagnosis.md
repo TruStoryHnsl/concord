@@ -3,9 +3,9 @@
 **Date**: 2026-04-08
 **Trigger**: Explore menu (INS-025) first end-to-end test against
 `matrix.org` returned `401 M_UNAUTHORIZED: Failed to find any key to
-satisfy _FetchKeyRequest(server_name='concorrd.com', ...)`.
+satisfy _FetchKeyRequest(server_name='example.test', ...)`.
 
-**Status**: **Resolved.** `https://federationtester.matrix.org/api/report?server_name=concorrd.com`
+**Status**: **Resolved.** `https://federationtester.matrix.org/api/report?server_name=example.test`
 returns `FederationOK: True` after the fix.
 
 ## TL;DR
@@ -13,7 +13,7 @@ returns `FederationOK: True` after the fix.
 Concord's Caddyfile proxied `/.well-known/matrix/*` to the tuwunel
 homeserver. Tuwunel does not implement `.well-known` endpoints — they
 are supposed to be **static files served by the reverse proxy**. Every
-federating server asking for `concorrd.com`'s `.well-known/matrix/server`
+federating server asking for `example.test`'s `.well-known/matrix/server`
 received an HTTP 404 JSON body from tuwunel (`{"errcode":"M_NOT_FOUND"}`),
 fell back through the Matrix server-discovery ladder to the default
 federation port 8448, and failed to reach it because **port 8448 is not
@@ -28,12 +28,12 @@ that return static JSON directly from Caddy:
 handle /.well-known/matrix/server {
     header Content-Type "application/json"
     header Access-Control-Allow-Origin "*"
-    respond `{"m.server":"concorrd.com:443"}` 200
+    respond `{"m.server":"example.test:443"}` 200
 }
 handle /.well-known/matrix/client {
     header Content-Type "application/json"
     header Access-Control-Allow-Origin "*"
-    respond `{"m.homeserver":{"base_url":"https://concorrd.com"}}` 200
+    respond `{"m.homeserver":{"base_url":"https://example.test"}}` 200
 }
 ```
 
@@ -66,18 +66,18 @@ bypasses the problem entirely.
 ## DNS and SRV state
 
 ```
-$ dig @8.8.8.8 concorrd.com +short
+$ dig @8.8.8.8 example.test +short
 104.21.51.58
 172.67.221.170           # Cloudflare edge (proxied)
 
-$ dig @8.8.8.8 concorrd.com AAAA +short
+$ dig @8.8.8.8 example.test AAAA +short
 2606:4700:3036::6815:333a
 2606:4700:3034::ac43:ddaa
 
-$ dig @8.8.8.8 _matrix-fed._tcp.concorrd.com SRV +short
+$ dig @8.8.8.8 _matrix-fed._tcp.example.test SRV +short
 (empty)
 
-$ dig @8.8.8.8 _matrix._tcp.concorrd.com SRV +short
+$ dig @8.8.8.8 _matrix._tcp.example.test SRV +short
 (empty)
 ```
 
@@ -109,7 +109,7 @@ at 15s with a zero-byte response. The Caddy-internal response was
 sub-millisecond (confirmed via `docker compose exec web curl`), so
 the latency lived entirely in the Cloudflare edge.
 
-Audit ran against the `concorrd.com` zone via the Cloudflare API with
+Audit ran against the `example.test` zone via the Cloudflare API with
 a scoped token:
 
 | Setting | Value |
@@ -135,8 +135,8 @@ affected by Cloudflare's security stack:
 
 | Priority | URL pattern | Actions |
 |---|---|---|
-| 1 | `*concorrd.com/_matrix/*` | Security Level: essentially_off, Disable Security, Cache Level: bypass |
-| 2 | `*concorrd.com/.well-known/*` | Security Level: essentially_off, Disable Security, Cache Level: bypass |
+| 1 | `*example.test/_matrix/*` | Security Level: essentially_off, Disable Security, Cache Level: bypass |
+| 2 | `*example.test/.well-known/*` | Security Level: essentially_off, Disable Security, Cache Level: bypass |
 
 `disable_security` turns off Browser Integrity Check, hotlink
 protection, and WAF rule evaluation for the matching URLs. It does
@@ -209,21 +209,21 @@ continues to report `FederationOK: True`.
 
 ```bash
 # 1. External reachability of well-known
-curl -v --max-time 15 https://concorrd.com/.well-known/matrix/server
-# Expected: HTTP 200, {"m.server":"concorrd.com:443"}
+curl -v --max-time 15 https://example.test/.well-known/matrix/server
+# Expected: HTTP 200, {"m.server":"example.test:443"}
 
-curl -v --max-time 15 https://concorrd.com/.well-known/matrix/client
-# Expected: HTTP 200, {"m.homeserver":{"base_url":"https://concorrd.com"}}
+curl -v --max-time 15 https://example.test/.well-known/matrix/client
+# Expected: HTTP 200, {"m.homeserver":{"base_url":"https://example.test"}}
 
 # 2. External reachability of federation API
-curl -s https://concorrd.com/_matrix/key/v2/server | jq .
+curl -s https://example.test/_matrix/key/v2/server | jq .
 # Expected: signed server keys (ed25519:OFFRKqW6 verify key present)
 
-curl -s https://concorrd.com/_matrix/federation/v1/version | jq .
+curl -s https://example.test/_matrix/federation/v1/version | jq .
 # Expected: {"server":{"name":"Tuwunel","version":"1.5.1-126 (...)"}}
 
 # 3. Authoritative federation health check
-curl -s "https://federationtester.matrix.org/api/report?server_name=concorrd.com" | jq '{FederationOK, Version: .Version.name, ConnectionErrors}'
+curl -s "https://federationtester.matrix.org/api/report?server_name=example.test" | jq '{FederationOK, Version: .Version.name, ConnectionErrors}'
 # Expected: {"FederationOK": true, "Version": "Tuwunel", "ConnectionErrors": []}
 ```
 

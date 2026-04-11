@@ -40,11 +40,11 @@ const mockedDiscover = vi.mocked(wellKnownApi.discoverHomeserver);
 
 function makeConfig(overrides?: Partial<HomeserverConfig>): HomeserverConfig {
   return {
-    host: "concorrd.example",
-    homeserver_url: "https://concorrd.example",
-    api_base: "https://concorrd.example/api",
-    livekit_url: "wss://concorrd.example/livekit/",
-    instance_name: "Concorrd Example",
+    host: "example.test",
+    homeserver_url: "https://example.test",
+    api_base: "https://example.test/api",
+    livekit_url: "wss://example.test/livekit/",
+    instance_name: "Example Instance",
     features: ["chat", "voice", "federation"],
     ...overrides,
   };
@@ -73,7 +73,7 @@ describe("<ServerPickerScreen />", () => {
     render(<ServerPickerScreen onConnected={vi.fn()} />);
 
     const input = screen.getByTestId("server-picker-hostname-input");
-    await user.type(input, "concorrd.example");
+    await user.type(input, "example.test");
 
     expect(screen.getByTestId("server-picker-connect-button")).toBeEnabled();
   });
@@ -87,7 +87,7 @@ describe("<ServerPickerScreen />", () => {
 
     await user.type(
       screen.getByTestId("server-picker-hostname-input"),
-      "concorrd.example",
+      "example.test",
     );
     await user.click(screen.getByTestId("server-picker-connect-button"));
 
@@ -95,16 +95,16 @@ describe("<ServerPickerScreen />", () => {
       expect(screen.getByTestId("server-picker-success")).toBeInTheDocument();
     });
 
-    expect(mockedDiscover).toHaveBeenCalledWith("concorrd.example");
+    expect(mockedDiscover).toHaveBeenCalledWith("example.test");
     expect(screen.getByTestId("server-picker-host")).toHaveTextContent(
-      "concorrd.example",
+      "example.test",
     );
     expect(screen.getByTestId("server-picker-api-base")).toHaveTextContent(
-      "https://concorrd.example/api",
+      "https://example.test/api",
     );
     // Instance name from the discovered config is displayed.
     expect(
-      screen.getByText("Concorrd Example"),
+      screen.getByText("Example Instance"),
     ).toBeInTheDocument();
   });
 
@@ -132,7 +132,7 @@ describe("<ServerPickerScreen />", () => {
 
   it("surfaces a distinct HTTP-error message when discovery rejects with HttpServerError", async () => {
     mockedDiscover.mockRejectedValueOnce(
-      new HttpServerError("concorrd.example", 503),
+      new HttpServerError("example.test", 503),
     );
 
     const user = userEvent.setup();
@@ -140,7 +140,7 @@ describe("<ServerPickerScreen />", () => {
 
     await user.type(
       screen.getByTestId("server-picker-hostname-input"),
-      "concorrd.example",
+      "example.test",
     );
     await user.click(screen.getByTestId("server-picker-connect-button"));
 
@@ -215,7 +215,7 @@ describe("<ServerPickerScreen />", () => {
 
     await user.type(
       screen.getByTestId("server-picker-hostname-input"),
-      "concorrd.example",
+      "example.test",
     );
     await user.click(screen.getByTestId("server-picker-connect-button"));
     await waitFor(() =>
@@ -241,7 +241,7 @@ describe("<ServerPickerScreen />", () => {
 
     await user.type(
       screen.getByTestId("server-picker-hostname-input"),
-      "concorrd.example",
+      "example.test",
     );
     await user.click(screen.getByTestId("server-picker-connect-button"));
     await waitFor(() =>
