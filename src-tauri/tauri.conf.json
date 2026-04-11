@@ -18,16 +18,18 @@
         "minWidth": 420,
         "minHeight": 520,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "backgroundColor": [12, 14, 17, 255]
       }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' https: wss: http: ws:; img-src 'self' https: data: blob:; media-src 'self' https: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage"],
+    "targets": ["deb", "rpm", "appimage", "nsis", "msi"],
     "category": "SocialNetworking",
     "shortDescription": "Concord — decentralized chat",
     "longDescription": "Concord is a self-hosted, Matrix-based decentralized chat platform with voice channels, soundboard, and federation.",
@@ -39,11 +41,12 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/tuwunel/**/*"
+      "resources/tuwunel/**/*",
+      "resources/discord_bridge/**/*"
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "bubblewrap"]
       }
     },
     "macOS": {
@@ -51,12 +54,17 @@
       "frameworks": []
     },
     "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "installMode": "currentUser"
+      },
       "wix": {
         "language": ["en-US"]
       }
     },
     "iOS": {
-      "developmentTeam": null,
+      "developmentTeam": "827D323V6Z",
       "minimumSystemVersion": "15.0",
       "frameworks": []
     },

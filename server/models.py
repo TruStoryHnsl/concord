@@ -28,6 +28,13 @@ class Server(Base):
         String, ForeignKey("servers.id"), nullable=True
     )
     bans_disposables: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Rolling auth code secret — used to generate the deterministic
+    # 6-char alphabetic code that rotates every 10 minutes. All server
+    # members see the same code; joining requires both an invite token
+    # AND the current auth code. Auto-generated on first access.
+    auth_code_secret: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=lambda: secrets.token_hex(32)
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     channels: Mapped[list["Channel"]] = relationship(back_populates="server", cascade="all, delete-orphan")

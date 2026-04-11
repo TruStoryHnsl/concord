@@ -4,6 +4,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -19,8 +20,10 @@ import { CSS } from "@dnd-kit/utilities";
 import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
 import { useAuthStore } from "../../stores/auth";
-import { useUnreadCounts } from "../../hooks/useUnreadCounts";
-import { usePresenceMap } from "../../hooks/usePresence";
+import {
+  useUnreadCounts,
+  useHighlightCounts,
+} from "../../hooks/useUnreadCounts";
 import { NewServerModal } from "../server/NewServerModal";
 import { ExploreModal } from "../server/ExploreModal";
 
@@ -37,13 +40,23 @@ import { ExploreModal } from "../server/ExploreModal";
  * room id).
  */
 const SERVER_ORDER_STORAGE_KEY_PREFIX = "concord_server_order";
+// Separate persistence bucket for the vanilla Matrix federated
+// stack at the bottom of the sidebar. Stored independently from the
+// main list so the two drag orderings don't interfere — the main
+// list contains server ids for local + Concord-federated entries,
+// while this one only contains matrix-federated ids (either live
+// `federated:<roomId>` or placeholder `federated-placeholder:<host>`
+// forms).
+const MATRIX_FEDERATED_ORDER_STORAGE_KEY_PREFIX =
+  "concord_matrix_federated_order";
 
-function readStoredServerOrder(userId: string | null): string[] | null {
+function readStoredOrder(
+  prefix: string,
+  userId: string | null,
+): string[] | null {
   if (typeof window === "undefined" || !userId) return null;
   try {
-    const raw = window.localStorage.getItem(
-      `${SERVER_ORDER_STORAGE_KEY_PREFIX}:${userId}`,
-    );
+    const raw = window.localStorage.getItem(`${prefix}:${userId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
@@ -53,19 +66,36 @@ function readStoredServerOrder(userId: string | null): string[] | null {
   }
 }
 
-function writeStoredServerOrder(userId: string | null, order: string[]): void {
+function writeStoredOrder(
+  prefix: string,
+  userId: string | null,
+  order: string[],
+): void {
   if (typeof window === "undefined" || !userId) return;
   try {
-    window.localStorage.setItem(
-      `${SERVER_ORDER_STORAGE_KEY_PREFIX}:${userId}`,
-      JSON.stringify(order),
-    );
+    window.localStorage.setItem(`${prefix}:${userId}`, JSON.stringify(order));
   } catch {
     // Quota exceeded or private-mode — silently skip. The list just
     // won't persist this session; it will fall back to the default
     // ordering on reload.
   }
 }
+
+const readStoredServerOrder = (userId: string | null) =>
+  readStoredOrder(SERVER_ORDER_STORAGE_KEY_PREFIX, userId);
+const writeStoredServerOrder = (userId: string | null, order: string[]) =>
+  writeStoredOrder(SERVER_ORDER_STORAGE_KEY_PREFIX, userId, order);
+const readStoredMatrixFederatedOrder = (userId: string | null) =>
+  readStoredOrder(MATRIX_FEDERATED_ORDER_STORAGE_KEY_PREFIX, userId);
+const writeStoredMatrixFederatedOrder = (
+  userId: string | null,
+  order: string[],
+) =>
+  writeStoredOrder(
+    MATRIX_FEDERATED_ORDER_STORAGE_KEY_PREFIX,
+    userId,
+    order,
+  );
 
 interface ServerSidebarProps {
   mobile?: boolean;
@@ -76,11 +106,14 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   const servers = useServerStore((s) => s.servers);
   const activeServerId = useServerStore((s) => s.activeServerId);
   const setActiveServer = useServerStore((s) => s.setActiveServer);
-  const membersByServer = useServerStore((s) => s.members);
-  const loadMembers = useServerStore((s) => s.loadMembers);
-  const accessToken = useAuthStore((s) => s.accessToken);
   const currentUserId = useAuthStore((s) => s.userId);
+  // Global Matrix sync state — mirrored from `useMatrixSync()` into the
+  // auth store by that hook. When false, the client is either starting
+  // up, errored, or stopped, and every server tile should render in its
+  // "disconnected" state (grayed + red dot).
+  const syncing = useAuthStore((s) => s.syncing);
   const unreadCounts = useUnreadCounts();
+  const highlightCounts = useHighlightCounts();
   const [showNewServer, setShowNewServer] = useState(false);
   const [exploreOpen, setExploreOpen] = useState(false);
 
@@ -94,21 +127,78 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     setPreferredOrder(readStoredServerOrder(currentUserId));
   }, [currentUserId]);
 
-  // Split the server list into Concord-managed ("home") servers and
-  // federated (non-local) rooms. They render in two separate sections
-  // — Concord at the top of the sidebar, federated pinned to the
-  // bottom above the Explore button — and only the Concord list
-  // participates in the INS-002B drag-reorder flow. Federated rooms
-  // stack upward from Explore with the oldest entry adjacent to it,
-  // matching the user's mental model of "Explore is how you find
-  // new servers, so the newest finds grow away from it".
-  const concordServers = useMemo(
-    () => servers.filter((s) => s.federated !== true),
-    [servers],
+  // Parallel state for the vanilla Matrix federated stack (bottom
+  // of the sidebar). Drag-reorder here persists under its own
+  // localStorage key so it doesn't fight with the main-list ordering
+  // above. When unset, the stack falls back to the original
+  // reverse-join ordering (oldest above Explore, newest at the top
+  // of the federated section).
+  const [preferredMatrixOrder, setPreferredMatrixOrder] = useState<
+    string[] | null
+  >(() => readStoredMatrixFederatedOrder(currentUserId));
+  useEffect(() => {
+    setPreferredMatrixOrder(readStoredMatrixFederatedOrder(currentUserId));
+  }, [currentUserId]);
+
+  // Split the server list into three buckets:
+  //   1. Local Concord-managed servers (this instance owns them).
+  //   2. Federated rooms that turned out to be ANOTHER Concord
+  //      instance (catalog `isConcord === true`) — these live in
+  //      the main sidebar alongside local servers, participate in
+  //      drag-reorder, and are styled with a secondary-palette
+  //      highlight + "C" monogram so the user can tell they're
+  //      not native.
+  //   3. Vanilla Matrix federation — still pinned to the bottom
+  //      stack above Explore.
+  //
+  // Bucket (2) is new: Concord-from-Concord federation used to sit
+  // in the bottom stack alongside vanilla Matrix rooms, which hid
+  // those servers behind a visual divider that didn't match the
+  // user's mental model ("another Concord server is still one of
+  // my servers"). Moving them into the main list lets the user
+  // drag them wherever they want in their personal ordering.
+  // INS-020: Source-based filtering. On native, servers only show if
+  // their source is enabled. The primary instance host comes from
+  // serverConfig; federated servers are matched by their hostname
+  // (extracted from the synthetic server id or room id).
+  // `__TAURI_INTERNALS__` — canonical Tauri v2 global. See the
+  // explanation in `client/src/api/serverUrl.ts`.
+  const isNative =
+    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  const allSources = useSourcesStore((s) => s.sources);
+  const primaryHost = useServerConfigStore((s) => s.config?.host ?? "");
+  const enabledHosts = useMemo(() => {
+    if (!isNative) return null; // web: no source filtering
+    const hosts = new Set<string>();
+    for (const src of allSources) {
+      if (src.enabled) hosts.add(src.host.toLowerCase());
+    }
+    return hosts;
+  }, [isNative, allSources]);
+
+  // Is the primary Concord instance enabled?
+  const primaryEnabled = !enabledHosts || enabledHosts.has(primaryHost.toLowerCase());
+
+  const localServers = useMemo(
+    () => {
+      const all = servers.filter((s) => s.federated !== true);
+      return primaryEnabled ? all : [];
+    },
+    [servers, primaryEnabled],
   );
   const federatedServers = useMemo(
-    () => servers.filter((s) => s.federated === true),
-    [servers],
+    () => {
+      const all = servers.filter((s) => s.federated === true);
+      if (!enabledHosts) return all; // web: show all
+      return all.filter((s) => {
+        // Extract hostname from the server's first channel room_id
+        // format: "!xxx:hostname" → hostname
+        const roomId = s.channels?.[0]?.matrix_room_id ?? "";
+        const hostPart = roomId.split(":")[1]?.toLowerCase() ?? "";
+        return enabledHosts.has(hostPart);
+      });
+    },
+    [servers, enabledHosts],
   );
 
   // Compute the display order for CONCORD servers only: any server
@@ -160,11 +250,17 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
       .reverse();
   }, [federatedServers]);
 
-  // dnd-kit sensors. PointerSensor activates after 5px of movement so
-  // regular clicks on the server tile still fire (for server select). The
-  // KeyboardSensor enables arrow-key reorder for keyboard users.
+  // dnd-kit sensors — platform-specific.
+  // Mobile: ONLY TouchSensor with 1-second hold. PointerSensor must NOT
+  // be registered on touch devices because it fires at 5px movement,
+  // overriding TouchSensor's delay and making tiles drag on any swipe.
+  // Desktop: PointerSensor (5px distance) for mouse drag.
+  // Both: KeyboardSensor for arrow-key reorder.
+  const isTouchDevice = typeof window !== "undefined" && "ontouchstart" in window;
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    ...(isTouchDevice
+      ? [useSensor(TouchSensor, { activationConstraint: { delay: 1000, tolerance: 5 } })]
+      : [useSensor(PointerSensor, { activationConstraint: { distance: 5 } })]),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
@@ -185,93 +281,45 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     [orderedServers, currentUserId],
   );
 
-  // Ensure each server we're a member of has its member list loaded so we can
-  // compute presence badges. loadMembers is idempotent (it simply overwrites
-  // that server's entry in the members record), and fetches are cheap — one
-  // call per server on initial render and when the server list changes.
-  // We deliberately don't gate on `membersByServer[id]` being missing because
-  // we still want to pick up new servers as they appear.
-  useEffect(() => {
-    if (!accessToken) return;
-    for (const srv of servers) {
-      if (!membersByServer[srv.id]) {
-        loadMembers(srv.id, accessToken);
-      }
-    }
-    // membersByServer intentionally omitted — we only fetch on server list
-    // changes, not every time the member map updates (which would loop).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, servers, loadMembers]);
-
-  // Determine which servers should show a presence badge. Private servers
-  // are suppressed unless the current user is the owner (so owners of their
-  // own private servers still see activity).
-  const presenceVisibleServerIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const srv of servers) {
-      const isPrivate = srv.visibility === "private";
-      const isOwner = currentUserId !== null && srv.owner_id === currentUserId;
-      if (!isPrivate || isOwner) {
-        ids.add(srv.id);
-      }
-    }
-    return ids;
-  }, [servers, currentUserId]);
-
-  // Flatten member IDs across all presence-visible servers into a single
-  // deduped, sorted list. Sorting gives usePresenceMap a stable reference
-  // shape so it doesn't re-subscribe on every render — the identity of the
-  // returned array only changes when the underlying set of IDs changes.
-  const presenceUserIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const srv of servers) {
-      if (!presenceVisibleServerIds.has(srv.id)) continue;
-      const members = membersByServer[srv.id];
-      if (!members) continue;
-      for (const m of members) {
-        if (m.user_id) set.add(m.user_id);
-      }
-    }
-    return Array.from(set).sort();
-  }, [servers, presenceVisibleServerIds, membersByServer]);
-
-  // usePresenceMap needs a stable array identity across renders, otherwise
-  // its effect re-runs every render. We depend on the sorted join as the key
-  // so identity only changes when the set of tracked users actually changes.
-  const presenceUserIdsKey = presenceUserIds.join(",");
-  const stablePresenceUserIds = useMemo(
-    () => presenceUserIds,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [presenceUserIdsKey],
+  // Drag-end handler for the vanilla Matrix federated stack. Same
+  // shape as `handleDragEnd` above but writes to the matrix-
+  // federated-specific localStorage key so the two draggable
+  // surfaces don't cross-contaminate their orderings.
+  const handleMatrixFederatedDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIndex = federatedStack.findIndex(
+        (e) => e.server.id === active.id,
+      );
+      const newIndex = federatedStack.findIndex(
+        (e) => e.server.id === over.id,
+      );
+      if (oldIndex === -1 || newIndex === -1) return;
+      const next = arrayMove(federatedStack, oldIndex, newIndex);
+      const nextIds = next.map((e) => e.server.id);
+      setPreferredMatrixOrder(nextIds);
+      writeStoredMatrixFederatedOrder(currentUserId, nextIds);
+    },
+    [federatedStack, currentUserId],
   );
-  const presenceMap = usePresenceMap(stablePresenceUserIds);
 
-  // Per-server online detection. A server is "online" if any of its tracked
-  // members are in the `online` or `unavailable` (idle) Matrix presence state.
-  const onlineByServer = useMemo(() => {
+  // Per-server "needs attention" flag: true iff any channel in the
+  // server has a highlight-worthy notification (Matrix mention, keyword
+  // alert, etc.). Drives the yellow dot on the server tile. Plain
+  // unread counts are already surfaced by the existing `hasUnreads`
+  // computation at render time; this one is strictly for the louder
+  // "come look at this" signal.
+  const hasHighlightByServer = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const srv of servers) {
-      if (!presenceVisibleServerIds.has(srv.id)) {
-        map.set(srv.id, false);
-        continue;
-      }
-      const members = membersByServer[srv.id];
-      if (!members || members.length === 0) {
-        map.set(srv.id, false);
-        continue;
-      }
-      let online = false;
-      for (const m of members) {
-        const p = presenceMap.get(m.user_id);
-        if (p === "online" || p === "unavailable") {
-          online = true;
-          break;
-        }
-      }
-      map.set(srv.id, online);
+      const hit = srv.channels.some(
+        (ch) => (highlightCounts.get(ch.matrix_room_id) ?? 0) > 0,
+      );
+      map.set(srv.id, hit);
     }
     return map;
-  }, [servers, presenceVisibleServerIds, membersByServer, presenceMap]);
+  }, [servers, highlightCounts]);
 
   // DM state
   const dmActive = useDMStore((s) => s.dmActive);
@@ -329,7 +377,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // direct child than marking each row individually.
   if (mobile) {
     return (
-      <div className="h-full bg-surface-container-low overflow-y-auto p-3 flex flex-col [&>*]:shrink-0">
+      <div className="h-full bg-surface-container-low">
+        {/* ── Top scroll region: local + Concord servers ── */}
+        <div className="overflow-y-auto overflow-x-hidden overscroll-y-auto p-3" style={{ height: "50%" }}>
         <h3 className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest px-2 mb-3">
           Your Servers
         </h3>
@@ -342,14 +392,30 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
             items={orderedServers.map((s) => s.id)}
             strategy={verticalListSortingStrategy}
           >
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {orderedServers.map((server) => {
                 const isActive = !dmActive && activeServerId === server.id;
                 const hasUnreads = !isActive && server.channels.some(
                   (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
                 );
-                const hasOnline = onlineByServer.get(server.id) ?? false;
-                const isFederated = server.federated === true;
+                const hasHighlight = hasHighlightByServer.get(server.id) ?? false;
+                // The main list now contains both native local
+                // servers and Concord-from-Concord federated ones.
+                // Vanilla Matrix federation is still pushed to the
+                // bottom stack below and doesn't reach this branch.
+                const isFromConcordFederation = concordFederatedIds.has(server.id);
+                const isDiscordBridge = server.bridgeType === "discord";
+                const isDisconnected = !syncing;
+                // Dot precedence: disconnected (red) > needs attention
+                // (yellow) > unread (primary). Only one dot at a time so
+                // the tile doesn't turn into a traffic light cluster.
+                const statusDot = isDisconnected
+                  ? "red"
+                  : hasHighlight
+                    ? "yellow"
+                    : hasUnreads
+                      ? "unread"
+                      : null;
                 return (
                   <SortableServerRow
                     key={server.id}
@@ -358,50 +424,98 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                   >
                     <button
                       onClick={() => handleServerClick(server.id)}
-                      title={isFederated ? `${server.name} (federated)` : server.name}
-                      className={`btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
+                      title={
+                        isDisconnected
+                          ? `${server.name} (disconnected)`
+                          : isDiscordBridge
+                            ? `${server.name} — Discord bridge`
+                            : isFromConcordFederation
+                              ? `${server.name} — another Concord instance`
+                              : server.name
+                      }
+                      className={`btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl transition-all ${
+                        isDisconnected ? "opacity-50 grayscale" : ""
+                      } ${
                         isActive
-                          ? isFederated
-                            ? "bg-tertiary/10 text-tertiary"
-                            : "bg-primary/10 text-primary"
+                          ? isDiscordBridge
+                            ? "bg-[#5865F2]/10 text-[#5865F2]"
+                            : isFromConcordFederation
+                              ? "bg-secondary/10 text-secondary"
+                              : "bg-primary/10 text-primary"
                           : "text-on-surface hover:bg-surface-container-high"
                       }`}
                     >
                       <div className="relative flex-shrink-0">
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-headline font-bold ${
                           isActive
-                            ? isFederated
-                              ? "bg-tertiary text-on-tertiary"
-                              : "primary-glow text-on-primary"
-                            : isFederated
-                              ? "bg-tertiary/15 text-tertiary ring-1 ring-tertiary/40"
-                              : "bg-surface-container-highest text-on-surface-variant"
+                            ? isDiscordBridge
+                              ? "bg-[#5865F2] text-white"
+                              : isFromConcordFederation
+                                ? "bg-secondary text-on-secondary"
+                                : "primary-glow text-on-primary"
+                            : isDiscordBridge
+                              ? "bg-[#5865F2]/15 text-[#5865F2] ring-1 ring-[#5865F2]/40"
+                              : isFromConcordFederation
+                                ? "bg-secondary/15 text-secondary ring-1 ring-secondary/40"
+                                : "bg-surface-container-highest text-on-surface-variant"
                         }`}>
                           {server.abbreviation || server.name.charAt(0).toUpperCase()}
                         </div>
-                        {isFederated && (
+                        {isDiscordBridge && (
                           <div
-                            className="absolute -top-1 -left-1 w-4 h-4 bg-tertiary rounded-full border-2 border-surface-container-low flex items-center justify-center"
-                            aria-label="Federated (non-local) server"
+                            className="absolute -top-1 -left-1 w-4 h-4 bg-[#5865F2] rounded-full border-2 border-surface-container-low flex items-center justify-center"
+                            aria-label="Discord bridge"
                           >
-                            <span className="material-symbols-outlined text-tertiary-container" style={{ fontSize: "10px" }}>public</span>
+                            <span
+                              className="font-headline font-bold text-white"
+                              style={{ fontSize: "8px", lineHeight: 1 }}
+                            >
+                              D
+                            </span>
                           </div>
                         )}
-                        {hasOnline && (
+                        {isFromConcordFederation && !isDiscordBridge && (
                           <div
-                            className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-secondary rounded-full border-2 border-surface-container-low"
-                            aria-label="Members online"
-                          />
+                            className="absolute -top-1 -left-1 w-4 h-4 bg-secondary rounded-full border-2 border-surface-container-low flex items-center justify-center"
+                            aria-label="Another Concord instance (federated)"
+                          >
+                            <span
+                              className="font-headline font-bold text-on-secondary"
+                              style={{ fontSize: "8px", lineHeight: 1 }}
+                            >
+                              C
+                            </span>
+                          </div>
                         )}
                       </div>
                       <span className="truncate font-body font-medium">{server.name}</span>
-                      {isFederated && (
-                        <span className="text-[10px] uppercase tracking-wider text-tertiary/80 font-label ml-1">
-                          federated
+                      {isDiscordBridge && (
+                        <span className="text-[10px] uppercase tracking-wider text-[#5865F2]/80 font-label ml-1">
+                          discord
                         </span>
                       )}
-                      {hasUnreads && (
-                        <div className="w-2.5 h-2.5 rounded-full bg-primary ml-auto flex-shrink-0 node-pulse" />
+                      {isFromConcordFederation && !isDiscordBridge && (
+                        <span className="text-[10px] uppercase tracking-wider text-secondary/80 font-label ml-1">
+                          concord federated
+                        </span>
+                      )}
+                      {statusDot === "red" && (
+                        <div
+                          className="w-2.5 h-2.5 rounded-full bg-error ml-auto flex-shrink-0"
+                          aria-label="Disconnected"
+                        />
+                      )}
+                      {statusDot === "yellow" && (
+                        <div
+                          className="w-2.5 h-2.5 rounded-full bg-yellow-500 ml-auto flex-shrink-0 node-pulse"
+                          aria-label="Needs attention"
+                        />
+                      )}
+                      {statusDot === "unread" && (
+                        <div
+                          className="w-2.5 h-2.5 rounded-full bg-primary ml-auto flex-shrink-0 node-pulse"
+                          aria-label="Unread messages"
+                        />
                       )}
                     </button>
                   </SortableServerRow>
@@ -504,6 +618,8 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           <span className="font-body font-medium">Explore</span>
         </button>
 
+        </div>
+        {/* Modals — outside both scroll regions */}
         {showNewServer && <NewServerModal onClose={() => setShowNewServer(false)} />}
         <ExploreModal isOpen={exploreOpen} onClose={() => setExploreOpen(false)} />
       </div>
@@ -518,7 +634,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // `flex-shrink: 1` causes tiles to squish before the scrollbar
   // ever appears.
   return (
-    <div className="w-16 bg-surface flex flex-col items-center py-3 gap-2 overflow-y-auto min-h-0 [&>*]:shrink-0">
+    <div className="w-16 bg-surface" style={{ height: "100%" }}>
+      {/* ── Top scroll region: DMs + local servers ── */}
+      <div className="overflow-y-auto overflow-x-hidden py-3 flex flex-col items-center gap-2 [&>*]:shrink-0" style={{ height: "50%" }}>
       {/* DM button */}
       <div className="relative group">
         <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-primary transition-all ${
@@ -558,62 +676,108 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
             const hasUnreads = !isActive && server.channels.some(
               (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
             );
-            const hasOnline = onlineByServer.get(server.id) ?? false;
-            const isFederated = server.federated === true;
+            const hasHighlight = hasHighlightByServer.get(server.id) ?? false;
+            // After the bucket reorganization, the only federated
+            // servers that reach this main-list render path are
+            // Concord-on-Concord federated ones (bucket 2). Keep
+            // `isFromConcordFederation` as the explicit flag so the
+            // styling branches stay readable.
+            const isFromConcordFederation = concordFederatedIds.has(server.id);
+            const isDisconnected = !syncing;
+            // Status dot precedence: disconnected (red) > needs attention
+            // (yellow) > unread (primary). Only ONE dot renders at a time.
+            // The green "members online" dot was removed — activity is now
+            // surfaced at the channel row level inside ChannelSidebar.
+            const statusDot = isDisconnected
+              ? "red"
+              : hasHighlight
+                ? "yellow"
+                : hasUnreads
+                  ? "unread"
+                  : null;
             return (
               <SortableServerRow
                 key={server.id}
                 id={server.id}
                 orientation="icon"
               >
-                <div className="relative group">
-                  {/* Active indicator bar — tertiary color for
-                      federated servers so the left rail hint matches
-                      the button fill, primary for Concord-managed
-                      servers. */}
+                <div
+                  className={`relative group ${
+                    isDisconnected ? "opacity-55 grayscale" : ""
+                  }`}
+                >
+                  {/* Active indicator bar — secondary palette for
+                      Concord-federated tiles so the left rail hint
+                      matches the tile's highlight treatment, primary
+                      for native local servers. */}
                   <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full transition-all ${
-                    isFederated ? "bg-tertiary" : "bg-primary"
+                    isFromConcordFederation ? "bg-secondary" : "bg-primary"
                   } ${
                     isActive ? "h-8" : hasUnreads ? "h-2" : "h-0 group-hover:h-5"
                   }`} />
                   <button
                     onClick={() => handleServerClick(server.id)}
-                    title={isFederated ? `${server.name} (federated)` : server.name}
-                    aria-label={isFederated ? `${server.name} (federated server)` : server.name}
+                    title={
+                      isDisconnected
+                        ? `${server.name} — disconnected (drag to reorder)`
+                        : isFromConcordFederation
+                          ? `${server.name} — another Concord instance (drag to reorder)`
+                          : `${server.name} — drag to reorder`
+                    }
+                    aria-label={
+                      isFromConcordFederation
+                        ? `${server.name} (Concord instance)`
+                        : server.name
+                    }
                     className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
                       isActive
-                        ? isFederated
-                          ? "bg-tertiary text-on-tertiary rounded-xl shadow-[0_0_12px_rgba(var(--tertiary-rgb,180,120,255),0.35)]"
+                        ? isFromConcordFederation
+                          ? "bg-secondary text-on-secondary rounded-xl shadow-[0_0_12px_rgba(120,220,180,0.35)]"
                           : "primary-glow text-on-primary rounded-xl"
-                        : isFederated
-                          ? "bg-tertiary/15 text-tertiary rounded-2xl hover:rounded-xl hover:bg-tertiary/25 ring-1 ring-tertiary/40"
+                        : isFromConcordFederation
+                          ? "bg-secondary/15 text-secondary rounded-2xl hover:rounded-xl hover:bg-secondary/25 ring-1 ring-secondary/40"
                           : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl hover:bg-surface-container-highest hover:text-on-surface"
                     }`}
                   >
                     {server.abbreviation || server.name.charAt(0).toUpperCase()}
                   </button>
-                  {isFederated && (
-                    /* Small globe badge at top-left marks this as a
-                       non-local (federated) room. Sits opposite the
-                       unread/presence badges so they don't collide. */
+                  {isFromConcordFederation && (
+                    /* Small "C" monogram badge at top-left marks this
+                       tile as another Concord instance reached via
+                       federation. Same treatment the bottom-stack
+                       Concord-federated tiles used to carry, ported
+                       up so the visual language stays consistent. */
                     <div
-                      className="absolute -top-0.5 -left-0.5 w-4 h-4 bg-tertiary rounded-full border-2 border-surface flex items-center justify-center"
+                      className="absolute -top-0.5 -left-0.5 w-4 h-4 bg-secondary rounded-full border-2 border-surface flex items-center justify-center"
                       aria-hidden="true"
                     >
-                      <span className="material-symbols-outlined text-on-tertiary" style={{ fontSize: "10px" }}>public</span>
+                      <span
+                        className="font-headline font-bold text-on-secondary"
+                        style={{ fontSize: "8px", lineHeight: 1 }}
+                      >
+                        C
+                      </span>
                     </div>
                   )}
-                  {hasUnreads && (
-                    <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse" />
-                  )}
-                  {/* Presence badge: green dot when any member is online/idle.
-                      Bottom-right so it doesn't collide with the unread dot at
-                      top-right. Uses bg-secondary to match the presence color
-                      defined in ui/Avatar.tsx. */}
-                  {hasOnline && (
+                  {/* Single status dot, top-right. Precedence established
+                      above: red (disconnected) beats yellow (attention)
+                      beats primary (unread). */}
+                  {statusDot === "red" && (
                     <div
-                      className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-secondary rounded-full border-2 border-surface"
-                      aria-label="Members online"
+                      className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-error rounded-full border-2 border-surface"
+                      aria-label="Disconnected"
+                    />
+                  )}
+                  {statusDot === "yellow" && (
+                    <div
+                      className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-yellow-500 rounded-full border-2 border-surface node-pulse"
+                      aria-label="Needs attention"
+                    />
+                  )}
+                  {statusDot === "unread" && (
+                    <div
+                      className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse"
+                      aria-label="Unread messages"
                     />
                   )}
                 </div>
@@ -632,17 +796,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         <span className="material-symbols-outlined text-xl">add</span>
       </button>
 
-      {/* Flex spacer — pushes the federated stack + Explore button to
-          the bottom of the column. This restores the original
-          "explore-at-bottom" layout from commit 9180ecc which had
-          regressed at some point: without the spacer, the federated
-          and Explore rows bunch up directly under the `+` icon on
-          accounts with few Concord servers, instead of sitting at the
-          natural bottom of the sidebar. `min-h-0` lets the spacer
-          collapse to zero when the content overflows so scrolling
-          behaves naturally — `flex-grow` only activates when there's
-          slack space to push into. */}
-      <div className="flex-grow min-h-0" aria-hidden="true" />
+      </div>
+      {/* ── Bottom region: federated + Explore ── */}
+      <div className="overflow-y-auto overflow-x-hidden py-2 flex flex-col items-center gap-2 [&>*]:shrink-0 border-t border-outline-variant/20" style={{ height: "50%" }}>
 
       {/* Bridge-space tiles, stacked upward from Explore.
           These are the only non-Concord entries remaining in the
@@ -721,6 +877,8 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         <span className="material-symbols-outlined text-xl">public</span>
       </button>
 
+      </div>
+      {/* Modals */}
       {showNewServer && <NewServerModal onClose={() => setShowNewServer(false)} />}
       <ExploreModal isOpen={exploreOpen} onClose={() => setExploreOpen(false)} />
     </div>
@@ -738,10 +896,17 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
 function SortableServerRow({
   id,
   orientation,
+  disabled,
   children,
 }: {
   id: string;
   orientation: "row" | "icon";
+  // Opt out of drag handling for rows that shouldn't participate
+  // (e.g. federated-instance placeholder tiles whose synthetic ids
+  // change the moment their matrix room syncs). Disabled rows still
+  // live inside the SortableContext so their position within the
+  // list is preserved, they just refuse to pick up.
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   const {
@@ -751,12 +916,18 @@ function SortableServerRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id });
+  } = useSortable({ id, disabled });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
     touchAction: orientation === "icon" ? "none" : undefined,
+    // Grab cursor gives users a visible affordance that the tile can
+    // be dragged to reorder. PointerSensor still has a 5px activation
+    // distance so a plain click to select the server keeps working.
+    // Disabled rows use the default cursor so they don't falsely
+    // advertise drag affordance.
+    cursor: disabled ? undefined : isDragging ? "grabbing" : "grab",
   };
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>

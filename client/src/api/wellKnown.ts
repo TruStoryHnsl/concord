@@ -60,21 +60,6 @@ export interface HomeserverConfig {
   features?: string[];
   /** Optional STUN/TURN server hints for pre-auth connectivity checks. */
   turn_servers?: Array<{ urls: string | string[]; username?: string; credential?: string }>;
-  /**
-   * INS-023 service-node posture. Advertised via
-   * `.well-known/concord/client` so peers can tell which structural
-   * role the instance plays in the mesh. Absent on instances that
-   * predate the field — clients should treat a missing value as
-   * "hybrid" (the default). Kept as an open string union so a future
-   * server-side addition doesn't require a coordinated client bump.
-   */
-  node_role?: "frontend-only" | "hybrid" | "anchor";
-  /**
-   * True when the instance advertises itself as a persistent mesh
-   * tunnel anchor. Never exposed alongside the raw CPU / bandwidth
-   * / storage caps — those stay behind the admin-only endpoint.
-   */
-  tunnel_anchor?: boolean;
 }
 
 /** Raised when the target host cannot be reached at all (DNS/network). */
@@ -171,10 +156,6 @@ interface ConcordClientWellKnown {
   instance_name?: string;
   features?: string[];
   turn_servers?: Array<{ urls: string | string[] }>;
-  // INS-023 — optional on the wire so older servers round-trip
-  // cleanly. The decoder below tolerates absence.
-  node_role?: string;
-  tunnel_anchor?: boolean;
 }
 
 /**
@@ -368,8 +349,6 @@ export async function discoverHomeserver(
   let instanceName: string | undefined;
   let features: string[] | undefined;
   let turnServers: HomeserverConfig["turn_servers"] | undefined;
-  let nodeRole: HomeserverConfig["node_role"] | undefined;
-  let tunnelAnchor: boolean | undefined;
   if (concordResult.status === "ok") {
     const body = concordResult.body;
     if (typeof body.api_base === "string" && body.api_base.length > 0) {
@@ -412,21 +391,6 @@ export async function discoverHomeserver(
           s !== null && typeof s === "object" && "urls" in s,
       );
     }
-    // INS-023 — tolerate missing or unknown values on the wire.
-    // Older servers won't emit these fields at all; future servers
-    // may emit role names the client doesn't recognise yet. In
-    // either case fall through to `undefined` so the consumer treats
-    // it as "hybrid" / "no anchor".
-    if (
-      body.node_role === "frontend-only" ||
-      body.node_role === "hybrid" ||
-      body.node_role === "anchor"
-    ) {
-      nodeRole = body.node_role;
-    }
-    if (typeof body.tunnel_anchor === "boolean") {
-      tunnelAnchor = body.tunnel_anchor;
-    }
   } else {
     apiBase = assertHttpsUrl(
       `https://${canonicalHost}/api`,
@@ -443,7 +407,5 @@ export async function discoverHomeserver(
     instance_name: instanceName,
     features,
     turn_servers: turnServers,
-    node_role: nodeRole,
-    tunnel_anchor: tunnelAnchor,
   };
 }

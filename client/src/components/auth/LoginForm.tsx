@@ -198,6 +198,20 @@ export function LoginForm() {
             className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
             required
           />
+          {/* Invite token — only visible in register mode. Required by
+              default when the server has OPEN_REGISTRATION disabled. */}
+          {mode === "register" && (
+            <input
+              type="text"
+              placeholder="Invite token"
+              value={inviteToken}
+              onChange={(e) => setInviteToken(e.target.value)}
+              className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body font-mono tracking-wider"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+            />
+          )}
           {error && <p className="text-error text-sm font-body">{error}</p>}
 
           {/* Login + Register buttons */}
@@ -233,7 +247,10 @@ export function LoginForm() {
           </div>
         </form>
 
-        {/* Download client */}
+        {/* Download client — hidden on native builds (the user IS the native client).
+            `__TAURI_INTERNALS__` is the canonical Tauri v2 global; see the
+            comment in `client/src/api/serverUrl.ts` for the history. */}
+        {!("__TAURI_INTERNALS__" in window) && (
         <div className="mt-8 text-center">
           {!showDownloads ? (
             <button
@@ -258,6 +275,7 @@ export function LoginForm() {
             </div>
           )}
         </div>
+        )}
         </>
         )}
       </div>

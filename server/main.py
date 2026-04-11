@@ -307,9 +307,7 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Lobby welcome setup failed: %s", e)
 
-    # Load extensions catalog
-    from routers.extensions import init_catalog
-    init_catalog()
+    extensions.init_catalog()
 
     yield
 
@@ -611,8 +609,12 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 # to add their public domain(s). Hardcoding an instance-specific host
 # here would leak that host into every distributed copy of the source.
 _default_origins = (
-    "http://localhost:5173,"   # Vite dev server
-    "http://localhost:8080"    # Caddy dev / staging
+    "http://localhost:5173,"
+    "http://localhost:8080,"
+    # Native Tauri v2 mobile clients load from these custom schemes.
+    "tauri://localhost,"         # Tauri v2 iOS WKWebView origin
+    "http://tauri.localhost,"    # Tauri v2 Android WebView origin
+    "https://tauri.localhost"    # Tauri v2 desktop WebView origin
 )
 allowed_origins = os.getenv("CORS_ORIGINS", _default_origins).split(",")
 
@@ -631,6 +633,7 @@ app.include_router(voice.router)
 app.include_router(soundboard.router)
 app.include_router(webhooks.router)
 app.include_router(admin.router)
+app.include_router(admin_bridges.router)
 app.include_router(direct_invites.router)
 app.include_router(stats.router)
 app.include_router(totp.router)
@@ -641,7 +644,6 @@ app.include_router(dms.router)
 app.include_router(nodes.router)
 app.include_router(explore.router)
 app.include_router(wellknown.router)
-app.include_router(admin_bridges.router)
 app.include_router(extensions.router)
 
 

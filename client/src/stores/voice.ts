@@ -5,6 +5,14 @@ import { useAuthStore } from "./auth";
 const VOICE_SESSION_KEY = "concord_voice_session";
 const VOICE_STATS_SESSION_KEY = "concord_voice_stats_session";
 
+/** Connection lifecycle states for voice. */
+export type VoiceConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "failed";
+
 interface VoiceSession {
   serverId: string;
   channelId: string;
@@ -14,6 +22,8 @@ interface VoiceSession {
 
 interface VoiceState {
   connected: boolean;
+  connectionState: VoiceConnectionState;
+  reconnectAttempt: number;
   token: string | null;
   livekitUrl: string | null;
   iceServers: RTCIceServer[];
@@ -35,6 +45,9 @@ interface VoiceState {
     micGranted: boolean;
   }) => void;
   disconnect: () => void;
+  setConnectionState: (state: VoiceConnectionState) => void;
+  incrementReconnectAttempt: () => void;
+  resetReconnectAttempt: () => void;
 }
 
 /** Read a pending voice session from sessionStorage (if any). */
@@ -53,8 +66,16 @@ export function clearPendingVoiceSession(): void {
   sessionStorage.removeItem(VOICE_SESSION_KEY);
 }
 
+/** Maximum number of auto-reconnect attempts before giving up. */
+export const MAX_RECONNECT_ATTEMPTS = 3;
+
+/** Base delay (ms) for exponential backoff: 1s, 2s, 4s. */
+export const RECONNECT_BASE_DELAY_MS = 1000;
+
 export const useVoiceStore = create<VoiceState>((set, get) => ({
   connected: false,
+  connectionState: "disconnected",
+  reconnectAttempt: 0,
   token: null,
   livekitUrl: null,
   iceServers: [],
@@ -64,6 +85,10 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   roomName: null,
   micGranted: false,
   statsSessionId: null,
+
+  setConnectionState: (state) => set({ connectionState: state }),
+  incrementReconnectAttempt: () => set({ reconnectAttempt: get().reconnectAttempt + 1 }),
+  resetReconnectAttempt: () => set({ reconnectAttempt: 0 }),
 
   connect: (params) => {
     // Persist session info so we can reconnect after page refresh
@@ -81,6 +106,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
     set({
       connected: true,
+      connectionState: "connected",
+      reconnectAttempt: 0,
       ...params,
     });
 
@@ -112,6 +139,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     clearPendingVoiceSession();
     set({
       connected: false,
+      connectionState: "disconnected",
+      reconnectAttempt: 0,
       token: null,
       livekitUrl: null,
       iceServers: [],

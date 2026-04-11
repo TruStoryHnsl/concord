@@ -464,17 +464,24 @@ export const useServerStore = create<ServerState>((set, get) => ({
       const joinedSpaceName = parentIdToName.get(parentId);
       const name = joinedSpaceName ?? "Bridge";
 
+      // Detect Discord bridge: local-domain spaces are bridge-created
+      // (Concord itself doesn't use Matrix spaces — it uses the API).
+      // Currently Discord is the only bridge, so local-domain space =
+      // Discord guild. Refine this if more bridges are added.
+      const isLocalSpace =
+        localDomain && parentId.endsWith(`:${localDomain}`);
+
       synthetic.push({
         id: `${FEDERATED_SERVER_ID_PREFIX}${parentId}`,
         name,
         icon_url: null,
         owner_id: userId,
         visibility: "public",
-        abbreviation: "D",
+        abbreviation: isLocalSpace ? "D" : name.charAt(0).toUpperCase() || "#",
         media_uploads_enabled: false,
         channels,
         federated: true,
-        bridgeType: "discord" as const,
+        ...(isLocalSpace && { bridgeType: "discord" as const }),
       });
     }
 

@@ -97,30 +97,6 @@ class ConcordClientWellKnown(BaseModel):
             "server picker screen."
         ),
     )
-    # INS-023: advertise the service-node posture so peers can see
-    # whether this instance plays an infrastructure role in the mesh.
-    # Deliberately DOES NOT include raw CPU / bandwidth / storage caps
-    # — those stay behind the admin-only
-    # ``/api/admin/service-node`` endpoint so the unauthenticated
-    # discovery document doesn't leak hardware fingerprinting info.
-    node_role: str | None = Field(
-        None,
-        max_length=32,
-        description=(
-            "Structural service-node role: 'frontend-only' (no "
-            "hosting), 'hybrid' (UI + opportunistic hosting — the "
-            "default), or 'anchor' (always-on infrastructure). "
-            "Clients should treat a missing value as 'hybrid'."
-        ),
-    )
-    tunnel_anchor: bool = Field(
-        False,
-        description=(
-            "True when this instance advertises itself as a "
-            "persistent mesh tunnel anchor other peers can dial "
-            "into. False / absent on nodes that have not opted in."
-        ),
-    )
 
 
 def _resolve_api_base() -> str:
@@ -242,6 +218,4 @@ async def concord_client_wellknown() -> ConcordClientWellKnown:
         instance_name=_resolve_instance_name(),
         features=_advertised_features(),
         turn_servers=_resolve_turn_servers(),
-        node_role=node_view.node_role,
-        tunnel_anchor=node_view.tunnel_anchor_enabled,
     )

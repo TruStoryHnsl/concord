@@ -1,6 +1,8 @@
+use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
+pub mod bridge_commands;
 pub mod servitude;
 
 use servitude::{LifecycleState, ServitudeConfig, ServitudeHandle};
@@ -96,22 +98,47 @@ async fn servitude_stop(state: tauri::State<'_, ServitudeState>) -> Result<(), S
 
 /// Report the current lifecycle state of the embedded servitude.
 ///
-/// Returns a JSON string (e.g. `"stopped"`, `"running"`) so the JS bridge
-/// can render it without needing a separate TypeScript enum definition.
-/// If no handle exists yet (never started), returns the JSON string
-/// `"stopped"` to match the expected "inactive" user-facing state.
+/// INS-024 Wave 4: Returns a JSON object with `state` (lifecycle string)
+/// and `degraded_transports` (map of transport name -> failure reason).
+/// The previous return shape was a bare JSON string; the new shape is
+/// backward-compatible at the TypeScript level because the frontend
+/// parses the response structurally.
+///
+/// If no handle exists yet (never started), returns `"stopped"` with
+/// an empty degraded map.
 #[tauri::command]
 async fn servitude_status(state: tauri::State<'_, ServitudeState>) -> Result<String, String> {
     let guard = state.0.lock().await;
-    let state_value = match guard.as_ref() {
-        Some(handle) => handle.status(),
-        None => LifecycleState::Stopped,
+    let (state_value, degraded) = match guard.as_ref() {
+        Some(handle) => (
+            handle.status(),
+            handle.degraded_transports().clone(),
+        ),
+        None => (LifecycleState::Stopped, std::collections::HashMap::new()),
     };
-    serde_json::to_string(&state_value).map_err(|e| e.to_string())
+
+    let response = serde_json::json!({
+        "state": state_value,
+        "degraded_transports": degraded,
+    });
+    serde_json::to_string(&response).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK GPU compositing is unreliable on many Linux setups
+    // (VM GPU passthrough, nouveau, headless Wayland, etc.) and causes
+    // "Failed to create GBM buffer" crashes. Disabling compositing
+    // forces software rendering for the WebView compositor — visually
+    // identical, avoids the crash. Only set if the user hasn't
+    // explicitly configured it.
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ServitudeState(Mutex::new(None)))
@@ -123,8 +150,175 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Stronghold vault for credential storage (INS-024 Wave 4).
+            // Uses argon2 KDF with a salt file persisted alongside the
+            // vault. The salt file is auto-created on first run.
+            let salt_path = app
+                .path()
+                .app_local_data_dir()
+                .expect("could not resolve app local data path")
+                .join("stronghold-salt.txt");
+            app.handle().plugin(
+                tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build(),
+            )?;
+
             // Ensure settings store exists
             let _ = app.handle().store("settings.json");
+
+            // Auto-start servitude if the Discord bridge was previously
+            // enabled. The config is persisted in the settings store,
+            // but the runtime state (ServitudeHandle) is in-memory and
+            // lost on app restart. This spawns a background task that
+            // reads the persisted config and brings servitude back up.
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use servitude::config::Transport;
+
+                    let config = match ServitudeConfig::from_store(&app_handle) {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+
+                    if !config.enabled_transports.contains(&Transport::DiscordBridge) {
+                        return;
+                    }
+
+                    log::info!(
+                        target: "concord::bridge",
+                        "auto-starting servitude — Discord bridge was previously enabled"
+                    );
+
+                    let state = app_handle.state::<ServitudeState>();
+                    let mut guard = state.0.lock().await;
+
+                    match ServitudeHandle::new(config) {
+                        Ok(handle) => {
+                            *guard = Some(handle);
+                        }
+                        Err(e) => {
+                            log::error!(
+                                target: "concord::bridge",
+                                "auto-start: failed to create handle: {}", e
+                            );
+                            return;
+                        }
+                    }
+
+                    if let Some(handle) = guard.as_mut() {
+                        if let Err(e) = handle.start().await {
+                            log::error!(
+                                target: "concord::bridge",
+                                "auto-start: failed to start servitude: {}", e
+                            );
+                        } else {
+                            log::info!(
+                                target: "concord::bridge",
+                                "servitude auto-started with Discord bridge"
+                            );
+                        }
+                    }
+                });
+            }
+
+            // INS-020: Set the native WKWebView + UIView background color to
+            // match Concord's dark surface (#0c0e11) so the home indicator
+            // safe area doesn't show as gray. The web content stops at the
+            // safe area boundary; below that, the native UIView background
+            // is visible. Without this, it defaults to system gray/white.
+            #[cfg(target_os = "ios")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use std::ffi::c_void;
+                        // The Wry PlatformWebview on iOS gives us the raw
+                        // WKWebView pointer. We use objc_msgSend to set its
+                        // opaque=NO and backgroundColor to our surface color,
+                        // plus the same on the scroll view and the view
+                        // controller's root view.
+                        unsafe {
+                            let wk: *mut c_void = webview.inner() as *mut _;
+                            let wk: *mut std::ffi::c_void = wk;
+                            // Import the objc runtime functions
+                            extern "C" {
+                                fn objc_msgSend(obj: *mut c_void, sel: *mut c_void, ...) -> *mut c_void;
+                                fn sel_registerName(name: *const u8) -> *mut c_void;
+                                fn objc_getClass(name: *const u8) -> *mut c_void;
+                            }
+
+                            // Helper to create a selector
+                            macro_rules! sel {
+                                ($name:expr) => {
+                                    sel_registerName(concat!($name, "\0").as_ptr())
+                                };
+                            }
+
+                            // Create UIColor with our surface color #0c0e11
+                            let ui_color_class = objc_getClass(b"UIColor\0".as_ptr());
+                            let color: *mut c_void = objc_msgSend(
+                                ui_color_class,
+                                sel!("colorWithRed:green:blue:alpha:"),
+                                12.0f64 / 255.0f64,
+                                14.0f64 / 255.0f64,
+                                17.0f64 / 255.0f64,
+                                1.0f64,
+                            );
+
+                            // WKWebView.opaque = NO
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, bool)>(
+                                objc_msgSend as *const ()
+                            )(wk, sel!("setOpaque:"), false);
+
+                            // WKWebView.backgroundColor = color
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>(
+                                objc_msgSend as *const ()
+                            )(wk, sel!("setBackgroundColor:"), color);
+
+                            // ── ScrollView: the critical edge-to-edge fix ──
+                            let scroll_view: *mut c_void = objc_msgSend(wk, sel!("scrollView"));
+
+                            // scrollView.backgroundColor = color
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>(
+                                objc_msgSend as *const ()
+                            )(scroll_view, sel!("setBackgroundColor:"), color);
+
+                            // scrollView.contentInsetAdjustmentBehavior = .never (2)
+                            // THIS IS THE KEY FIX. By default iOS adds safe-area-
+                            // sized content insets to the scroll view, pushing web
+                            // content away from the home indicator even though the
+                            // WKWebView frame covers the full screen. Setting it
+                            // to Never lets web content render edge-to-edge.
+                            // UIScrollViewContentInsetAdjustmentNever = 2
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, i64)>(
+                                objc_msgSend as *const ()
+                            )(scroll_view, sel!("setContentInsetAdjustmentBehavior:"), 2i64);
+
+                            // ── ViewController ──
+                            let vc: *mut c_void = webview.view_controller() as *mut _;
+
+                            // viewController.edgesForExtendedLayout = .all (15)
+                            // Content extends behind all bars/edges.
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, u64)>(
+                                objc_msgSend as *const ()
+                            )(vc, sel!("setEdgesForExtendedLayout:"), 15u64);
+
+                            // viewController.view.backgroundColor = color
+                            let vc_view: *mut c_void = objc_msgSend(vc, sel!("view"));
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>(
+                                objc_msgSend as *const ()
+                            )(vc_view, sel!("setBackgroundColor:"), color);
+
+                            // WKWebView.insetsLayoutMarginsFromSafeArea = false
+                            let _: () = std::mem::transmute::<_, extern "C" fn(*mut c_void, *mut c_void, bool)>(
+                                objc_msgSend as *const ()
+                            )(wk, sel!("setInsetsLayoutMarginsFromSafeArea:"), false);
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -133,6 +327,15 @@ pub fn run() {
             servitude_start,
             servitude_stop,
             servitude_status,
+            bridge_commands::discord_bridge_set_bot_token,
+            bridge_commands::discord_bridge_enable,
+            bridge_commands::discord_bridge_disable,
+            bridge_commands::discord_bridge_status,
+            bridge_commands::discord_bridge_ensure_binary,
+            bridge_commands::discord_bridge_enable_and_start,
+            bridge_commands::discord_bridge_list_guilds,
+            bridge_commands::discord_bridge_guild,
+            bridge_commands::discord_bridge_unbridge_guild,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

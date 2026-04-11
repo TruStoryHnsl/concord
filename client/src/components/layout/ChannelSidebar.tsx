@@ -792,7 +792,7 @@ export function UserBar({
   };
 
   return (
-    <div className="p-3 bg-surface-container flex items-center justify-between">
+    <div className="px-3 py-2 bg-surface-container flex items-center justify-between">
       <div className="flex items-center gap-2 min-w-0">
         {userId && <Avatar userId={userId} size="md" showPresence />}
         <span className="text-sm text-on-surface truncate font-body">

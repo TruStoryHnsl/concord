@@ -8,10 +8,16 @@ interface AuthState {
   accessToken: string | null;
   isLoggedIn: boolean;
   isLoading: boolean;
+  // Matrix client sync health. Mirrors the boolean returned by
+  // `useMatrixSync()` so any component (e.g. ServerSidebar) can read
+  // connection state without re-subscribing to ClientEvent.Sync and
+  // duplicating that hook's federated-hydration side effects.
+  syncing: boolean;
 
   login: (accessToken: string, userId: string, deviceId: string) => void;
   logout: () => void;
   restoreSession: () => boolean;
+  setSyncing: (syncing: boolean) => void;
 }
 
 const STORAGE_KEY = "concord_session";
@@ -28,6 +34,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,
   isLoggedIn: false,
   isLoading: true,
+  syncing: false,
+
+  setSyncing: (syncing) => set({ syncing }),
 
   login: (accessToken, userId, deviceId) => {
     const client = createMatrixClient(accessToken, userId, deviceId);
@@ -50,6 +59,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       accessToken: null,
       isLoggedIn: false,
       isLoading: false,
+      syncing: false,
     });
   },
 

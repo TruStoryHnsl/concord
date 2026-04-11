@@ -26,7 +26,18 @@ function trimTimeline(room: Room) {
 
 export function useMatrixSync() {
   const client = useAuthStore((s) => s.client);
-  const [syncing, setSyncing] = useState(false);
+  const [syncing, setSyncingLocal] = useState(false);
+  // Keep local state + auth store in sync so consumers that read
+  // connection state from the store (e.g. ServerSidebar) don't have
+  // to re-subscribe to ClientEvent.Sync themselves and duplicate
+  // this hook's federated-hydration side effects. Zustand's setState
+  // is stable so reading it through `getState()` avoids subscribing
+  // to store changes and also sidesteps the exhaustive-deps lint
+  // that would want `setSyncing` in every effect below.
+  const setSyncing = (value: boolean) => {
+    setSyncingLocal(value);
+    useAuthStore.getState().setSyncing(value);
+  };
 
   useEffect(() => {
     if (!client) return;
@@ -194,17 +205,23 @@ export function useMatrixSync() {
         .join(",");
       if (sig === prevIdsSig) return;
       prevIdsSig = sig;
-      // Dynamic import so this file doesn't pull the whole server
-      // store into every consumer of useMatrixSync. The old
-      // federatedInstances catalog probe loop (per-host
-      // `/.well-known/concord/client` probes) has been removed
-      // along with the store under the 2026-04-11 architecture
-      // rule — federated homeservers are their own Sources now,
-      // not an ambient catalog the client probes in the background.
-      import("../stores/server")
-        .then(({ useServerStore }) => {
+      // Dynamic imports so this file doesn't pull the whole
+      // server store into every consumer of useMatrixSync.
+      Promise.all([
+        import("../stores/server"),
+        import("../stores/sources"),
+      ])
+        .then(([{ useServerStore }, { useSourcesStore }]) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           useServerStore.getState().hydrateFederatedRooms(client as any);
+
+          // Sync Discord bridge source: if hydration produced any
+          // servers with bridgeType="discord", surface a Discord
+          // source in the sources panel.
+          const hasDiscordBridge = useServerStore
+            .getState()
+            .servers.some((s) => s.bridgeType === "discord");
+          useSourcesStore.getState().syncDiscordBridge(hasDiscordBridge);
         })
         .catch((err) => {
           console.warn("federated hydration failed:", err);
