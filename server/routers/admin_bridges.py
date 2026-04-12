@@ -86,7 +86,8 @@ from services.bridge_config import (
     write_discord_bot_token,
     write_registration_file,
 )
-from services.bot import BOT_ACCESS_TOKEN, bot_send_message
+import services.bot as _bot_module
+from services.bot import bot_send_message
 from services.matrix_admin import create_dm_room
 from services.docker_control import (
     DockerControlError,
@@ -579,7 +580,8 @@ async def discord_bridge_login_relay(
             detail="No bot token configured. POST /bot-token first.",
         )
 
-    if not BOT_ACCESS_TOKEN:
+    bot_token = _bot_module.BOT_ACCESS_TOKEN
+    if not bot_token:
         raise HTTPException(
             status_code=503,
             detail="concord-bot not initialized — server may be starting up.",
@@ -588,7 +590,7 @@ async def discord_bridge_login_relay(
     bridge_bot_mxid = f"@discordbot:{MATRIX_SERVER_NAME}"
 
     try:
-        room_id = await create_dm_room(BOT_ACCESS_TOKEN, bridge_bot_mxid)
+        room_id = await create_dm_room(bot_token, bridge_bot_mxid)
     except Exception as exc:
         logger.warning("login-relay: create_dm_room failed: %s", exc)
         raise HTTPException(
