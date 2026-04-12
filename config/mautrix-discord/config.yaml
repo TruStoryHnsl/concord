@@ -18,10 +18,11 @@
 # The `address` uses the env var substitution that docker-compose
 # performs when the service starts.
 homeserver:
-  address: http://conduwuit:${CONDUWUIT_PORT}
-  domain: ${CONDUWUIT_SERVER_NAME}
-  # mautrix-discord uses the well-known discovery, but we provide
-  # both paths to survive hand-edits to Caddy's reverse proxy.
+  # Internal Docker compose address — conduwuit service DNS name + port.
+  # CONDUWUIT_PORT default is 6167. If you changed it in .env, update here too.
+  address: http://conduwuit:6167
+  # Set this to your actual server name (same as CONDUWUIT_SERVER_NAME in .env)
+  domain: concorrd.com
   verify_ssl: false
   software: standard
 
@@ -77,6 +78,14 @@ bridge:
   # mautrix-discord's own ACL runs.
   permissions:
     "*": relay
+
+# Discord credentials (CONFIGURE THIS — required to connect the bridge).
+# Paste the bot token from discord.com/developers/applications > Bot > Token.
+# The token is stored ONLY in this file (mode 0640, never logged or exposed
+# via the API). The concord-api admin "Enable" flow generates registration.yaml
+# separately; it does not touch this field.
+discord:
+  bot_token: ""          # ← PASTE YOUR BOT TOKEN HERE
 
 # Logging (STATIC). JSON output is what json-file docker log driver
 # expects for clean structured ingestion. Keep level at "info" — debug

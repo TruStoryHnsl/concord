@@ -83,12 +83,12 @@ services:
       # user-friendly error if the file is missing.
       - path: ./config/discord-bridge.env
         required: false
+    # Override default CMD so the bridge reads config from the host-side
+    # bind-mount at /etc/concord-bridge rather than trying to create a
+    # default config in the named-volume /data (which is run as uid 1337
+    # and may not be writable on first launch).
+    command: ["-c", "/etc/concord-bridge/config.yaml"]
     environment:
-      # The bridge reads its config from /data/config.yaml and its AS
-      # registration from /data/registration.yaml. Both are bind-mounts
-      # of the host-managed template + runtime file.
-      MAUTRIX_DISCORD_CONFIG: /etc/concord-bridge/config.yaml
-      MAUTRIX_DISCORD_REGISTRATION: /etc/concord-bridge/registration.yaml
       MATRIX_HOMESERVER_URL: http://conduwuit:${CONDUWUIT_PORT}
       CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
     volumes:
