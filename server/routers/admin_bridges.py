@@ -70,15 +70,18 @@ from services.bridge_config import (
     DiscordBridgeRegistration,
     RegistrationWriteError,
     TuwunelTomlInjectionError,
+    bot_token_file_path,
     bridge_config_dir,
     delete_registration_file,
     ensure_appservice_entry,
     generate_registration,
+    read_discord_bot_token,
     read_registration_file,
     redact_for_logging,
     registration_file_path,
     remove_appservice_entry,
     write_bridge_runtime_config,
+    write_discord_bot_token,
     write_registration_file,
 )
 from services.docker_control import (
@@ -123,6 +126,10 @@ class BridgeStatusResponse(BaseModel):
         default=None,
         description="Path to registration.yaml for operator debugging",
     )
+    bot_token_configured: bool = Field(
+        default=False,
+        description="True when a Discord bot token has been saved via POST /bot-token or config.yaml",
+    )
 
 
 class BridgeMutationResponse(BaseModel):
@@ -150,6 +157,11 @@ class NoBodyRequest(BaseModel):
     is the commercial-scope "strict input validation" requirement.
     """
 
+    model_config = {"extra": "forbid"}
+
+
+class BotTokenRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
     model_config = {"extra": "forbid"}
 
 
@@ -231,7 +243,10 @@ async def discord_bridge_status(
         raise _map_bridge_error(exc) from exc
 
     if registration is None:
-        return BridgeStatusResponse(enabled=False)
+        return BridgeStatusResponse(
+            enabled=False,
+            bot_token_configured=read_discord_bot_token() is not None,
+        )
 
     return BridgeStatusResponse(
         enabled=True,
@@ -240,6 +255,7 @@ async def discord_bridge_status(
         user_namespace_regex=registration.user_namespace_regex,
         alias_namespace_regex=registration.alias_namespace_regex,
         registration_file_path=str(registration_file_path()),
+        bot_token_configured=read_discord_bot_token() is not None,
     )
 
 
@@ -257,6 +273,16 @@ async def _run_enable_steps(
     it with the disable helper without duplicating step logic.
     """
     steps: list[dict[str, Any]] = []
+
+    # Guard: bot token must be configured before we can build config-runtime.yaml.
+    if read_discord_bot_token() is None:
+        steps.append({
+            "name": "check_bot_token",
+            "status": "failed",
+            "detail": "No bot token configured. POST /api/admin/bridges/discord/bot-token first.",
+        })
+        return False, steps
+    steps.append({"name": "check_bot_token", "status": "ok", "detail": None})
 
     try:
         write_registration_file(registration)
@@ -428,6 +454,34 @@ async def discord_bridge_disable(
         redact_for_logging({"ok": ok, "steps": steps, "user": user_id}),
     )
     return BridgeMutationResponse(action="disable", ok=ok, steps=steps, message=message)
+
+
+# ---------------------------------------------------------------------
+# POST /bot-token
+# ---------------------------------------------------------------------
+
+
+@router.post("/bot-token")
+async def discord_bridge_set_bot_token(
+    body: BotTokenRequest,
+    user_id: str = Depends(get_user_id),
+) -> dict:
+    """Save the Discord bot token for use by the bridge runtime config.
+
+    The token is stored in config/mautrix-discord/bot-token (mode 0640,
+    gitignored). It is injected into config-runtime.yaml the next time
+    the Enable or Rotate flow runs. This endpoint does NOT restart the
+    bridge — call POST /enable after setting the token for the first time.
+    """
+    require_admin(user_id)
+    try:
+        write_discord_bot_token(body.token)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except BridgeConfigError as exc:
+        raise _map_bridge_error(exc) from exc
+    logger.info("discord bot token updated by %s", user_id)
+    return {"ok": True, "message": "Bot token saved."}
 
 
 # ---------------------------------------------------------------------

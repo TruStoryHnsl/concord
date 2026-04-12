@@ -21,6 +21,7 @@ import { isTauri } from "./servitude";
 
 export interface HttpBridgeStatus {
   enabled: boolean;
+  bot_token_configured: boolean;
   appservice_id: string | null;
   sender_mxid_localpart: string | null;
   user_namespace_regex: string | null;
@@ -105,6 +106,17 @@ export async function discordBridgeHttpRotate(
     "/admin/bridges/discord/rotate",
     accessToken,
     { method: "POST", body: "{}" },
+  );
+}
+
+export async function discordBridgeHttpSaveBotToken(
+  accessToken: string,
+  token: string,
+): Promise<{ ok: boolean; message: string }> {
+  return bridgeApiFetch<{ ok: boolean; message: string }>(
+    "/admin/bridges/discord/bot-token",
+    accessToken,
+    { method: "POST", body: JSON.stringify({ token }) },
   );
 }
 

@@ -14,6 +14,7 @@
 config/discord-bridge.env
 config/mautrix-discord/registration.yaml
 config/mautrix-discord/config-runtime.yaml
+config/mautrix-discord/bot-token
 
 # Docker volume data
 data/

@@ -111,6 +111,11 @@ _REGISTRATION_FILE_NAME = "registration.yaml"
 ``config/mautrix-discord/``. Must NOT be committed to git (enforced in
 ``.gitignore``) — every rotation generates fresh tokens."""
 
+_BOT_TOKEN_FILE_NAME = "bot-token"
+"""Plain-text file storing the operator's Discord bot token.
+Mode 0640. Gitignored. Read by write_bridge_runtime_config() to
+inject discord.bot_token into config-runtime.yaml."""
+
 _TOKEN_PREFIX_AS = "as_"
 _TOKEN_PREFIX_HS = "hs_"
 
@@ -223,6 +228,102 @@ def runtime_config_file_path() -> Path:
     ``docker-compose.yml``.
     """
     return bridge_config_dir() / "config-runtime.yaml"
+
+
+def bot_token_file_path() -> Path:
+    """Full path to the operator-supplied Discord bot token file.
+
+    The token is stored separately from config.yaml so the committed
+    template stays secret-free. write_bridge_runtime_config() reads
+    from here, with config.yaml's discord.bot_token as a fallback for
+    operators who configured it manually before this flow existed.
+    """
+    return bridge_config_dir() / _BOT_TOKEN_FILE_NAME
+
+
+def write_discord_bot_token(token: str, *, path: Path | None = None) -> Path:
+    """Atomically write the Discord bot token to disk (mode 0640).
+
+    Validates that token is non-empty and printable. Does NOT call
+    write_bridge_runtime_config — the caller must do that explicitly
+    (the Enable flow does it as step 3).
+
+    Raises ValueError on a blank/invalid token.
+    Raises RegistrationWriteError on filesystem failure.
+    """
+    token = token.strip()
+    if not token:
+        raise ValueError("Bot token must not be empty")
+    if len(token) > 512:
+        raise ValueError("Bot token exceeds maximum length")
+
+    target = path or bot_token_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            prefix=".bot-token-",
+            suffix=".tmp",
+            dir=str(target.parent),
+        )
+    except OSError as exc:
+        raise RegistrationWriteError(
+            f"Cannot create tmp file in {target.parent}: {exc}"
+        ) from exc
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
+            tmp.write(token)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp_path, _REGISTRATION_FILE_MODE)
+        os.replace(tmp_path, target)
+    except Exception as exc:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise RegistrationWriteError(
+            f"Failed to write bot token file at {target}: {exc}"
+        ) from exc
+
+    logger.info("discord bot token written to %s", target)
+    return target
+
+
+def read_discord_bot_token(*, path: Path | None = None) -> str | None:
+    """Read the stored Discord bot token, or None if not yet configured.
+
+    Reads from the bot-token file first. Falls back to
+    config.yaml's discord.bot_token field for operators who configured
+    it manually before this feature existed.
+    Returns None (not raises) when neither source has a token.
+    """
+    target = path or bot_token_file_path()
+    if target.exists():
+        try:
+            token = target.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        except OSError:
+            pass
+
+    # Fallback: read from config.yaml template
+    config_path = bridge_config_dir() / "config.yaml"
+    if config_path.exists():
+        try:
+            doc = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            if isinstance(doc, dict):
+                discord_section = doc.get("discord", {})
+                if isinstance(discord_section, dict):
+                    token = str(discord_section.get("bot_token", "")).strip()
+                    if token:
+                        return token
+        except (yaml.YAMLError, OSError):
+            pass
+
+    return None
 
 
 # ---------------------------------------------------------------------
@@ -590,11 +691,19 @@ def write_bridge_runtime_config(
             f"Bridge config template at {src} must be a YAML mapping."
         )
 
-    # Inject tokens into the appservice section, creating it if absent.
+    # Inject appservice tokens.
     if "appservice" not in doc or not isinstance(doc["appservice"], dict):
         doc["appservice"] = {}
     doc["appservice"]["as_token"] = registration.as_token
     doc["appservice"]["hs_token"] = registration.hs_token
+
+    # Inject bot token from the dedicated file (preferred) or leave
+    # the config.yaml value in place if the operator set it manually.
+    bot_token = read_discord_bot_token()
+    if bot_token:
+        if "discord" not in doc or not isinstance(doc["discord"], dict):
+            doc["discord"] = {}
+        doc["discord"]["bot_token"] = bot_token
 
     body = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, allow_unicode=True)
 

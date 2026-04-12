@@ -13,6 +13,7 @@ import {
   discordBridgeHttpEnable,
   discordBridgeHttpDisable,
   discordBridgeHttpRotate,
+  discordBridgeHttpSaveBotToken,
   type BridgeStatus,
   type DiscordGuild,
   type HttpBridgeStatus,
@@ -706,20 +707,19 @@ function UserModeSection({ onShowTos }: { onShowTos: () => void }) {
 /**
  * Docker/web bridge management section.
  *
- * Uses the HTTP admin API (`/api/admin/bridges/discord/*`) to control
- * the mautrix-discord container in the Concord docker-compose stack.
- * Shown to admin users when running in the browser (non-native).
- *
- * The bot token is NOT managed here — it lives in
- * `config/mautrix-discord/config.yaml` which is mounted into the
- * container at deploy time. Instructions for configuring it are shown
- * in the setup section.
+ * Mirrors the native walkthrough UX: guides the admin through
+ * creating a Discord app, enabling intents, pasting the bot token
+ * (saved to the server via POST /bot-token), inviting the bot, and
+ * finally enabling the bridge. No manual file editing required.
  */
 function DockerBridgeSection({ accessToken }: { accessToken: string }) {
   const [status, setStatus] = useState<HttpBridgeStatus | null>(null);
   const [lastResult, setLastResult] = useState<HttpBridgeMutationResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [botTokenInput, setBotTokenInput] = useState("");
+  const [savingToken, setSavingToken] = useState(false);
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -727,17 +727,35 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
       const s = await discordBridgeHttpStatus(accessToken);
       if (!mountedRef.current) return;
       setStatus(s);
+      // Auto-advance past token step if already configured.
+      if (s.bot_token_configured && step < 4) setStep(4);
     } catch (err) {
       if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [accessToken]);
+  }, [accessToken, step]);
 
   useEffect(() => {
     mountedRef.current = true;
     refresh();
     return () => { mountedRef.current = false; };
   }, [refresh]);
+
+  const handleSaveToken = useCallback(async () => {
+    if (!botTokenInput.trim()) return;
+    setSavingToken(true);
+    setError(null);
+    try {
+      await discordBridgeHttpSaveBotToken(accessToken, botTokenInput.trim());
+      setBotTokenInput("");
+      setStep(4);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingToken(false);
+    }
+  }, [accessToken, botTokenInput, refresh]);
 
   const handleEnable = useCallback(async () => {
     setBusy(true);
@@ -790,6 +808,8 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
     }
   }, [accessToken, refresh]);
 
+  const tokenConfigured = status?.bot_token_configured ?? false;
+
   return (
     <div className="space-y-4" data-testid="docker-bridge-section">
       {/* Status card */}
@@ -839,7 +859,8 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
                 <button
                   type="button"
                   onClick={handleEnable}
-                  disabled={busy}
+                  disabled={busy || !tokenConfigured}
+                  title={!tokenConfigured ? "Complete setup steps first" : undefined}
                   data-testid="docker-bridge-enable-btn"
                   className="px-3 py-1.5 bg-primary/10 hover:bg-primary/15 text-primary text-xs rounded-md transition-colors disabled:opacity-40 min-h-[32px]"
                 >
@@ -850,15 +871,12 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
           </div>
         </div>
 
-        {/* Setup instructions — shown when disabled */}
+        {/* Setup walkthrough — shown when disabled */}
         {status !== null && !status.enabled && (
           <div className="p-4 border-t border-outline-variant/10 space-y-3">
-            <p className="text-xs text-on-surface-variant">
-              Before enabling, make sure the Discord bot token is configured:
-            </p>
-            <ol className="text-xs text-on-surface-variant list-decimal list-inside space-y-1.5">
-              <li>
-                Create a Discord application at{" "}
+            <StepBlock number={1} title="Create a Discord Application" active={step === 1} done={step > 1}>
+              <p className="text-xs text-on-surface-variant">
+                Go to{" "}
                 <a
                   href="https://discord.com/developers/applications"
                   target="_blank"
@@ -866,22 +884,94 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
                   className="text-primary hover:underline"
                 >
                   discord.com/developers/applications
-                </a>
-              </li>
-              <li>
-                Enable <strong>Server Members Intent</strong> and{" "}
-                <strong>Message Content Intent</strong> in Bot settings
-              </li>
-              <li>
-                Add the bot token to{" "}
-                <code className="bg-surface-container-highest px-1 py-0.5 rounded text-on-surface text-[10px]">
-                  config/mautrix-discord/config.yaml
-                </code>{" "}
-                under <code className="bg-surface-container-highest px-1 py-0.5 rounded text-on-surface text-[10px]">appservice.bot.token</code>
-              </li>
-              <li>Invite the bot to your Discord server via OAuth2 URL Generator</li>
-              <li>Click <strong>Enable</strong> above</li>
-            </ol>
+                </a>{" "}
+                and create a new application. Then open the <strong>Bot</strong> tab and create a bot user.
+              </p>
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                className="mt-2 text-xs text-primary hover:underline"
+              >
+                Done, next step →
+              </button>
+            </StepBlock>
+
+            <StepBlock number={2} title="Enable Required Intents" active={step === 2} done={step > 2}>
+              <p className="text-xs text-on-surface-variant">
+                In Bot settings, enable these <strong>Privileged Gateway Intents</strong>:
+              </p>
+              <ul className="text-xs text-on-surface-variant list-disc list-inside mt-1 space-y-0.5">
+                <li><strong>Server Members Intent</strong></li>
+                <li><strong>Message Content Intent</strong></li>
+              </ul>
+              <button
+                type="button"
+                onClick={() => setStep(3)}
+                className="mt-2 text-xs text-primary hover:underline"
+              >
+                Done, next step →
+              </button>
+            </StepBlock>
+
+            <StepBlock
+              number={3}
+              title="Paste Bot Token"
+              active={step === 3}
+              done={step > 3 || tokenConfigured}
+            >
+              <p className="text-xs text-on-surface-variant">
+                Copy the bot token from the Bot page and paste it below.
+                It is stored securely on the server and never exposed via the API.
+              </p>
+              {tokenConfigured ? (
+                <p className="mt-2 text-xs text-green-500 font-medium">
+                  ✓ Token configured
+                </p>
+              ) : (
+                <div className="flex gap-2 mt-2">
+                  <input
+                    type="password"
+                    value={botTokenInput}
+                    onChange={(e) => setBotTokenInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveToken()}
+                    placeholder="Paste bot token here…"
+                    data-testid="docker-bot-token-input"
+                    className="flex-1 px-3 py-1.5 bg-surface-container-highest rounded-md text-sm text-on-surface placeholder:text-on-surface-variant/50 border border-outline-variant/20 focus:border-primary/50 focus:outline-none min-h-[36px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveToken}
+                    disabled={savingToken || !botTokenInput.trim()}
+                    data-testid="docker-save-token-btn"
+                    className="px-4 py-1.5 bg-primary/10 hover:bg-primary/15 text-primary text-xs rounded-md transition-colors disabled:opacity-40 min-h-[36px]"
+                  >
+                    {savingToken ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              )}
+            </StepBlock>
+
+            <StepBlock number={4} title="Invite Bot to Your Discord Server" active={step === 4} done={step > 4}>
+              <p className="text-xs text-on-surface-variant">
+                In the developer portal go to <strong>OAuth2 › URL Generator</strong>.
+                Select scope <strong>bot</strong> and permissions: Read Messages/View Channels,
+                Send Messages, Manage Messages, Read Message History, Add Reactions.
+                Copy the URL and open it to invite the bot.
+              </p>
+              <button
+                type="button"
+                onClick={() => setStep(5)}
+                className="mt-2 text-xs text-primary hover:underline"
+              >
+                Done, next step →
+              </button>
+            </StepBlock>
+
+            <StepBlock number={5} title="Enable the Bridge" active={step >= 5} done={status.enabled}>
+              <p className="text-xs text-on-surface-variant">
+                Click <strong>Enable</strong> above to generate credentials and start the bridge.
+              </p>
+            </StepBlock>
           </div>
         )}
 
@@ -889,9 +979,7 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
         {lastResult && (
           <div
             className={`px-4 py-3 border-t text-xs space-y-1 ${
-              lastResult.ok
-                ? "border-primary/10 bg-primary/5"
-                : "border-error/10 bg-error/5"
+              lastResult.ok ? "border-primary/10 bg-primary/5" : "border-error/10 bg-error/5"
             }`}
             data-testid="docker-bridge-result"
           >
@@ -899,23 +987,13 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
               {lastResult.message}
             </p>
             <div className="space-y-0.5 mt-1">
-              {lastResult.steps.map((step, i) => (
+              {lastResult.steps.map((s, i) => (
                 <div key={i} className="flex items-center gap-2 text-on-surface-variant">
-                  <span
-                    className={
-                      step.status === "ok"
-                        ? "text-green-500"
-                        : step.status === "failed"
-                        ? "text-error"
-                        : "text-on-surface-variant/40"
-                    }
-                  >
-                    {step.status === "ok" ? "✓" : step.status === "failed" ? "✗" : "–"}
+                  <span className={s.status === "ok" ? "text-green-500" : s.status === "failed" ? "text-error" : "text-on-surface-variant/40"}>
+                    {s.status === "ok" ? "✓" : s.status === "failed" ? "✗" : "–"}
                   </span>
-                  <span>{step.name.replace(/_/g, " ")}</span>
-                  {step.detail && (
-                    <span className="text-on-surface-variant/60 truncate">{step.detail}</span>
-                  )}
+                  <span>{s.name.replace(/_/g, " ")}</span>
+                  {s.detail && <span className="text-on-surface-variant/60 truncate">{s.detail}</span>}
                 </div>
               ))}
             </div>
@@ -926,11 +1004,7 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
         {error && (
           <div className="px-4 py-3 border-t border-error/10 bg-error/5" data-testid="docker-bridge-error">
             <p className="text-xs text-error font-medium">{error}</p>
-            <button
-              type="button"
-              onClick={() => { setError(null); refresh(); }}
-              className="mt-1 text-xs text-primary hover:underline"
-            >
+            <button type="button" onClick={() => { setError(null); refresh(); }} className="mt-1 text-xs text-primary hover:underline">
               Retry
             </button>
           </div>
@@ -942,13 +1016,11 @@ function DockerBridgeSection({ accessToken }: { accessToken: string }) {
         <div className="rounded-md border border-outline-variant/15 bg-surface-container-low/40 px-4 py-3 space-y-1">
           <p className="text-xs text-on-surface-variant font-medium">Registration</p>
           <p className="text-[11px] text-on-surface-variant/70">
-            Appservice ID:{" "}
-            <code className="text-on-surface">{status.appservice_id}</code>
+            Appservice ID: <code className="text-on-surface">{status.appservice_id}</code>
           </p>
           {status.sender_mxid_localpart && (
             <p className="text-[11px] text-on-surface-variant/70">
-              Bot localpart:{" "}
-              <code className="text-on-surface">@{status.sender_mxid_localpart}:&lt;server&gt;</code>
+              Bot localpart: <code className="text-on-surface">@{status.sender_mxid_localpart}:&lt;server&gt;</code>
             </p>
           )}
         </div>
