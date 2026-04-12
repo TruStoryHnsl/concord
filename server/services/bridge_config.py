@@ -106,6 +106,14 @@ tuwunel container runs as the compose-assigned UID and mounts
 without granting global visibility. See the threat model comment at the
 top of this module."""
 
+_BRIDGE_CONTAINER_GID = 1337
+"""GID of the mautrix-discord bridge container user (``user: "1337:1337"``
+in docker-compose.yml). ``config-runtime.yaml`` must be group-owned by
+this GID so the bridge process can read it despite being owned by root
+(concord-api runs as root and creates all bridge config files). Only
+config-runtime.yaml needs this treatment — registration.yaml is read by
+tuwunel (root) and bot-token is only read by concord-api itself."""
+
 _REGISTRATION_FILE_NAME = "registration.yaml"
 """Name of the registration YAML under
 ``config/mautrix-discord/``. Must NOT be committed to git (enforced in
@@ -723,7 +731,13 @@ def write_bridge_runtime_config(
             tmp.write(body)
             tmp.flush()
             os.fsync(tmp.fileno())
-        os.chmod(tmp_path, _REGISTRATION_FILE_MODE)  # 0640 — same as registration
+        os.chmod(tmp_path, _REGISTRATION_FILE_MODE)  # 0640
+        # Group-own by the bridge container GID so UID 1337 can read
+        # the file. concord-api runs as root and creates files as
+        # root:root; without this chown the bridge (1337:1337) gets
+        # EACCES on its own config. Registration.yaml is intentionally
+        # NOT chowned here — tuwunel reads it as root.
+        os.chown(tmp_path, -1, _BRIDGE_CONTAINER_GID)
         os.replace(tmp_path, dst)
     except Exception as exc:  # noqa: BLE001
         try:

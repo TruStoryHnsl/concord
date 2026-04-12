@@ -76,8 +76,13 @@ bridge:
   # `server/routers/admin_bridges.py` — the admin router rejects any
   # enable/disable/rotate call from a non-admin user long before
   # mautrix-discord's own ACL runs.
+  # Who on the Matrix side can use the bridge.
+  # Must include at least one entry at "user" level or higher — "relay"
+  # alone is treated as "unconfigured" by the bridge validation when
+  # relay mode is disabled. Replace "concorrd.com" with your actual
+  # CONDUWUIT_SERVER_NAME if you're not running concorrd.com.
   permissions:
-    "*": relay
+    "concorrd.com": user
 
 # Discord credentials (CONFIGURE THIS — required to connect the bridge).
 # Paste the bot token from discord.com/developers/applications > Bot > Token.
