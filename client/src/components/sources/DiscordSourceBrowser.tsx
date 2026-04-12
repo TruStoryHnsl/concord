@@ -3,6 +3,7 @@
  *
  * Screens:
  *   browse          — list of already-bridged rooms, grouped by guild space
+ *   invite-bot      — open Discord OAuth2 invite URL so bot joins a server
  *   link-channel-id — enter a Discord channel ID to bridge
  *   link-test-msg   — optionally send a test message after bridging
  *   linking         — spinner while DM-ing the bridge bot and waiting for portal
@@ -20,6 +21,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
+import { discordBridgeHttpGetInviteUrl } from "../../api/bridges";
 
 // ── Alias parser ────────────────────────────────────────────────────────────
 
@@ -75,6 +77,7 @@ interface GuildGroup {
 
 type Screen =
   | "browse"
+  | "invite-bot"
   | "link-channel-id"
   | "link-test-msg"
   | "linking"
@@ -124,12 +127,34 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const userId = useAuthStore((s) => s.userId);
   const setActiveChannel = useServerStore((s) => s.setActiveChannel);
 
+  const accessToken = useAuthStore((s) => s.accessToken);
+
   const [screen, setScreen] = useState<Screen>("browse");
   const [channelId, setChannelId] = useState("");
   const [sendTestMsg, setSendTestMsg] = useState(true);
   const [testMsg, setTestMsg] = useState("✓ Concord bridge is working!");
   const [linkedRoom, setLinkedRoom] = useState<{ roomId: string; name: string } | null>(null);
   const [error, setError] = useState("");
+
+  // Invite URL — fetched lazily when the invite-bot screen is opened.
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [inviteUrlLoading, setInviteUrlLoading] = useState(false);
+
+  const openInviteScreen = useCallback(async () => {
+    setScreen("invite-bot");
+    if (inviteUrl) return; // already fetched
+    setInviteUrlLoading(true);
+    try {
+      if (!accessToken) throw new Error("Not logged in");
+      const result = await discordBridgeHttpGetInviteUrl(accessToken);
+      setInviteUrl(result.invite_url);
+    } catch {
+      // Non-fatal — show a manual fallback link
+      setInviteUrl(null);
+    } finally {
+      setInviteUrlLoading(false);
+    }
+  }, [accessToken, inviteUrl]);
 
   // ── Build bridged-room list ────────────────────────────────────────────────
 
@@ -250,8 +275,8 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       if (!portal) {
         setError(
           "Bridge command sent, but the portal room wasn't created within 12 seconds. " +
-          "Make sure the bot is a member of the Discord server containing this channel, " +
-          "then try again.",
+          "The most common cause is that the bot is not a member of that Discord server — " +
+          "use 'Add bot to Discord server' on the previous screen to invite it first.",
         );
         setScreen("error");
         return;
@@ -282,14 +307,33 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             <Header title="Discord Bridge" onClose={onClose} />
             <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
               {guildGroups.length === 0 ? (
-                <div className="flex flex-col items-center gap-3 py-10 text-center">
-                  <div className="w-14 h-14 rounded-2xl bg-[#5865F2]/10 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-[#5865F2] text-3xl">videogame_asset</span>
+                /* Empty state: guide the user through the prerequisite steps */
+                <div className="space-y-3 py-2">
+                  <div className="rounded-xl border border-[#5865F2]/30 bg-[#5865F2]/5 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[#5865F2] text-white text-xs font-bold flex-shrink-0">1</span>
+                      <p className="text-sm font-medium text-on-surface">Add the bot to a Discord server</p>
+                    </div>
+                    <p className="text-xs text-on-surface-variant pl-7">
+                      The bridge bot must be a member of the Discord server before it can relay messages.
+                    </p>
+                    <button
+                      onClick={openInviteScreen}
+                      className="ml-7 flex items-center gap-1.5 text-xs font-medium text-[#5865F2] hover:text-[#4752c4] transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-sm">open_in_new</span>
+                      Invite bot to Discord server
+                    </button>
                   </div>
-                  <p className="text-sm text-on-surface font-medium">No Discord channels bridged yet</p>
-                  <p className="text-xs text-on-surface-variant max-w-xs">
-                    Link a Discord channel to start bridging messages between Discord and Concord.
-                  </p>
+                  <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-outline-variant text-on-surface-variant text-xs font-bold flex-shrink-0">2</span>
+                      <p className="text-sm font-medium text-on-surface">Link a Discord channel</p>
+                    </div>
+                    <p className="text-xs text-on-surface-variant pl-7">
+                      Once the bot is in your server, link individual channels to create bridged rooms here in Concord.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -317,13 +361,79 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                 </div>
               )}
             </div>
-            <div className="mt-4 pt-4 border-t border-outline-variant/10 flex-shrink-0">
+            <div className="mt-4 pt-4 border-t border-outline-variant/10 flex-shrink-0 space-y-2">
               <button
                 onClick={() => setScreen("link-channel-id")}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-colors"
               >
                 <span className="material-symbols-outlined text-base">add_link</span>
                 Link Discord Channel
+              </button>
+              {/* "Add bot to another server" — secondary action, always visible */}
+              <button
+                onClick={openInviteScreen}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface text-xs transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">person_add</span>
+                Add bot to {guildGroups.length > 0 ? "another" : "a"} Discord server
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Invite bot ── */}
+        {screen === "invite-bot" && (
+          <>
+            <Header
+              title="Add Bot to Discord Server"
+              onBack={() => setScreen("browse")}
+              onClose={onClose}
+            />
+            <div className="space-y-4">
+              <p className="text-sm text-on-surface-variant">
+                The bridge bot must be a member of the Discord server containing the channels you want to link.
+              </p>
+              <ol className="space-y-3 text-sm">
+                <li className="flex gap-3">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[#5865F2] text-white text-xs font-bold flex-shrink-0 mt-0.5">1</span>
+                  <span className="text-on-surface-variant">
+                    Click <strong className="text-on-surface">Open Discord Invite</strong> below — Discord will open in a new tab.
+                  </span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[#5865F2] text-white text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+                  <span className="text-on-surface-variant">
+                    Choose which Discord server to add the bot to, then click <strong className="text-on-surface">Authorize</strong>.
+                  </span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[#5865F2] text-white text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+                  <span className="text-on-surface-variant">
+                    Come back here and click <strong className="text-on-surface">Bot is in my server</strong>.
+                  </span>
+                </li>
+              </ol>
+              <button
+                onClick={() => {
+                  if (inviteUrl) {
+                    window.open(inviteUrl, "_blank", "noopener,noreferrer");
+                  }
+                }}
+                disabled={inviteUrlLoading || !inviteUrl}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium disabled:opacity-50 transition-colors"
+              >
+                {inviteUrlLoading ? (
+                  <span className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <span className="material-symbols-outlined text-base">open_in_new</span>
+                )}
+                Open Discord Invite
+              </button>
+              <button
+                onClick={() => setScreen("link-channel-id")}
+                className="w-full py-2.5 rounded-xl border border-outline-variant/30 hover:bg-surface-container-high text-on-surface text-sm font-medium transition-colors"
+              >
+                Bot is in my server →
               </button>
             </div>
           </>
@@ -334,7 +444,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           <>
             <Header
               title="Link Discord Channel"
-              onBack={() => setScreen("browse")}
+              onBack={() => setScreen("invite-bot")}
               onClose={onClose}
             />
             <div className="space-y-4">
@@ -344,10 +454,6 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                   <li>Open Discord → User Settings → Advanced → enable <strong>Developer Mode</strong></li>
                   <li>Right-click any channel → <strong>Copy Channel ID</strong></li>
                 </ol>
-                <p className="pt-1">
-                  The bot must already be a member of that Discord server.
-                  If it isn't, invite it via Settings → Bridges → Discord.
-                </p>
               </div>
               <div>
                 <label className="text-xs font-label text-on-surface-variant mb-1.5 block">
@@ -484,10 +590,20 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
         {screen === "error" && (
           <>
             <Header title="Link Failed" onClose={onClose} />
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="rounded-lg bg-error/10 border border-error/20 px-4 py-3">
                 <p className="text-sm text-error">{error}</p>
               </div>
+              {/* If error looks like a bot-membership issue, offer a direct shortcut */}
+              {error.includes("not a member") && (
+                <button
+                  onClick={openInviteScreen}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#5865F2] hover:bg-[#4752c4] text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">person_add</span>
+                  Add bot to Discord server
+                </button>
+              )}
               <button
                 onClick={() => setScreen("browse")}
                 className="w-full py-2.5 bg-surface-container-high hover:bg-surface-container-highest text-on-surface rounded-lg text-sm font-medium transition-colors"

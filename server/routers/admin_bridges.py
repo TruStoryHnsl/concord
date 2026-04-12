@@ -55,6 +55,7 @@ at all.
 """
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any, Literal
 
@@ -482,6 +483,61 @@ async def discord_bridge_set_bot_token(
         raise _map_bridge_error(exc) from exc
     logger.info("discord bot token updated by %s", user_id)
     return {"ok": True, "message": "Bot token saved."}
+
+
+# ---------------------------------------------------------------------
+# GET /bot-invite-url
+# ---------------------------------------------------------------------
+
+
+# Permissions sum for standard mautrix-discord operation:
+#   View Channels (1024) + Send Messages (2048) + Manage Messages (8192) +
+#   Embed Links (16384) + Attach Files (32768) + Read Message History (65536) +
+#   Add Reactions (64) + Use External Emojis (262144) + Manage Webhooks (536870912)
+_DISCORD_BOT_PERMISSIONS = 537259072
+
+
+@router.get("/bot-invite-url")
+async def discord_bridge_bot_invite_url(
+    user_id: str = Depends(get_user_id),
+) -> dict:
+    """Return a Discord OAuth2 invite URL for the configured bot.
+
+    The application ID is decoded from the first base64-encoded segment
+    of the stored bot token (standard Discord token format:
+    ``<base64(app_id)>.<timestamp>.<hmac>``). No network call is made —
+    the ID is embedded in the token itself.
+
+    Returns ``{"app_id": "...", "invite_url": "..."}`` on success, or
+    raises 400 if no token is configured / 500 if the token is malformed.
+    """
+    require_admin(user_id)
+    token = read_discord_bot_token()
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="No bot token configured. Save a token via POST /bot-token first.",
+        )
+    try:
+        first_segment = token.split(".")[0]
+        # base64 decode may need padding
+        padding = (4 - len(first_segment) % 4) % 4
+        app_id = base64.b64decode(first_segment + "=" * padding).decode("utf-8").strip()
+        int(app_id)  # must be a numeric snowflake
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not decode application ID from the stored bot token. "
+                   "Verify the token is a valid Discord bot token.",
+        )
+
+    invite_url = (
+        "https://discord.com/oauth2/authorize"
+        f"?client_id={app_id}"
+        "&scope=bot%20applications.commands"
+        f"&permissions={_DISCORD_BOT_PERMISSIONS}"
+    )
+    return {"app_id": app_id, "invite_url": invite_url}
 
 
 # ---------------------------------------------------------------------

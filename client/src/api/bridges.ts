@@ -120,6 +120,15 @@ export async function discordBridgeHttpSaveBotToken(
   );
 }
 
+export async function discordBridgeHttpGetInviteUrl(
+  accessToken: string,
+): Promise<{ app_id: string; invite_url: string }> {
+  return bridgeApiFetch<{ app_id: string; invite_url: string }>(
+    "/admin/bridges/discord/bot-invite-url",
+    accessToken,
+  );
+}
+
 /**
  * Bridge status shape returned by `discord_bridge_status`.
  * Matches `BridgeStatus` in `src-tauri/src/bridge_commands.rs`.
