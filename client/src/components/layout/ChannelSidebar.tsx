@@ -55,6 +55,19 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
 
   const unreadCounts = useUnreadCounts();
 
+  // Detect Discord-bridged rooms by checking their canonical alias.
+  // mautrix-discord gives bridged rooms aliases like #_discord_<guild>_<ch>:<server>.
+  const client = useAuthStore((s) => s.client);
+  const discordRoomIds = useMemo(() => {
+    if (!client) return new Set<string>();
+    return new Set(
+      client
+        .getRooms()
+        .filter((room) => (room.getCanonicalAlias() ?? "").includes("_discord_"))
+        .map((room) => room.roomId),
+    );
+  }, [client]);
+
   const server = servers.find((s) => s.id === activeServerId);
   const voiceRoomIds = useMemo(
     () => (server?.channels ?? [])
@@ -256,6 +269,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
         onSetConfirmDelete={(v) => setConfirmDeleteChannelId(v ? ch.id : null)}
         onDelete={() => handleDeleteChannel(ch.id)}
         isTV={isTV}
+        isDiscordBridged={discordRoomIds.has(ch.matrix_room_id)}
       >
         {extras}
       </SortableChannelRow>
@@ -545,6 +559,7 @@ interface SortableChannelRowProps {
   // attributes so the row is picked up by `useDpadNav({ group: "tv-main" })`
   // and styled by the 10-foot rules in `client/src/styles/tv.css`.
   isTV?: boolean;
+  isDiscordBridged?: boolean;
   children?: ReactNode;
 }
 
@@ -570,6 +585,7 @@ function SortableChannelRow({
   onSetConfirmDelete,
   onDelete,
   isTV = false,
+  isDiscordBridged = false,
   children,
 }: SortableChannelRowProps) {
   const {
@@ -633,7 +649,9 @@ function SortableChannelRow({
           className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
             isTV ? "tv-channel-item " : ""
           }${
-            isActive
+            isActive && isDiscordBridged
+              ? "bg-[#5865F2]/20 text-[#5865F2]"
+              : isActive
               ? "bg-surface-container-highest text-on-surface"
               : unread > 0
                 ? "text-on-surface hover:bg-surface-container-high"

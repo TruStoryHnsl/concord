@@ -496,7 +496,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 auto-populated as the single source. On native, this
                 shows all connected Concord instances. Explore tile
                 lives in the SourcesPanel footer per the 2026-04-11 spec. */}
-            <div className="w-52 flex-shrink-0 border-r border-outline-variant/10">
+            <div className="w-14 flex-shrink-0">
               <SourcesPanel onAddSource={openAddSource} onExplore={openExplore} />
             </div>
 
@@ -1437,41 +1437,42 @@ function AddSourceModal({
   onClose: () => void;
   onSourceAdded: () => void;
 }) {
-  const [step, setStep] = useState<"connect" | "validating" | "login" | "error">("connect");
+  type Screen =
+    | "pick"
+    | "concord"
+    | "matrix"
+    | "discord"
+    | "discord-bot"
+    | "discord-account"
+    | "validating"
+    | "error";
+
+  const [screen, setScreen] = useState<Screen>("pick");
+  const [error, setError] = useState("");
+
+  // Concord form state
   const [host, setHost] = useState("");
   const [token, setToken] = useState("");
-  const [error, setError] = useState("");
-  const [, setDiscoveredName] = useState("");
+
+  // Matrix form state
+  const [matrixHost, setMatrixHost] = useState("");
+
   const addSource = useSourcesStore((s) => s.addSource);
+  const accessToken = useAuthStore((s) => s.accessToken);
 
-  const handleConnect = async () => {
+  const handleConnectConcord = async () => {
     const trimmed = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    if (!trimmed) { setError("Enter a hostname"); return; }
-    if (!token.trim()) { setError("Enter an invite token"); return; }
-
-    setStep("validating");
-    setError("");
-
+    if (!trimmed) { setError("Enter a hostname"); setScreen("error"); return; }
+    if (!token.trim()) { setError("Enter an invite token"); setScreen("error"); return; }
+    setScreen("validating");
     try {
-      // Step 1: Discover the instance via well-known
       const { discoverHomeserver } = await import("../../api/wellKnown");
       const config = await discoverHomeserver(trimmed);
-
-      // Step 2: Validate the invite token against the instance
       const validateUrl = `${config.api_base}/invites/validate/${encodeURIComponent(token.trim())}`;
       const validateRes = await fetch(validateUrl, { credentials: "omit" });
-      if (!validateRes.ok) throw new Error("Token validation request failed");
+      if (!validateRes.ok) throw new Error("Token validation failed");
       const validation = await validateRes.json();
-
-      if (!validation.valid) {
-        setStep("error");
-        setError("Invalid or expired invite token");
-        return;
-      }
-
-      setDiscoveredName(config.instance_name || trimmed);
-
-      // Step 3: Add the source in "connecting" state
+      if (!validation.valid) throw new Error("Invalid or expired invite token");
       addSource({
         host: trimmed,
         instanceName: config.instance_name,
@@ -1480,88 +1481,296 @@ function AddSourceModal({
         homeserverUrl: config.homeserver_url,
         status: "connected",
         enabled: true,
+        platform: "concord",
       });
-
       onSourceAdded();
     } catch (err) {
-      setStep("error");
-      setError(
-        err instanceof Error ? err.message : "Couldn't reach that host",
-      );
+      setError(err instanceof Error ? err.message : "Couldn't reach that host");
+      setScreen("error");
     }
   };
+
+  const handleConnectMatrix = () => {
+    const trimmed = matrixHost.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!trimmed) return;
+    addSource({
+      host: trimmed,
+      instanceName: trimmed,
+      inviteToken: "",
+      apiBase: `https://${trimmed}`,
+      homeserverUrl: `https://${trimmed}`,
+      status: "connected",
+      enabled: true,
+      platform: "matrix",
+    });
+    onSourceAdded();
+  };
+
+  const handleCheckDiscordBridge = async () => {
+    setScreen("validating");
+    try {
+      if (!accessToken) throw new Error("Not logged in");
+      const { discordBridgeHttpStatus } = await import("../../api/bridges");
+      const status = await discordBridgeHttpStatus(accessToken);
+      if (!status.enabled) {
+        setError(
+          "The Discord bridge is not enabled. Go to Settings → Bridges to enable it first.",
+        );
+        setScreen("error");
+        return;
+      }
+      // Bridge is running — add/update the discord-bot source
+      const { useSourcesStore: sStore } = await import("../../stores/sources");
+      const existing = sStore
+        .getState()
+        .sources.find((s) => s.platform === "discord-bot");
+      if (!existing) {
+        sStore.getState().addSource({
+          host: "discord-bridge",
+          instanceName: "Discord (Bot Bridge)",
+          inviteToken: "",
+          apiBase: "",
+          homeserverUrl: "",
+          status: "connected",
+          enabled: true,
+          platform: "discord-bot",
+        });
+      }
+      onSourceAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to check bridge status");
+      setScreen("error");
+    }
+  };
+
+  const back = () => setScreen("pick");
+
+  // Shared close button header
+  const Header = ({ title, onBack }: { title: string; onBack?: () => void }) => (
+    <div className="flex items-center gap-3 mb-6">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+        >
+          <span className="material-symbols-outlined text-lg">arrow_back</span>
+        </button>
+      )}
+      <h2 className="flex-1 text-lg font-headline font-semibold text-on-surface">{title}</h2>
+      <button
+        onClick={onClose}
+        className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+      >
+        <span className="material-symbols-outlined text-lg">close</span>
+      </button>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-sm mx-4 bg-surface-container rounded-2xl border border-outline-variant/20 shadow-2xl p-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-headline font-semibold text-on-surface">
-            Add Source
-          </h2>
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
-          >
-            <span className="material-symbols-outlined text-xl">close</span>
-          </button>
-        </div>
 
-        {step === "validating" ? (
+        {/* ── Screen: pick ── */}
+        {screen === "pick" && (
+          <>
+            <Header title="Add Source" />
+            <div className="space-y-3">
+              {/* Concord */}
+              <button
+                onClick={() => setScreen("concord")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-on-primary text-xl">hub</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Concord Instance</p>
+                  <p className="text-xs text-on-surface-variant">Connect via invite token</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              {/* Matrix */}
+              <button
+                onClick={() => setScreen("matrix")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-teal-500/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-teal-700 flex items-center justify-center flex-shrink-0">
+                  <span className="text-white text-lg font-bold">M</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Matrix Network</p>
+                  <p className="text-xs text-on-surface-variant">Browse any Matrix homeserver</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              {/* Discord */}
+              <button
+                onClick={() => setScreen("discord")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-[#5865F2]/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-[#5865F2] flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-white text-xl">videogame_asset</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Discord</p>
+                  <p className="text-xs text-on-surface-variant">Bridge guilds or connect your account</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: concord ── */}
+        {screen === "concord" && (
+          <>
+            <Header title="Concord Instance" onBack={back} />
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Hostname</label>
+                <input
+                  type="text"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="chat.example.com"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Invite Token</label>
+                <input
+                  type="text"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="inv_..."
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={handleConnectConcord}
+                disabled={!host.trim() || !token.trim()}
+                className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
+              >
+                Connect
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: matrix ── */}
+        {screen === "matrix" && (
+          <>
+            <Header title="Matrix Network" onBack={back} />
+            <div className="space-y-4">
+              <p className="text-xs text-on-surface-variant">
+                Add a Matrix homeserver to browse federated rooms and public servers.
+              </p>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Homeserver</label>
+                <input
+                  type="text"
+                  value={matrixHost}
+                  onChange={(e) => setMatrixHost(e.target.value)}
+                  placeholder="matrix.org"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={handleConnectMatrix}
+                disabled={!matrixHost.trim()}
+                className="w-full py-2.5 bg-teal-700 text-white rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-teal-600 transition-colors"
+              >
+                Add
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: discord (sub-picker) ── */}
+        {screen === "discord" && (
+          <>
+            <Header title="Connect Discord" onBack={back} />
+            <div className="space-y-3">
+              {/* Bot bridge */}
+              <button
+                onClick={handleCheckDiscordBridge}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-[#5865F2]/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-[#5865F2]/15 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-[#5865F2] text-xl">videogame_asset</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Bot Bridge</p>
+                  <p className="text-xs text-on-surface-variant">Bridge Discord servers via the server-side bot</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              {/* Account login */}
+              <button
+                onClick={() => setScreen("discord-account")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-[#5865F2]/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-[#5865F2]/15 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-[#5865F2] text-xl">person_play</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Account Login</p>
+                  <p className="text-xs text-on-surface-variant">Connect your personal Discord account via QR</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: discord-account ── */}
+        {screen === "discord-account" && (
+          <>
+            <Header title="Discord Account Login" onBack={() => setScreen("discord")} />
+            <div className="space-y-3 text-xs text-on-surface-variant">
+              <p>Connect your personal Discord account through the bridge bot. Messages will appear under your name, not the bot's.</p>
+              <ol className="list-decimal list-inside space-y-2">
+                <li>Open any Concord room and send a DM to <code className="bg-surface-container-highest px-1 py-0.5 rounded text-on-surface">@discordbot</code> with the message <strong>login</strong></li>
+                <li>The bot will reply with a QR code</li>
+                <li>In Discord on your phone: Settings → Advanced → Scan Login QR Code</li>
+                <li>Scan the code — you're connected</li>
+              </ol>
+              <p className="text-on-surface-variant/60 italic">Your Discord token flows directly to the bridge. Concord never stores it.</p>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-full mt-6 py-2.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-highest transition-colors"
+            >
+              Got it
+            </button>
+          </>
+        )}
+
+        {/* ── Screen: validating ── */}
+        {screen === "validating" && (
           <div className="flex flex-col items-center gap-3 py-8">
             <span className="inline-block w-6 h-6 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
-            <span className="text-sm text-on-surface-variant font-body">
-              Connecting to {host}...
-            </span>
+            <p className="text-sm text-on-surface-variant">Connecting…</p>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest mb-1.5">
-                Hostname
-              </label>
-              <input
-                type="text"
-                value={host}
-                onChange={(e) => { setHost(e.target.value); setError(""); }}
-                placeholder="concorrd.com"
-                className="w-full px-4 py-3 bg-surface-container-high rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all font-body"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-              />
+        )}
+
+        {/* ── Screen: error ── */}
+        {screen === "error" && (
+          <>
+            <Header title="Connection Failed" />
+            <div className="rounded-lg bg-error/10 border border-error/20 px-4 py-3 mb-4">
+              <p className="text-sm text-error">{error}</p>
             </div>
-
-            <div>
-              <label className="block text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest mb-1.5">
-                Invite Token
-              </label>
-              <input
-                type="text"
-                value={token}
-                onChange={(e) => { setToken(e.target.value); setError(""); }}
-                placeholder="Paste your invite token"
-                className="w-full px-4 py-3 bg-surface-container-high rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all font-mono tracking-wider"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-            </div>
-
-            {error && (
-              <div className="px-3 py-2 rounded-lg bg-error/10 border border-error/20">
-                <p className="text-sm text-error font-body">{error}</p>
-              </div>
-            )}
-
             <button
-              onClick={handleConnect}
-              disabled={!host.trim() || !token.trim()}
-              className="w-full py-3 font-headline font-semibold rounded-xl primary-glow text-on-primary hover:brightness-110 shadow-lg shadow-primary/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]"
+              onClick={back}
+              className="w-full py-2.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-highest transition-colors"
             >
-              Connect
+              Back
             </button>
-          </div>
+          </>
         )}
       </div>
     </div>

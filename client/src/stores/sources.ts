@@ -42,6 +42,8 @@ export interface ConcordSource {
   error?: string;
   /** When this source was added (ISO timestamp). */
   addedAt: string;
+  /** What kind of network this source represents. Defaults to "concord". */
+  platform?: "concord" | "matrix" | "discord-bot" | "discord-account";
 }
 
 export interface SourcesState {
@@ -218,7 +220,7 @@ export const useSourcesStore = create<SourcesState>()(
           : { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       ),
       partialize: (state) => ({ sources: state.sources }),
-      version: 1,
+      version: 2,
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as { sources?: ConcordSource[] };
         if (version === 0 && state.sources) {
@@ -226,6 +228,12 @@ export const useSourcesStore = create<SourcesState>()(
           state.sources = state.sources.map((s) => ({
             ...s,
             enabled: s.enabled ?? true,
+          }));
+        }
+        if (version < 2 && state.sources) {
+          state.sources = state.sources.map((s) => ({
+            ...s,
+            platform: s.platform ?? "concord",
           }));
         }
         return state as SourcesState;
