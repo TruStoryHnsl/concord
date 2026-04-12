@@ -62,6 +62,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from config import MATRIX_SERVER_NAME
 from errors import ConcordError
 from routers.admin import require_admin
 from routers.servers import get_user_id
@@ -85,6 +86,8 @@ from services.bridge_config import (
     write_discord_bot_token,
     write_registration_file,
 )
+from services.bot import BOT_ACCESS_TOKEN, bot_send_message
+from services.matrix_admin import create_dm_room
 from services.docker_control import (
     DockerControlError,
     restart_compose_service,
@@ -538,6 +541,72 @@ async def discord_bridge_bot_invite_url(
         f"&permissions={_DISCORD_BOT_PERMISSIONS}"
     )
     return {"app_id": app_id, "invite_url": invite_url}
+
+
+# ---------------------------------------------------------------------
+# POST /login-relay
+# ---------------------------------------------------------------------
+
+
+@router.post("/login-relay")
+async def discord_bridge_login_relay(
+    body: NoBodyRequest | None = None,
+    user_id: str = Depends(get_user_id),
+) -> dict:
+    """Log the bridge bot into Discord via the Matrix management DM.
+
+    mautrix-discord v0.7.2 requires an explicit ``login-token <token>``
+    command sent to the bridge bot's DM room before the bot connects to
+    the Discord gateway. This endpoint automates that step so the client
+    does not need to handle the bot token directly.
+
+    Steps:
+    1. Read the stored Discord bot token.
+    2. Create a DM room between the concord-bot Matrix account and the
+       bridge bot (``@discordbot:<server>``).
+    3. Send ``login-token <token>`` to that DM room.
+
+    Returns ``{"ok": true}`` immediately — the Discord gateway handshake
+    happens asynchronously. Wait 4–6 seconds before sending a ``bridge``
+    command to give the handshake time to complete.
+    """
+    require_admin(user_id)
+
+    token = read_discord_bot_token()
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="No bot token configured. POST /bot-token first.",
+        )
+
+    if not BOT_ACCESS_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="concord-bot not initialized — server may be starting up.",
+        )
+
+    bridge_bot_mxid = f"@discordbot:{MATRIX_SERVER_NAME}"
+
+    try:
+        room_id = await create_dm_room(BOT_ACCESS_TOKEN, bridge_bot_mxid)
+    except Exception as exc:
+        logger.warning("login-relay: create_dm_room failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not create DM with bridge bot: {exc}",
+        ) from exc
+
+    try:
+        await bot_send_message(room_id, {"msgtype": "m.text", "body": f"login-token {token}"})
+    except Exception as exc:
+        logger.warning("login-relay: send failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not send login-token to bridge bot: {exc}",
+        ) from exc
+
+    logger.info("login-relay: login-token sent to bridge bot by %s", user_id)
+    return {"ok": True, "message": "login-token sent to bridge bot. Discord handshake in progress."}
 
 
 # ---------------------------------------------------------------------

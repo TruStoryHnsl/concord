@@ -21,7 +21,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
-import { discordBridgeHttpGetInviteUrl } from "../../api/bridges";
+import { discordBridgeHttpGetInviteUrl, discordBridgeHttpLoginRelay } from "../../api/bridges";
 
 // ── Alias parser ────────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ function parseDiscordAlias(alias: string): DiscordAliasInfo | null {
 async function waitForPortal(
   client: ReturnType<typeof useAuthStore.getState>["client"],
   channelId: string,
-  timeoutMs = 12000,
+  timeoutMs = 20000,
 ): Promise<{ roomId: string; name: string } | null> {
   if (!client) return null;
   const re = new RegExp(`_discord_\\d+_${channelId}:`);
@@ -266,6 +266,19 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
         await new Promise((r) => setTimeout(r, 1500));
       }
 
+      // Ensure the bridge bot is logged into Discord. mautrix-discord v0.7.2
+      // requires an explicit login-token command before processing bridge commands.
+      // Fire-and-forget — if this fails (already logged in, no token) proceed anyway.
+      if (accessToken) {
+        try {
+          await discordBridgeHttpLoginRelay(accessToken);
+          // Give the Discord gateway handshake time to complete.
+          await new Promise((r) => setTimeout(r, 4000));
+        } catch {
+          // Non-fatal — bridge may already be logged in from a previous session.
+        }
+      }
+
       // Send the bridge command
       await client.sendTextMessage(dmRoomId, `bridge ${trimmedId}`);
 
@@ -274,7 +287,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
 
       if (!portal) {
         setError(
-          "Bridge command sent, but the portal room wasn't created within 12 seconds. " +
+          "Bridge command sent, but the portal room wasn't created within 20 seconds. " +
           "The most common cause is that the bot is not a member of that Discord server — " +
           "use 'Add bot to Discord server' on the previous screen to invite it first.",
         );

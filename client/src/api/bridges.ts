@@ -120,6 +120,16 @@ export async function discordBridgeHttpSaveBotToken(
   );
 }
 
+export async function discordBridgeHttpLoginRelay(
+  accessToken: string,
+): Promise<{ ok: boolean; message: string }> {
+  return bridgeApiFetch<{ ok: boolean; message: string }>(
+    "/admin/bridges/discord/login-relay",
+    accessToken,
+    { method: "POST", body: "{}" },
+  );
+}
+
 export async function discordBridgeHttpGetInviteUrl(
   accessToken: string,
 ): Promise<{ app_id: string; invite_url: string }> {
