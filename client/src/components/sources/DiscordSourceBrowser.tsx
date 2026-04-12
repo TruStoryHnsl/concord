@@ -210,11 +210,14 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       const serverDomain = userId.includes(":") ? userId.split(":")[1] : "";
       const botUserId = `@discordbot:${serverDomain}`;
 
-      // Find existing DM room with the bridge bot
+      // Find existing DM room with the bridge bot.
+      // We look for a small (≤2 member) room that is NOT a Discord bridge
+      // room (no _discord_ alias) and contains the bot user.
       let dmRoomId: string | null = null;
       for (const room of client.getRooms()) {
         if (room.getMyMembership() !== "join") continue;
-        if (!room.isDirect) continue;
+        const alias = room.getCanonicalAlias() ?? "";
+        if (alias.includes("_discord_")) continue;
         const members = room.getJoinedMembers();
         if (
           members.length <= 2 &&
