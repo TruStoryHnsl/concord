@@ -67,8 +67,8 @@ bridge:
   # puppeting. Disabled by default — operators enable it from the
   # BridgesTab once they have invited the bot to the target guild.
   relay:
-    enabled: false
-    admin_only: true
+    enabled: true
+    admin_only: false
 
   # ACL — who on the Matrix side is allowed to use the bridge.
   # Defaults to "only admins defined in ADMIN_USER_IDS" on the
