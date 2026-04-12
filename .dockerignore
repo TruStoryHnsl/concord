@@ -1,0 +1,9 @@
+# Syncthing conflict files — never include in Docker build context
+*.sync-conflict-*
+**/*.sync-conflict-*
+
+# Node modules — Docker installs its own
+client/node_modules/
+
+# Test artifacts
+client/dist/
