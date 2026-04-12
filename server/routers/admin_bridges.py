@@ -599,7 +599,7 @@ async def discord_bridge_login_relay(
         ) from exc
 
     try:
-        await bot_send_message(room_id, {"msgtype": "m.text", "body": f"login-token {token}"})
+        await bot_send_message(room_id, {"msgtype": "m.text", "body": f"login-token bot {token}"})
     except Exception as exc:
         logger.warning("login-relay: send failed: %s", exc)
         raise HTTPException(
