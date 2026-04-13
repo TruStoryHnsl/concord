@@ -26,6 +26,7 @@ import {
   discordBridgeHttpGetInviteUrl,
   discordBridgeHttpLoginRelay,
   discordBridgeHttpListGuilds,
+  type DiscordVoiceBridgeRoom,
   discordVoiceBridgeHttpListRooms,
   discordVoiceBridgeHttpStart,
   discordVoiceBridgeHttpUpsertRoom,
@@ -108,6 +109,7 @@ interface BridgedChannel {
   name: string;
   guildId: string;
   channelId: string;
+  kind?: "text" | "voice";
 }
 
 interface GuildGroup {
@@ -242,6 +244,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const [discordGuilds, setDiscordGuilds] = useState<{ id: string; name: string; icon: string | null }[]>([]);
   const [guildsLoading, setGuildsLoading] = useState(false);
   const [bridgingGuildId, setBridgingGuildId] = useState<string | null>(null);
+  const [voiceMappings, setVoiceMappings] = useState<DiscordVoiceBridgeRoom[]>([]);
 
   const openInviteScreen = useCallback(async () => {
     setScreen("invite-bot");
@@ -364,6 +367,67 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     [guildGroups, resolvedGuildNames],
   );
 
+  const browseGroups = useMemo(() => {
+    const groups = new Map<string, GuildGroup>();
+    for (const group of resolvedGroups) {
+      groups.set(group.guildId, {
+        guildId: group.guildId,
+        guildName: group.guildName,
+        channels: group.channels.map((channel) => ({
+          ...channel,
+          kind: channel.kind ?? "text",
+        })),
+      });
+    }
+
+    for (const mapping of voiceMappings) {
+      if (!mapping.enabled) continue;
+      const localChannel = servers
+        .flatMap((server) => server.channels)
+        .find(
+          (channel) =>
+            channel.id === mapping.channel_id ||
+            channel.matrix_room_id === mapping.matrix_room_id,
+        );
+      if (!localChannel) continue;
+
+      const guildId = mapping.discord_guild_id;
+      const guildName =
+        resolvedGuildNames.get(guildId) ??
+        discordGuilds.find((guild) => guild.id === guildId)?.name ??
+        groups.get(guildId)?.guildName ??
+        `Guild ${guildId}`;
+
+      if (!groups.has(guildId)) {
+        groups.set(guildId, {
+          guildId,
+          guildName,
+          channels: [],
+        });
+      }
+
+      const group = groups.get(guildId)!;
+      group.guildName = guildName;
+      const existing = group.channels.find((channel) => channel.roomId === mapping.matrix_room_id);
+      if (existing) {
+        existing.kind = "voice";
+        existing.name = localChannel.name;
+        continue;
+      }
+      group.channels.push({
+        roomId: mapping.matrix_room_id,
+        name: localChannel.name,
+        guildId,
+        channelId: mapping.discord_channel_id,
+        kind: "voice",
+      });
+    }
+
+    return Array.from(groups.values()).sort((a, b) =>
+      a.guildName.localeCompare(b.guildName),
+    );
+  }, [discordGuilds, resolvedGroups, resolvedGuildNames, servers, voiceMappings]);
+
   useEffect(() => {
     if (!accessToken || servers.length === 0) return;
     if (voiceOverlayLoadedForToken.current === accessToken) return;
@@ -377,6 +441,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           discordBridgeHttpListGuilds(accessToken).catch(() => []),
         ]);
         if (cancelled) return;
+        setVoiceMappings(rooms);
 
         const latestServers = useServerStore.getState().servers;
         for (const room of rooms) {
@@ -429,7 +494,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     async (roomId: string) => {
       setDMActive(false);
 
-      const channel = resolvedGroups
+      const channel = browseGroups
         .flatMap((g) => g.channels.map((ch) => ({ ...ch, guildName: g.guildName })))
         .find((ch) => ch.roomId === roomId);
 
@@ -456,7 +521,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
 
       onClose();
     },
-    [setDMActive, setActiveChannel, ensureDiscordGuild, resolvedGroups, accessToken, onClose],
+    [setDMActive, setActiveChannel, ensureDiscordGuild, browseGroups, accessToken, onClose],
   );
 
   // ── Link flow ─────────────────────────────────────────────────────────────
@@ -718,7 +783,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           <>
             <Header title="Discord Bridge" onClose={onClose} />
             <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
-              {resolvedGroups.length === 0 ? (
+              {browseGroups.length === 0 ? (
                 /* Empty state: guide the user through the prerequisite steps */
                 <div className="space-y-3 py-2">
                   <div className="rounded-xl border border-[#5865F2]/30 bg-[#5865F2]/5 p-4 space-y-3">
@@ -749,7 +814,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {resolvedGroups.map((guild) => (
+                  {browseGroups.map((guild) => (
                     <div key={guild.guildId}>
                       <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1.5 px-1">
                         {guild.guildName}
@@ -761,10 +826,19 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                             onClick={() => navigateTo(ch.roomId)}
                             className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#5865F2]/10 text-left group transition-colors"
                           >
-                            <span className="text-on-surface-variant/60 text-sm group-hover:text-[#5865F2]">#</span>
-                            <span className="text-sm text-on-surface group-hover:text-[#5865F2] transition-colors">
-                              {ch.name}
+                            <span className="text-on-surface-variant/60 text-sm group-hover:text-[#5865F2]">
+                              {ch.kind === "voice" ? "•" : "#"}
                             </span>
+                            <div className="min-w-0 flex-1">
+                              <span className="text-sm text-on-surface group-hover:text-[#5865F2] transition-colors block truncate">
+                                {ch.name}
+                              </span>
+                              {ch.kind === "voice" && (
+                                <span className="text-[11px] text-on-surface-variant block truncate">
+                                  Discord voice bridge
+                                </span>
+                              )}
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -799,7 +873,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                 className="w-full flex items-center justify-center gap-2 py-2 rounded-xl hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface text-xs transition-colors"
               >
                 <span className="material-symbols-outlined text-sm">smart_toy</span>
-                Add bot to {resolvedGroups.length > 0 ? "another" : "a"} Discord server
+                Add bot to {browseGroups.length > 0 ? "another" : "a"} Discord server
               </button>
               {/* Connect personal Discord account */}
               <button
@@ -954,7 +1028,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
               ) : (
                 <div className="space-y-1">
                   {discordGuilds.map((guild) => {
-                    const alreadyBridged = resolvedGroups.some((g) => g.guildId === guild.id);
+                    const alreadyBridged = browseGroups.some((g) => g.guildId === guild.id);
                     const isBridging = bridgingGuildId === guild.id;
                     return (
                       <div
