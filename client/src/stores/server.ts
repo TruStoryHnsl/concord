@@ -827,8 +827,38 @@ export const useServerStore = create<ServerState>((set, get) => ({
   },
 
   ensureDiscordGuild: ({ guildId, guildName, channel }) => {
-    const serverId = `${FEDERATED_SERVER_ID_PREFIX}discord_${guildId}`;
     const { servers } = get();
+
+    // Prefer any existing server that already contains this channel —
+    // hydrateFederatedRooms uses Matrix space IDs (federated:!room:domain)
+    // while the legacy path uses federated:discord_<guildId>. Searching
+    // by channel roomId lets us find the hydration entry regardless of
+    // which ID scheme it was created with, preventing duplicate tiles.
+    const hostServer = servers.find((s) =>
+      s.channels.some((c) => c.matrix_room_id === channel.roomId),
+    );
+
+    if (hostServer) {
+      // Update name if we now have a real guild name and the tile still
+      // shows the fallback "Guild <snowflake>" label.
+      const betterName =
+        guildName &&
+        !guildName.startsWith("Guild ") &&
+        hostServer.name.startsWith("Guild ");
+      if (betterName) {
+        set({
+          servers: servers.map((s) =>
+            s.id === hostServer.id ? { ...s, name: guildName } : s,
+          ),
+        });
+      }
+      set({ activeServerId: hostServer.id, activeChannelId: channel.roomId });
+      return hostServer.id;
+    }
+
+    // No existing server has this channel yet. Check for a
+    // discord_<guildId> placeholder created in a prior call.
+    const serverId = `${FEDERATED_SERVER_ID_PREFIX}discord_${guildId}`;
     const existing = servers.find((s) => s.id === serverId);
 
     if (existing) {
@@ -864,8 +894,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
         });
       }
     } else {
-      // Create Discord guild as a non-federated server so it persists
-      // across hydrateFederatedRooms syncs (which wipe all federated entries).
+      // Create a temporary placeholder. hydrateFederatedRooms will replace
+      // it with a proper space-based entry once Matrix sync catches up.
       const userId = servers[0]?.owner_id ?? "";
       set({
         servers: [
@@ -893,7 +923,6 @@ export const useServerStore = create<ServerState>((set, get) => ({
       });
     }
 
-    // Navigate
     set({ activeServerId: serverId, activeChannelId: channel.roomId });
     return serverId;
   },
