@@ -202,7 +202,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const guildGroups: GuildGroup[] = useMemo(() => {
     if (!client) return [];
 
-    const bridgedRooms: (BridgedChannel & { networkName?: string })[] = [];
+    const bridgedRooms: (BridgedChannel & { networkName?: string; lastActiveTs: number })[] = [];
     for (const room of client.getRooms()) {
       if (room.getMyMembership() !== "join") continue;
       // Only trust rooms with a proper mautrix-discord canonical alias
@@ -222,8 +222,12 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
         guildId: info.guildId,
         channelId: info.channelId,
         networkName: info.networkName,
+        lastActiveTs: room.getLastActiveTimestamp?.() ?? 0,
       });
     }
+    // Most-recently-active first so deduplication by channelId keeps the
+    // live portal, not a stale accidentally-bridged room.
+    bridgedRooms.sort((a, b) => b.lastActiveTs - a.lastActiveTs);
 
     // Group by guild. Derive name from m.bridge network.displayname,
     // space room, or fall back to guild ID.
@@ -249,7 +253,13 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           channels: [],
         });
       }
-      guildMap.get(ch.guildId)!.channels.push(ch);
+      // Deduplicate by channelId within the guild — if two Matrix rooms share
+      // the same Discord channelId (e.g. the accidentally-bridged management DM
+      // and the fresh portal created afterward), only keep the first one seen.
+      const group = guildMap.get(ch.guildId)!;
+      if (!group.channels.some((c) => c.channelId === ch.channelId)) {
+        group.channels.push(ch);
+      }
     }
 
     return Array.from(guildMap.values()).sort((a, b) =>

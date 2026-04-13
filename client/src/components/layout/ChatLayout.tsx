@@ -30,6 +30,7 @@ import { useExtensionStore } from "../../stores/extension";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
 import { ServerSidebar } from "./ServerSidebar";
+import { Avatar } from "../ui/Avatar";
 import { ChannelSidebar, UserBar } from "./ChannelSidebar";
 import { DMSidebar } from "../dm/DMSidebar";
 import { ExploreModal } from "../server/ExploreModal";
@@ -79,7 +80,6 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
-  const logout = useAuthStore((s) => s.logout);
   const loadServers = useServerStore((s) => s.loadServers);
   const activeChannelId = useServerStore((s) => s.activeChannelId);
   const servers = useServerStore((s) => s.servers);
@@ -152,18 +152,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const closeExplore = useCallback(() => setExploreOpen(false), []);
 
   // Source browser — opened when the user clicks a source tile.
-  // Currently only `discord-bot` sources have a browser; others are no-ops.
   const [sourceBrowserSourceId, setSourceBrowserSourceId] = useState<string | null>(null);
   const sources = useSourcesStore((s) => s.sources);
   const openSourceBrowser = useCallback(
     (sourceId: string) => {
-      const source = sources.find((s) => s.id === sourceId);
-      if (source?.platform === "discord-bot") {
-        setSourceBrowserSourceId(sourceId);
-      }
-      // Other platforms: clicking just selects, no browser yet
+      setSourceBrowserSourceId(sourceId);
     },
-    [sources],
+    [],
   );
 
   // Resizable channel sidebar (desktop only)
@@ -495,49 +490,22 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   //      handle / main pane boundary instead of spanning the whole
   //      window. Regression from the reintegration merge, restored.
   const renderDesktopLayout = () => {
-    const extensionActive = !!activeExtension && !dmActive;
-    const showSidebar = !extensionActive || !sidebarCollapsed;
+    const showSidebar = !sidebarCollapsed;
 
     return (
       <div className="h-full flex overflow-hidden bg-surface text-on-surface">
-        {/* LEFT STACK — columns on top, UserBar below.
-            `flex-shrink-0` is load-bearing: without it a narrow viewport
-            (split screen, small tablet) can compress the stack below the
-            sum of its children's intrinsic widths and the UserBar ends
-            up narrower than the columns above it. */}
-        <div className="flex flex-col min-h-0 flex-shrink-0">
-          <div className="flex flex-1 min-h-0">
-            {/* Sources column — shown on all builds (web and native).
-                On web, the Concord instance at the current origin is
-                auto-populated as the single source. On native, this
-                shows all connected Concord instances. Explore tile
-                lives in the SourcesPanel footer per the 2026-04-11 spec. */}
-            <div className="w-14 flex-shrink-0">
-              <SourcesPanel onAddSource={openAddSource} onExplore={openExplore} onSourceOpen={openSourceBrowser} />
-            </div>
-
-            {/* Sidebar collapse toggle — visible when extension is active */}
-            {extensionActive && (
-              <button
-                onClick={() => setSidebarCollapsed((c) => !c)}
-                className="flex-shrink-0 w-6 flex items-center justify-center bg-surface-container-low/60 backdrop-blur-sm hover:bg-surface-container-high/80 transition-colors z-10 border-r border-outline-variant/10"
-                aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-                title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-              >
-                <span
-                  className="material-symbols-outlined text-sm text-on-surface-variant/70 transition-transform duration-200"
-                  style={{ transform: sidebarCollapsed ? "rotate(0deg)" : "rotate(180deg)" }}
-                >
-                  chevron_right
-                </span>
-              </button>
-            )}
-
-            {/* Server sidebar */}
-            {showSidebar && (
-              <>
+        {/* LEFT STACK — sidebar columns + UserBar below. Collapses to zero width when hidden. */}
+        {showSidebar && (
+          <>
+            <div className="flex flex-col min-h-0 flex-shrink-0">
+              {/* Columns row */}
+              <div className="flex min-h-0 flex-1">
                 <SilentBoundary>
-                  <ServerSidebar />
+                  <ServerSidebar
+                    onAddSource={openAddSource}
+                    onExplore={openExplore}
+                    onSourceOpen={openSourceBrowser}
+                  />
                 </SilentBoundary>
 
                 {/* Channel / DM sidebar */}
@@ -546,26 +514,23 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                     {dmActive ? <DMSidebar /> : <ChannelSidebar />}
                   </SilentBoundary>
                 </div>
-              </>
-            )}
-          </div>
+              </div>
 
-          {/* User banner — only when logged in. Sits inside the left
-              stack so its width matches the sum of the columns above
-              and stops at the resize handle. */}
-          {userId && (
-            <div className="flex-shrink-0 border-t border-outline-variant/20">
-              <UserBar userId={userId} logout={logout} />
+              {/* UserBar spans all columns */}
+              {userId && (
+                <UserBar
+                  userId={userId}
+                  logout={() => useAuthStore.getState().logout()}
+                />
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Resize handle (only when sidebar visible) */}
-        {showSidebar && (
-          <div
-            onMouseDown={handleResizeStart}
-            className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
-          />
+            {/* Resize handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
+            />
+          </>
         )}
 
         {/* Main content */}
@@ -927,6 +892,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                   </span>
                 )}
               </div>
+            ) : activeChannelId ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-[#5865F2] material-symbols-outlined text-base">hub</span>
+                <h2 className="font-headline font-semibold truncate">
+                  {client?.getRoom(activeChannelId)?.name ?? activeChannelId}
+                </h2>
+              </div>
             ) : (
               <span className="text-on-surface-variant font-body">
                 {!syncing || !serversLoaded ? (
@@ -958,7 +930,26 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               <TopBarIconButton icon="help" label="Help" onClick={() => setShowHelp(true)} />
               <TopBarIconButton icon="bar_chart" label="Your stats" onClick={() => setShowStats(true)} />
               <TopBarIconButton icon="bug_report" label="Report a bug" onClick={() => setShowBugReport(true)} />
+              {/* Sidebar toggle */}
+              <TopBarIconButton
+                icon={sidebarCollapsed ? "left_panel_open" : "left_panel_close"}
+                label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+                onClick={() => setSidebarCollapsed((c) => !c)}
+              />
             </div>
+            {/* User banner — click to open stats popup */}
+            {userId && (
+              <button
+                onClick={() => setShowStats(true)}
+                className="flex items-center gap-1.5 ml-1 pl-2 border-l border-outline-variant/20 hover:bg-surface-container-high rounded-lg px-2 py-1 transition-colors"
+                title="Your stats"
+              >
+                <Avatar userId={userId} size="sm" showPresence />
+                <span className="text-xs text-on-surface-variant truncate max-w-[80px]">
+                  {userId.split(":")[0].replace("@", "")}
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1025,6 +1016,49 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
             roomName={dmConversation.other_user_id.split(":")[0].replace("@", "")}
           />
         </>
+      );
+    }
+
+    // Bridged room (e.g. Discord portal) — active channel ID is set but
+    // the room isn't part of any loaded server/space yet. Render full chat
+    // so the user can see and send messages immediately after linking.
+    if (activeChannelId && !activeChannel) {
+      const room = client?.getRoom(activeChannelId);
+      const roomName = room?.name ?? activeChannelId;
+      const roomReady = !!room;
+      return (
+        <div className="flex-1 flex flex-col min-h-0">
+          {!roomReady && (
+            <div className="px-4 py-3 bg-[#5865F2]/10 border-b border-[#5865F2]/20 flex items-center gap-2 flex-shrink-0">
+              <span className="inline-block w-3 h-3 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-on-surface-variant">Loading bridged room…</span>
+            </div>
+          )}
+          <MessageList
+            messages={messages}
+            isPaginating={isPaginating}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            currentUserId={userId}
+            isServerOwner={false}
+            onDelete={deleteMessage}
+            onStartEdit={setEditingMessage}
+            onReact={sendReaction}
+            onRemoveReaction={removeReaction}
+          />
+          <TypingIndicator typingUsers={typingUsers} />
+          <MessageInput
+            onSend={sendMessage}
+            onSubmitEdit={editMessage}
+            onSendFile={sendFile}
+            uploading={uploading}
+            editingMessage={editingMessage}
+            onCancelEdit={() => setEditingMessage(null)}
+            onKeystroke={onKeystroke}
+            onStopTyping={onStopTyping}
+            roomName={roomName}
+          />
+        </div>
       );
     }
 
@@ -1195,12 +1229,94 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         />
       )}
       {/* Source browser — opened by clicking a source tile */}
-      {sourceBrowserSourceId && (
-        <DiscordSourceBrowser
-          onClose={() => setSourceBrowserSourceId(null)}
-        />
-      )}
+      {sourceBrowserSourceId && (() => {
+        const source = sources.find((s) => s.id === sourceBrowserSourceId);
+        const platform = source?.platform ?? "concord";
+        if (platform === "discord-bot" || platform === "discord-account") {
+          return (
+            <DiscordSourceBrowser
+              onClose={() => setSourceBrowserSourceId(null)}
+            />
+          );
+        }
+        // Generic source browser for Concord/Matrix sources
+        return (
+          <SourceServerBrowser
+            source={source}
+            onClose={() => setSourceBrowserSourceId(null)}
+          />
+        );
+      })()}
     </>
+  );
+}
+
+/* ── Source Server Browser (generic, non-Discord) ── */
+function SourceServerBrowser({
+  source,
+  onClose,
+}: {
+  source?: { id: string; host: string; instanceName?: string; platform?: string };
+  onClose: () => void;
+}) {
+  const servers = useServerStore((s) => s.servers);
+  const setActiveServer = useServerStore((s) => s.setActiveServer);
+  const setDMActive = useDMStore((s) => s.setDMActive);
+  const label = source?.instanceName ?? source?.host ?? "Source";
+  const sourceHost = source?.host?.toLowerCase() ?? "";
+
+  // Only show servers whose rooms belong to this source's host
+  const sourceServers = servers.filter((s) => {
+    if (s.bridgeType) return false; // bridge servers belong to their own source
+    if (s.federated) return false;
+    // Match by extracting domain from the first channel's room ID
+    const roomId = s.channels?.[0]?.matrix_room_id ?? "";
+    const roomHost = roomId.split(":")[1]?.toLowerCase() ?? "";
+    return sourceHost && roomHost === sourceHost;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md mx-4 bg-surface-container rounded-2xl border border-outline-variant/20 shadow-2xl p-6 max-h-[85vh] flex flex-col">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
+          <h2 className="flex-1 text-lg font-headline font-semibold text-on-surface">{label}</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-lg">close</span>
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
+          {sourceServers.length === 0 ? (
+            <p className="text-sm text-on-surface-variant text-center py-8">No servers</p>
+          ) : (
+            <div className="space-y-0.5">
+              {sourceServers.map((srv) => (
+                <button
+                  key={srv.id}
+                  onClick={() => {
+                    setDMActive(false);
+                    setActiveServer(srv.id);
+                    onClose();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-primary/10 text-left group transition-colors"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold flex-shrink-0">
+                    {srv.abbreviation || srv.name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="text-sm text-on-surface group-hover:text-primary transition-colors">
+                    {srv.name}
+                  </span>
+                  <span className="text-xs text-on-surface-variant ml-auto">{srv.channels.length} ch</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
