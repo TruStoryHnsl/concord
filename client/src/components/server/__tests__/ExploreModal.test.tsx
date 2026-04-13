@@ -131,7 +131,7 @@ describe("<ExploreModal />", () => {
     expect(mockedListExploreServers).not.toHaveBeenCalled();
   });
 
-  it("excludes Discord bridge sources from the explore list", async () => {
+  it("does not render connected sources in the explore list", async () => {
     mockedListExploreServers.mockResolvedValueOnce([]);
     useSourcesStore.setState({
       sources: [
@@ -165,8 +165,11 @@ describe("<ExploreModal />", () => {
     render(<ExploreModal isOpen={true} onClose={() => {}} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Matrix Example")).toBeInTheDocument();
+      expect(
+        screen.getByText(/No federated servers yet/i),
+      ).toBeInTheDocument();
     });
+    expect(screen.queryByText("Matrix Example")).not.toBeInTheDocument();
     expect(screen.queryByText("Discord (Bot Bridge)")).not.toBeInTheDocument();
   });
 });
@@ -285,7 +288,7 @@ describe("<ExploreModal /> rooms drill-down", () => {
         screen.getByText(/Couldn't load public rooms/i),
       ).toBeInTheDocument();
     });
-    expect(screen.getByText(/rooms boom/)).toBeInTheDocument();
+    expect(screen.getAllByText(/rooms boom/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
 
     // Error toast pushed to the shared store.

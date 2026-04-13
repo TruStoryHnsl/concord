@@ -13,7 +13,7 @@
  *   discord-account   → Discord blurple (#5865F2), person icon
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSourcesStore, type ConcordSource } from "../../stores/sources";
 
 function sourceTile(source: ConcordSource): {
@@ -63,14 +63,25 @@ export function SourcesPanel({
   onExplore?: () => void;
 }) {
   const sources = useSourcesStore((s) => s.sources);
-  const [activeId, setActiveId] = useState<string | null>(
-    sources.length > 0 ? sources[0].id : null,
-  );
+  const toggleSource = useSourcesStore((s) => s.toggleSource);
+  const [menu, setMenu] = useState<{ sourceId: string; x: number; y: number } | null>(null);
 
-  const handleSelect = (id: string) => {
-    setActiveId(id);
+  useEffect(() => {
+    if (!menu) return;
+    const handleClose = () => setMenu(null);
+    window.addEventListener("click", handleClose);
+    window.addEventListener("contextmenu", handleClose);
+    window.addEventListener("keydown", handleClose);
+    return () => {
+      window.removeEventListener("click", handleClose);
+      window.removeEventListener("contextmenu", handleClose);
+      window.removeEventListener("keydown", handleClose);
+    };
+  }, [menu]);
+
+  const handleToggle = (id: string) => {
+    toggleSource(id);
     onSourceSelect?.(id);
-    onSourceOpen?.(id);
   };
 
   return (
@@ -95,7 +106,7 @@ export function SourcesPanel({
       <div className="flex-1 min-h-0 overflow-y-auto w-full flex flex-col items-center gap-2 py-1 scrollbar-none">
         {sources.map((source) => {
           const { bg, icon, label } = sourceTile(source);
-          const isActive = activeId === source.id;
+          const isEnabled = source.enabled;
           return (
             <div
               key={source.id}
@@ -104,16 +115,20 @@ export function SourcesPanel({
               {/* Active pill — white bar on the left edge */}
               <div
                 className={`absolute left-0 w-1 rounded-r-full bg-white transition-all duration-150 ${
-                  isActive ? "h-8 opacity-100" : "h-2 opacity-0 group-hover:opacity-60 group-hover:h-4"
+                  isEnabled ? "h-8 opacity-100" : "h-2 opacity-0 group-hover:opacity-60 group-hover:h-4"
                 }`}
               />
               <button
-                onClick={() => handleSelect(source.id)}
+                onClick={() => handleToggle(source.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setMenu({ sourceId: source.id, x: event.clientX, y: event.clientY });
+                }}
                 title={label}
                 className={`group w-10 h-10 flex items-center justify-center transition-all duration-150 ${bg} ${
-                  isActive
+                  isEnabled
                     ? "rounded-2xl shadow-lg scale-100"
-                    : "rounded-xl hover:rounded-2xl scale-95 hover:scale-100 opacity-80 hover:opacity-100"
+                    : "rounded-xl hover:rounded-2xl scale-95 hover:scale-100 opacity-50 hover:opacity-80 grayscale"
                 }`}
               >
                 {icon}
@@ -132,6 +147,46 @@ export function SourcesPanel({
           <span className="material-symbols-outlined text-xl">add</span>
         </button>
       </div>
+
+      {menu && (() => {
+        const source = sources.find((entry) => entry.id === menu.sourceId);
+        if (!source) return null;
+        return (
+          <div
+            className="fixed inset-0 z-50"
+            onClick={() => setMenu(null)}
+          >
+            <div
+              className="absolute min-w-44 rounded-xl border border-outline-variant/20 bg-surface-container shadow-2xl p-1"
+              style={{ left: menu.x, top: menu.y }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                onClick={() => {
+                  onSourceOpen?.(source.id);
+                  setMenu(null);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-container-high transition-colors"
+              >
+                <span className="material-symbols-outlined text-base">open_in_new</span>
+                Open source menu
+              </button>
+              <button
+                onClick={() => {
+                  handleToggle(source.id);
+                  setMenu(null);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-container-high transition-colors"
+              >
+                <span className="material-symbols-outlined text-base">
+                  {source.enabled ? "visibility_off" : "visibility"}
+                </span>
+                {source.enabled ? "Disable source" : "Enable source"}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { IPublicRoomsChunkRoom } from "matrix-js-sdk";
 import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
@@ -168,18 +168,6 @@ export function ExploreModal({ isOpen, onClose }: Props) {
   const [diagnostic, setDiagnostic] = useState<ExploreDiagnostic | null>(null);
   const fetchedThisOpenRef = useRef(false);
 
-  const browseableSources = useMemo(
-    () =>
-      sources.filter(
-        (source) =>
-          source.enabled &&
-          (source.platform === undefined ||
-            source.platform === "concord" ||
-            source.platform === "matrix"),
-      ),
-    [sources],
-  );
-
   // Close on Escape — mirrors the convention used by NewServerModal /
   // InviteModal so keyboard behavior stays consistent across the app.
   useEffect(() => {
@@ -198,37 +186,15 @@ export function ExploreModal({ isOpen, onClose }: Props) {
     }
     setServersState({ status: "loading" });
     try {
-      const apiEntries = await listExploreServers(accessToken);
-      // Merge connected sources into the server list. Sources are Concord
-      // instances the user has added — they're browseable Matrix homeservers
-      // even if they don't appear in the local federation allowlist.
-      const sourceDomains = new Set(apiEntries.map((e) => e.domain.toLowerCase()));
-      const sourceEntries: ExploreServerEntry[] = browseableSources
-        .filter((s) => !sourceDomains.has(s.host.toLowerCase()))
-        .map((s) => ({
-          domain: s.host,
-          name: s.instanceName ?? s.host,
-          description: "Connected source",
-        }));
-      setServersState({ status: "success", entries: [...sourceEntries, ...apiEntries] });
+      const entries = await listExploreServers(accessToken);
+      setServersState({ status: "success", entries });
     } catch (err) {
-      // API failed — fall back to just showing sources
-      const sourceEntries: ExploreServerEntry[] = browseableSources
-        .map((s) => ({
-          domain: s.host,
-          name: s.instanceName ?? s.host,
-          description: "Connected source",
-        }));
-      if (sourceEntries.length > 0) {
-        setServersState({ status: "success", entries: sourceEntries });
-      } else {
-        const message =
-          err instanceof Error ? err.message : "Failed to load federated servers";
-        setServersState({ status: "error", message });
-        addToast(message, "error");
-      }
+      const message =
+        err instanceof Error ? err.message : "Failed to load federated servers";
+      setServersState({ status: "error", message });
+      addToast(message, "error");
     }
-  }, [accessToken, addToast, browseableSources]);
+  }, [accessToken, addToast]);
 
   const loadRooms = useCallback(
     async (server: ExploreServerEntry) => {

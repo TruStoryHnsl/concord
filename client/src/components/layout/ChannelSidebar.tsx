@@ -32,6 +32,8 @@ interface ChannelSidebarProps {
   onServerTitleClick?: () => void;
 }
 
+const CHANNEL_ADMIN_TOGGLE_ICON = "edit";
+
 export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, onChannelSelect, onServerTitleClick }: ChannelSidebarProps) {
   const servers = useServerStore((s) => s.servers);
   const activeServerId = useServerStore((s) => s.activeServerId);
@@ -334,7 +336,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
                   }`}
                   title={showAdminControls ? "Hide admin controls" : "Show admin controls"}
                 >
-                  <span className="material-symbols-outlined text-sm">edit</span>
+                  <span className="material-symbols-outlined text-sm">{CHANNEL_ADMIN_TOGGLE_ICON}</span>
                 </button>
               )}
             </div>
@@ -367,7 +369,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
                   }`}
                   title={showAdminControls ? "Hide admin controls" : "Show admin controls"}
                 >
-                  <span className="material-symbols-outlined text-sm">settings</span>
+                  <span className="material-symbols-outlined text-sm">{CHANNEL_ADMIN_TOGGLE_ICON}</span>
                 </button>
               )}
             </div>

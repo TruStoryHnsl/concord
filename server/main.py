@@ -16,9 +16,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 
-from database import init_db
+from database import async_session, init_db
 from errors import ConcordError, ErrorResponse
 from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_bridges, admin_discord_voice, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown, extensions, rooms
+from services.discord_voice_config import write_voice_bridge_rooms
 
 
 @asynccontextmanager
@@ -300,6 +301,12 @@ async def lifespan(app: FastAPI):
                 """))
 
         await conn.run_sync(_migrate)
+
+    # Rebuild the Discord voice sidecar config from the DB on every API
+    # startup so the runtime file cannot stay stale after a crash,
+    # manual DB edit, or a prior failed admin flow.
+    async with async_session() as db:
+        await write_voice_bridge_rooms(db)
 
     # Initialize bot user for webhook message delivery
     from services.bot import init_bot
