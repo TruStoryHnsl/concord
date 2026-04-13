@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IPublicRoomsChunkRoom } from "matrix-js-sdk";
 import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
@@ -166,6 +166,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
   });
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ExploreDiagnostic | null>(null);
+  const fetchedThisOpenRef = useRef(false);
 
   const browseableSources = useMemo(
     () =>
@@ -259,18 +260,21 @@ export function ExploreModal({ isOpen, onClose }: Props) {
     [client, addToast, sources],
   );
 
-  // Refetch every time the modal opens. The list is small and
-  // federation allowlists change rarely, so a fresh fetch per open
-  // is the simplest correct behavior.
+  // Fetch exactly once per open-cycle. This avoids a class of bugs where
+  // callback identity churn retriggers the modal-open effect and hammers
+  // both the browser and `/api/explore/servers`.
   useEffect(() => {
-    if (isOpen) {
-      setView({ mode: "servers" });
-      setDiagnostic(null);
-      loadServers();
-    } else {
+    if (!isOpen) {
+      fetchedThisOpenRef.current = false;
       setServersState({ status: "idle" });
       setDiagnostic(null);
+      return;
     }
+    if (fetchedThisOpenRef.current) return;
+    fetchedThisOpenRef.current = true;
+    setView({ mode: "servers" });
+    setDiagnostic(null);
+    loadServers();
   }, [isOpen, loadServers]);
 
   const handleBrowseRooms = useCallback(
