@@ -31,7 +31,7 @@ import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
 import { ServerSidebar } from "./ServerSidebar";
 import { Avatar } from "../ui/Avatar";
-import { ChannelSidebar, UserBar } from "./ChannelSidebar";
+import { ChannelSidebar } from "./ChannelSidebar";
 import { DMSidebar } from "../dm/DMSidebar";
 import { ExploreModal } from "../server/ExploreModal";
 import { DiscordSourceBrowser } from "../sources/DiscordSourceBrowser";
@@ -494,35 +494,22 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
     return (
       <div className="h-full flex overflow-hidden bg-surface text-on-surface">
-        {/* LEFT STACK — sidebar columns + UserBar below. Collapses to zero width when hidden. */}
+        {/* LEFT STACK — sidebar columns. Collapses to zero width when hidden. */}
         {showSidebar && (
-          <>
-            <div className="flex flex-col min-h-0 flex-shrink-0">
-              {/* Columns row */}
-              <div className="flex min-h-0 flex-1">
-                <SilentBoundary>
-                  <ServerSidebar
-                    onAddSource={openAddSource}
-                    onExplore={openExplore}
-                    onSourceOpen={openSourceBrowser}
-                  />
-                </SilentBoundary>
+          <div className="flex min-h-0 flex-shrink-0">
+            <SilentBoundary>
+              <ServerSidebar
+                onAddSource={openAddSource}
+                onExplore={openExplore}
+                onSourceOpen={openSourceBrowser}
+              />
+            </SilentBoundary>
 
-                {/* Channel / DM sidebar */}
-                <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
-                  <SilentBoundary>
-                    {dmActive ? <DMSidebar /> : <ChannelSidebar />}
-                  </SilentBoundary>
-                </div>
-              </div>
-
-              {/* UserBar spans all columns */}
-              {userId && (
-                <UserBar
-                  userId={userId}
-                  logout={() => useAuthStore.getState().logout()}
-                />
-              )}
+            {/* Channel / DM sidebar */}
+            <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
+              <SilentBoundary>
+                {dmActive ? <DMSidebar /> : <ChannelSidebar />}
+              </SilentBoundary>
             </div>
 
             {/* Resize handle */}
@@ -530,7 +517,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               onMouseDown={handleResizeStart}
               className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
             />
-          </>
+          </div>
         )}
 
         {/* Main content */}

@@ -123,8 +123,10 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
     );
   }
 
+  const isSynthetic = !!server.bridgeType || !!server.federated;
   const isOwner = server.owner_id === userId;
-  const canManage = isOwner;
+  const canManage = isOwner && !isSynthetic;
+  const canDelete = isOwner || isSynthetic;
   const textChannels = server.channels.filter((c) => c.channel_type === "text");
   const voiceChannels = server.channels.filter((c) => c.channel_type === "voice");
 
@@ -344,7 +346,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
         {/* Server context menu */}
         {showServerMenu && (
           <div className="absolute top-full left-0 right-0 z-10 glass-panel rounded-xl shadow-lg mt-1 mx-2 overflow-hidden">
-            {isOwner ? (
+            {canDelete ? (
               confirmDeleteServer ? (
                 <div className="p-3 text-center">
                   <p className="text-xs text-error mb-2 font-body">Delete "{server.name}"?</p>
@@ -405,7 +407,7 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
                   }`}
                   title={showAdminControls ? "Hide admin controls" : "Show admin controls"}
                 >
-                  <span className="material-symbols-outlined text-sm">settings</span>
+                  <span className="material-symbols-outlined text-sm">edit</span>
                 </button>
               )}
             </div>
