@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { MatrixClient } from "matrix-js-sdk";
 import { ExploreModal } from "../ExploreModal";
 import { useAuthStore } from "../../../stores/auth";
+import { useSourcesStore } from "../../../stores/sources";
 import { useToastStore } from "../../../stores/toast";
 import * as concordApi from "../../../api/concord";
 
@@ -48,11 +49,16 @@ function resetToasts() {
   useToastStore.setState({ toasts: [] });
 }
 
+function resetSources() {
+  useSourcesStore.setState({ sources: [] });
+}
+
 describe("<ExploreModal />", () => {
   beforeEach(() => {
     mockedListExploreServers.mockReset();
     seedAuth();
     resetToasts();
+    resetSources();
   });
 
   it("renders federated peers from the API", async () => {
@@ -124,12 +130,52 @@ describe("<ExploreModal />", () => {
     expect(container).toBeEmptyDOMElement();
     expect(mockedListExploreServers).not.toHaveBeenCalled();
   });
+
+  it("excludes Discord bridge sources from the explore list", async () => {
+    mockedListExploreServers.mockResolvedValueOnce([]);
+    useSourcesStore.setState({
+      sources: [
+        {
+          id: "src_matrix",
+          host: "matrix.example.org",
+          instanceName: "Matrix Example",
+          inviteToken: "",
+          apiBase: "https://matrix.example.org/api",
+          homeserverUrl: "https://matrix.example.org",
+          status: "connected",
+          enabled: true,
+          addedAt: new Date().toISOString(),
+          platform: "matrix",
+        },
+        {
+          id: "src_discord",
+          host: "discord-bridge",
+          instanceName: "Discord (Bot Bridge)",
+          inviteToken: "",
+          apiBase: "",
+          homeserverUrl: "",
+          status: "connected",
+          enabled: true,
+          addedAt: new Date().toISOString(),
+          platform: "discord-bot",
+        },
+      ],
+    });
+
+    render(<ExploreModal isOpen={true} onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Matrix Example")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Discord (Bot Bridge)")).not.toBeInTheDocument();
+  });
 });
 
 describe("<ExploreModal /> rooms drill-down", () => {
   beforeEach(() => {
     mockedListExploreServers.mockReset();
     resetToasts();
+    resetSources();
     // The servers step always returns a single peer so every rooms test can
     // click straight through without re-asserting the servers list.
     mockedListExploreServers.mockResolvedValue([

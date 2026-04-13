@@ -167,6 +167,14 @@ export function ExploreModal({ isOpen, onClose }: Props) {
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ExploreDiagnostic | null>(null);
 
+  const browseableSources = sources.filter(
+    (source) =>
+      source.enabled &&
+      (source.platform === undefined ||
+        source.platform === "concord" ||
+        source.platform === "matrix"),
+  );
+
   // Close on Escape — mirrors the convention used by NewServerModal /
   // InviteModal so keyboard behavior stays consistent across the app.
   useEffect(() => {
@@ -191,7 +199,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
       // even if they don't appear in the local federation allowlist.
       const sourceDomains = new Set(apiEntries.map((e) => e.domain.toLowerCase()));
       const sourceEntries: ExploreServerEntry[] = sources
-        .filter((s) => s.enabled && !sourceDomains.has(s.host.toLowerCase()))
+        .filter((s) => browseableSources.includes(s) && !sourceDomains.has(s.host.toLowerCase()))
         .map((s) => ({
           domain: s.host,
           name: s.instanceName ?? s.host,
@@ -200,8 +208,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
       setServersState({ status: "success", entries: [...sourceEntries, ...apiEntries] });
     } catch (err) {
       // API failed — fall back to just showing sources
-      const sourceEntries: ExploreServerEntry[] = sources
-        .filter((s) => s.enabled)
+      const sourceEntries: ExploreServerEntry[] = browseableSources
         .map((s) => ({
           domain: s.host,
           name: s.instanceName ?? s.host,
@@ -216,7 +223,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
         addToast(message, "error");
       }
     }
-  }, [accessToken, addToast, sources]);
+  }, [accessToken, addToast, browseableSources, sources]);
 
   const loadRooms = useCallback(
     async (server: ExploreServerEntry) => {

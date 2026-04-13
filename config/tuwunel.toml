@@ -1,4 +1,4 @@
-]10;#cdd6f4\]11;#1e1e2e\]12;#cdd6f4\]4;0;#45475a\]4;8;#585b70\]4;1;#f38ba8\]4;9;#f38ba8\]4;2;#a6e3a1\]4;10;#a6e3a1\]4;3;#f9e2af\]4;11;#f9e2af\]4;4;#89b4fa\]4;12;#89b4fa\]4;5;#cba6f7\]4;13;#cba6f7\]4;6;#94e2d5\]4;14;#94e2d5\]4;7;#bac2de\]4;15;#a6adc8\# Tuwunel runtime configuration — Concord-managed.
+# Tuwunel runtime configuration - Concord-managed.
 # Federation keys are owned by server/services/tuwunel_config.py.
 # Appservice tables are owned by server/services/bridge_config.py.
 # Hand edits to managed keys will be overwritten on the next update.
@@ -24,4 +24,3 @@ regex = "@(discordbot|_discord_[^:]*):concorrd\\.com"
 [[global.appservice.concord_discord_2.aliases]]
 exclusive = true
 regex = "#_discord_.*"
-]10;#cdd6f4\]11;#1e1e2e\]12;#cdd6f4\]4;0;#45475a\]4;8;#585b70\]4;1;#f38ba8\]4;9;#f38ba8\]4;2;#a6e3a1\]4;10;#a6e3a1\]4;3;#f9e2af\]4;11;#f9e2af\]4;4;#89b4fa\]4;12;#89b4fa\]4;5;#cba6f7\]4;13;#cba6f7\]4;6;#94e2d5\]4;14;#94e2d5\]4;7;#bac2de\]4;15;#a6adc8\
