@@ -18,10 +18,11 @@
  *   4. Optionally send a test message to the portal room
  */
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
-import { discordBridgeHttpGetInviteUrl, discordBridgeHttpLoginRelay } from "../../api/bridges";
+import { useDMStore } from "../../stores/dm";
+import { discordBridgeHttpGetInviteUrl, discordBridgeHttpLoginRelay, discordBridgeHttpListGuilds } from "../../api/bridges";
 
 // ── Alias parser ────────────────────────────────────────────────────────────
 
@@ -36,6 +37,34 @@ function parseDiscordAlias(alias: string): DiscordAliasInfo | null {
   const m = alias.match(/^#_discord_(\d+)_(\d+):/);
   if (!m) return null;
   return { guildId: m[1], channelId: m[2] };
+}
+
+interface DiscordBridgeInfo extends DiscordAliasInfo {
+  networkName?: string;
+}
+
+/**
+ * Detect Discord bridge info from room state events.
+ * Reads guild/channel IDs from the state key and the guild name from
+ * the `network.displayname` field in the event content.
+ */
+function detectDiscordBridge(room: { currentState?: { getStateEvents?(type: string): unknown[] } }): DiscordBridgeInfo | null {
+  try {
+    const events = room.currentState?.getStateEvents?.("m.bridge") as
+      | { getStateKey?(): string; getContent?(): Record<string, unknown> }[]
+      | undefined;
+    if (!events?.length) return null;
+    for (const ev of events) {
+      const sk = ev.getStateKey?.() ?? "";
+      const m = sk.match(/fi\.mau\.discord:\/\/discord\/(\d+)\/(\d+)/);
+      if (m) {
+        const content = ev.getContent?.() ?? {};
+        const network = content.network as { displayname?: string } | undefined;
+        return { guildId: m[1], channelId: m[2], networkName: network?.displayname };
+      }
+    }
+  } catch { /* ignore SDK access errors */ }
+  return null;
 }
 
 // ── Wait for bridge portal ───────────────────────────────────────────────────
@@ -82,7 +111,9 @@ type Screen =
   | "link-test-msg"
   | "linking"
   | "done"
-  | "error";
+  | "error"
+  | "login-account"
+  | "bridge-guild";
 
 // ── Header ───────────────────────────────────────────────────────────────────
 
@@ -126,6 +157,8 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
   const setActiveChannel = useServerStore((s) => s.setActiveChannel);
+  const ensureDiscordGuild = useServerStore((s) => s.ensureDiscordGuild);
+  const setDMActive = useDMStore((s) => s.setDMActive);
 
   const accessToken = useAuthStore((s) => s.accessToken);
 
@@ -139,6 +172,11 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   // Invite URL — fetched lazily when the invite-bot screen is opened.
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [inviteUrlLoading, setInviteUrlLoading] = useState(false);
+
+  // Discord guilds — fetched when bridge-guild screen opens
+  const [discordGuilds, setDiscordGuilds] = useState<{ id: string; name: string; icon: string | null }[]>([]);
+  const [guildsLoading, setGuildsLoading] = useState(false);
+  const [bridgingGuildId, setBridgingGuildId] = useState<string | null>(null);
 
   const openInviteScreen = useCallback(async () => {
     setScreen("invite-bot");
@@ -158,39 +196,56 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
 
   // ── Build bridged-room list ────────────────────────────────────────────────
 
+  // Resolved guild names fetched from Discord API for fallback "Guild <id>" labels.
+  const [resolvedGuildNames, setResolvedGuildNames] = useState<Map<string, string>>(new Map());
+
   const guildGroups: GuildGroup[] = useMemo(() => {
     if (!client) return [];
 
-    const bridgedRooms: BridgedChannel[] = [];
+    const bridgedRooms: (BridgedChannel & { networkName?: string })[] = [];
     for (const room of client.getRooms()) {
       if (room.getMyMembership() !== "join") continue;
+      // Only trust rooms with a proper mautrix-discord canonical alias
+      // (#_discord_<guildId>_<channelId>:<server>). mautrix always sets this
+      // on real portal rooms. Rooms detected only via m.bridge state events
+      // (no alias) are management DMs or accidentally-bridged rooms — skip them.
       const alias = room.getCanonicalAlias() ?? "";
-      const info = parseDiscordAlias(alias);
-      if (!info) continue;
+      const parsed = parseDiscordAlias(alias);
+      if (!parsed) continue;
+      const info: DiscordBridgeInfo = {
+        ...parsed,
+        networkName: detectDiscordBridge(room)?.networkName,
+      };
       bridgedRooms.push({
         roomId: room.roomId,
         name: room.name ?? `#${info.channelId}`,
         guildId: info.guildId,
         channelId: info.channelId,
+        networkName: info.networkName,
       });
     }
 
-    // Group by guild. Try to find guild name from a space room.
+    // Group by guild. Derive name from m.bridge network.displayname,
+    // space room, or fall back to guild ID.
     const guildMap = new Map<string, GuildGroup>();
     for (const ch of bridgedRooms) {
       if (!guildMap.has(ch.guildId)) {
-        // Look for a space room that's the parent of this channel
-        const spaceRoom = client.getRooms().find((r) => {
-          const alias = r.getCanonicalAlias() ?? "";
-          // Guild spaces have aliases like #_discord_<guildId>:<server>
-          return (
-            r.getType?.() === "m.space" &&
-            alias.match(new RegExp(`^#_discord_${ch.guildId}:`))
-          );
-        });
+        // Prefer network name from bridge state event
+        let guildName = ch.networkName;
+        if (!guildName) {
+          // Fall back to space room name
+          const spaceRoom = client.getRooms().find((r) => {
+            const alias = r.getCanonicalAlias() ?? "";
+            return (
+              r.getType?.() === "m.space" &&
+              alias.match(new RegExp(`^#_discord_${ch.guildId}:`))
+            );
+          });
+          guildName = spaceRoom?.name;
+        }
         guildMap.set(ch.guildId, {
           guildId: ch.guildId,
-          guildName: spaceRoom?.name ?? `Guild ${ch.guildId}`,
+          guildName: guildName ?? `Guild ${ch.guildId}`,
           channels: [],
         });
       }
@@ -202,14 +257,72 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     );
   }, [client]);
 
+  // Eagerly resolve any guild still showing "Guild <id>" fallback names.
+  useEffect(() => {
+    const fallback = guildGroups.filter(
+      (g) => g.guildName.startsWith("Guild ") && !resolvedGuildNames.has(g.guildId),
+    );
+    if (!fallback.length || !accessToken) return;
+    discordBridgeHttpListGuilds(accessToken)
+      .then((guilds) => {
+        setResolvedGuildNames((prev) => {
+          const next = new Map(prev);
+          for (const g of fallback) {
+            const match = guilds.find((dg) => dg.id === g.guildId);
+            if (match) next.set(g.guildId, match.name);
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guildGroups, accessToken]);
+
+  // Apply resolved names on top of computed groups.
+  const resolvedGroups = useMemo(
+    () =>
+      guildGroups.map((g) =>
+        resolvedGuildNames.has(g.guildId)
+          ? { ...g, guildName: resolvedGuildNames.get(g.guildId)! }
+          : g,
+      ),
+    [guildGroups, resolvedGuildNames],
+  );
+
   // ── Navigate to a bridged room ─────────────────────────────────────────────
 
   const navigateTo = useCallback(
-    (roomId: string) => {
-      setActiveChannel(roomId);
+    async (roomId: string) => {
+      setDMActive(false);
+
+      const channel = resolvedGroups
+        .flatMap((g) => g.channels.map((ch) => ({ ...ch, guildName: g.guildName })))
+        .find((ch) => ch.roomId === roomId);
+
+      if (channel) {
+        let guildName = channel.guildName;
+
+        // If guild name is a fallback like "Guild 123...", fetch the real name
+        if (guildName.startsWith("Guild ") && accessToken) {
+          try {
+            const guilds = await discordBridgeHttpListGuilds(accessToken);
+            const match = guilds.find((g) => g.id === channel.guildId);
+            if (match) guildName = match.name;
+          } catch { /* keep fallback */ }
+        }
+
+        ensureDiscordGuild({
+          guildId: channel.guildId,
+          guildName,
+          channel: { roomId: channel.roomId, name: channel.name },
+        });
+      } else {
+        setActiveChannel(roomId);
+      }
+
       onClose();
     },
-    [setActiveChannel, onClose],
+    [setDMActive, setActiveChannel, ensureDiscordGuild, resolvedGroups, accessToken, onClose],
   );
 
   // ── Link flow ─────────────────────────────────────────────────────────────
@@ -235,52 +348,31 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       const serverDomain = userId.includes(":") ? userId.split(":")[1] : "";
       const botUserId = `@discordbot:${serverDomain}`;
 
-      // Find existing DM room with the bridge bot.
-      // We look for a small (≤2 member) room that is NOT a Discord bridge
-      // room (no _discord_ alias) and contains the bot user.
-      let dmRoomId: string | null = null;
-      for (const room of client.getRooms()) {
-        if (room.getMyMembership() !== "join") continue;
-        const alias = room.getCanonicalAlias() ?? "";
-        if (alias.includes("_discord_")) continue;
-        const members = room.getJoinedMembers();
-        if (
-          members.length <= 2 &&
-          members.some((m) => m.userId === botUserId)
-        ) {
-          dmRoomId = room.roomId;
-          break;
-        }
-      }
+      // Create a FRESH room for this bridge command. mautrix-discord's
+      // `bridge` command turns the CURRENT room into the portal for the
+      // specified channel. We must NOT send it in the management DM or
+      // any existing portal — each channel needs its own dedicated room.
+      const bridgeRoom = await client.createRoom({
+        invite: [botUserId],
+        // @ts-expect-error — matrix-js-sdk accepts string literal
+        preset: "trusted_private_chat",
+      });
+      const bridgeRoomId = bridgeRoom.room_id;
+      // Wait for the bot to accept the invite
+      await new Promise((r) => setTimeout(r, 2000));
 
-      // Create DM room if none found
-      if (!dmRoomId) {
-        const created = await client.createRoom({
-          is_direct: true,
-          invite: [botUserId],
-          // @ts-expect-error — matrix-js-sdk accepts string literal
-          preset: "trusted_private_chat",
-        });
-        dmRoomId = created.room_id;
-        // Brief pause for the bridge bot to join
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-
-      // Ensure the bridge bot is logged into Discord. mautrix-discord v0.7.2
-      // requires an explicit login-token command before processing bridge commands.
-      // Fire-and-forget — if this fails (already logged in, no token) proceed anyway.
+      // Ensure the bridge bot is logged into Discord.
       if (accessToken) {
         try {
           await discordBridgeHttpLoginRelay(accessToken);
-          // Give the Discord gateway handshake time to complete.
           await new Promise((r) => setTimeout(r, 4000));
         } catch {
           // Non-fatal — bridge may already be logged in from a previous session.
         }
       }
 
-      // Send the bridge command
-      await client.sendTextMessage(dmRoomId, `bridge ${trimmedId}`);
+      // Send the bridge command in the dedicated room
+      await client.sendTextMessage(bridgeRoomId, `bridge ${trimmedId}`);
 
       // Wait for the portal room to be created
       const portal = await waitForPortal(client, trimmedId);
@@ -319,7 +411,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           <>
             <Header title="Discord Bridge" onClose={onClose} />
             <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
-              {guildGroups.length === 0 ? (
+              {resolvedGroups.length === 0 ? (
                 /* Empty state: guide the user through the prerequisite steps */
                 <div className="space-y-3 py-2">
                   <div className="rounded-xl border border-[#5865F2]/30 bg-[#5865F2]/5 p-4 space-y-3">
@@ -350,7 +442,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {guildGroups.map((guild) => (
+                  {resolvedGroups.map((guild) => (
                     <div key={guild.guildId}>
                       <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-1.5 px-1">
                         {guild.guildName}
@@ -376,19 +468,39 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             </div>
             <div className="mt-4 pt-4 border-t border-outline-variant/10 flex-shrink-0 space-y-2">
               <button
-                onClick={() => setScreen("link-channel-id")}
+                onClick={async () => {
+                  setScreen("bridge-guild");
+                  if (accessToken) {
+                    setGuildsLoading(true);
+                    try {
+                      const guilds = await discordBridgeHttpListGuilds(accessToken);
+                      setDiscordGuilds(guilds);
+                    } catch (err) {
+                      console.error("Failed to load guilds:", err);
+                    }
+                    setGuildsLoading(false);
+                  }
+                }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-colors"
               >
-                <span className="material-symbols-outlined text-base">add_link</span>
-                Link Discord Channel
+                <span className="material-symbols-outlined text-base">dns</span>
+                Bridge Discord Server
               </button>
               {/* "Add bot to another server" — secondary action, always visible */}
               <button
                 onClick={openInviteScreen}
                 className="w-full flex items-center justify-center gap-2 py-2 rounded-xl hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface text-xs transition-colors"
               >
-                <span className="material-symbols-outlined text-sm">person_add</span>
-                Add bot to {guildGroups.length > 0 ? "another" : "a"} Discord server
+                <span className="material-symbols-outlined text-sm">smart_toy</span>
+                Add bot to {resolvedGroups.length > 0 ? "another" : "a"} Discord server
+              </button>
+              {/* Connect personal Discord account */}
+              <button
+                onClick={() => setScreen("login-account" as Screen)}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface text-xs transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">person</span>
+                Connect your Discord account
               </button>
             </div>
           </>
@@ -448,6 +560,162 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
               >
                 Bot is in my server →
               </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Connect personal Discord account ── */}
+        {screen === "login-account" && (
+          <>
+            <Header
+              title="Connect Your Account"
+              onBack={() => setScreen("browse")}
+              onClose={onClose}
+            />
+            <div className="space-y-4">
+              <div className="rounded-xl border border-[#5865F2]/20 bg-[#5865F2]/5 p-4">
+                <p className="text-sm text-on-surface mb-3">
+                  Connect your personal Discord account so your messages appear
+                  under your own name instead of through the bot relay.
+                </p>
+                <p className="text-xs text-on-surface-variant mb-1 font-medium">
+                  Both run in parallel — the bot relay handles everyone else.
+                </p>
+              </div>
+              <ol className="text-sm text-on-surface-variant list-decimal list-inside space-y-2.5 px-1">
+                <li>
+                  Open a DM with{" "}
+                  <code className="bg-surface-container-highest px-1.5 py-0.5 rounded text-on-surface text-xs">
+                    @discordbot
+                  </code>
+                </li>
+                <li>
+                  Send the message <strong className="text-on-surface">login</strong>
+                </li>
+                <li>The bot replies with a QR code</li>
+                <li>
+                  Discord mobile → <strong className="text-on-surface">Settings → Scan QR Code</strong>
+                </li>
+              </ol>
+              <div className="pt-2">
+                <button
+                  onClick={() => {
+                    // Navigate to DM with discordbot
+                    if (client && userId) {
+                      const serverDomain = userId.split(":")[1] ?? "";
+                      const botUserId = `@discordbot:${serverDomain}`;
+                      const dmRoom = client.getRooms().find((r) => {
+                        if (r.getMyMembership() !== "join") return false;
+                        const alias = r.getCanonicalAlias() ?? "";
+                        if (alias.includes("_discord_")) return false;
+                        return r.getJoinedMembers().some((m) => m.userId === botUserId);
+                      });
+                      if (dmRoom) {
+                        setDMActive(true);
+                        const { setActiveDM } = useDMStore.getState();
+                        setActiveDM(dmRoom.roomId);
+                        onClose();
+                        return;
+                      }
+                    }
+                    onClose();
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">chat</span>
+                  Open DM with @discordbot
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── Bridge entire guild ── */}
+        {screen === "bridge-guild" && (
+          <>
+            <Header title="Bridge Discord Server" onBack={() => setScreen("browse")} onClose={onClose} />
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
+              {guildsLoading ? (
+                <div className="flex items-center justify-center py-8 gap-2 text-on-surface-variant">
+                  <span className="inline-block w-4 h-4 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
+                  Loading servers...
+                </div>
+              ) : discordGuilds.length === 0 ? (
+                <p className="text-sm text-on-surface-variant text-center py-8">
+                  No Discord servers found. Make sure the bot is invited to at least one server.
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  {discordGuilds.map((guild) => {
+                    const alreadyBridged = resolvedGroups.some((g) => g.guildId === guild.id);
+                    const isBridging = bridgingGuildId === guild.id;
+                    return (
+                      <div
+                        key={guild.id}
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#5865F2]/10 transition-colors"
+                      >
+                        <div className="w-9 h-9 rounded-lg bg-[#5865F2]/20 flex items-center justify-center text-[#5865F2] text-sm font-bold flex-shrink-0">
+                          {guild.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-on-surface font-medium truncate">{guild.name}</p>
+                          <p className="text-xs text-on-surface-variant">{guild.id}</p>
+                        </div>
+                        {alreadyBridged ? (
+                          <span className="text-xs text-green-500 font-medium">Bridged</span>
+                        ) : (
+                          <button
+                            disabled={isBridging}
+                            onClick={async () => {
+                              if (!client || !userId) return;
+                              setBridgingGuildId(guild.id);
+                              try {
+                                // Find or create DM with discordbot for management commands
+                                const serverDomain = userId.split(":")[1] ?? "";
+                                const botUserId = `@discordbot:${serverDomain}`;
+                                let mgmtRoom: string | null = null;
+                                for (const room of client.getRooms()) {
+                                  if (room.getMyMembership() !== "join") continue;
+                                  if (room.getCanonicalAlias()?.includes("_discord_")) continue;
+                                  const members = room.getJoinedMembers();
+                                  if (members.length <= 2 && members.some((m) => m.userId === botUserId)) {
+                                    mgmtRoom = room.roomId;
+                                    break;
+                                  }
+                                }
+                                if (!mgmtRoom) {
+                                  const created = await client.createRoom({
+                                    is_direct: true,
+                                    invite: [botUserId],
+                                    // @ts-expect-error — matrix-js-sdk accepts string literal
+                                    preset: "trusted_private_chat",
+                                  });
+                                  mgmtRoom = created.room_id;
+                                  await new Promise((r) => setTimeout(r, 2000));
+                                }
+                                // Send guilds bridge command
+                                await client.sendTextMessage(mgmtRoom, `guilds bridge ${guild.id}`);
+                                // Wait for rooms to appear
+                                await new Promise((r) => setTimeout(r, 5000));
+                                // Refresh guild groups by closing and reopening
+                                setScreen("browse");
+                              } catch (err) {
+                                setError(err instanceof Error ? err.message : "Failed to bridge guild");
+                                setScreen("error");
+                              } finally {
+                                setBridgingGuildId(null);
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-[#5865F2] hover:bg-[#4752c4] text-white text-xs rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {isBridging ? "Bridging..." : "Bridge"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </>
         )}
