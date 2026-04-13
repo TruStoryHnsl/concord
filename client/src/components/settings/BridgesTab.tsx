@@ -1200,7 +1200,7 @@ function DiscordVoiceBridgeSection({ accessToken }: { accessToken: string }) {
             disabled={busy}
             className="px-3 py-1.5 bg-primary/10 hover:bg-primary/15 text-primary text-xs rounded-md transition-colors disabled:opacity-40 min-h-[32px]"
           >
-            Restart voice
+            Reload bridge
           </button>
           <button
             type="button"

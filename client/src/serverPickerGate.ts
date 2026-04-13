@@ -34,10 +34,8 @@
  */
 
 export interface GateInputs {
-  /** True when running inside a Tauri webview (desktop OR mobile). */
-  isDesktop: boolean;
-  /** True when the viewport / UA indicates a mobile device. */
-  isMobile: boolean;
+  /** True when running inside a native Tauri shell (desktop OR mobile). */
+  isNative: boolean;
   /** True when the INS-027 serverConfig store has a HomeserverConfig. */
   hasNewConfig: boolean;
 }
@@ -48,17 +46,18 @@ export interface GateInputs {
  * picker should be shown first.
  */
 export function computeInitialServerConnected(inputs: GateInputs): boolean {
-  const { isDesktop, isMobile, hasNewConfig } = inputs;
+  const { isNative, hasNewConfig } = inputs;
 
   // A HomeserverConfig already persisted → user completed the picker
   // before. Proceed to the normal shell.
   if (hasNewConfig) return true;
 
-  // Desktop web (non-Tauri, non-mobile) is implicitly "connected" to
-  // whatever origin served it — no picker needed.
-  if (!isDesktop && !isMobile) return true;
+  // Web builds are implicitly "connected" to whatever origin served
+  // them. That includes mobile browsers — only native shells use the
+  // host/join picker.
+  if (!isNative) return true;
 
-  // Native apps (Tauri desktop, Tauri mobile, mobile web) with no
-  // persisted config → always start hollow on the Join/Host picker.
+  // Native apps (Tauri desktop or mobile) with no persisted config →
+  // always start hollow on the Join/Host picker.
   return false;
 }

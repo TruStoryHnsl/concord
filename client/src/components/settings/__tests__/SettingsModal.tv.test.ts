@@ -16,11 +16,10 @@
  * Contract points covered:
  *   1. `isTV` is pulled off the usePlatform flag bag.
  *   2. A shared `tvFocusProps` helper exists so all three button
- *      groups (user tabs, admin tab, server tabs) and the Logout
- *      button stay consistent.
- *   3. Every tab button and the Logout button spread `tvFocusProps`.
- *      The count of spreads matches the three button groups + Logout
- *      (minimum 4, more is fine if future additions show up).
+ *      groups (user tabs, admin tab, server tabs) stay consistent.
+ *   3. Every tab button group spreads `tvFocusProps`.
+ *      The count of spreads matches the three button groups
+ *      (minimum 3, more is fine if future additions show up).
  *   4. The helper contains both `data-focusable` and `data-focus-group="tv-main"`.
  */
 
@@ -51,12 +50,12 @@ describe("SettingsPanel TV-mode wiring (INS-023)", () => {
     );
   });
 
-  it("spreads tvFocusProps on every tab button group and on Logout (>=4 spreads)", () => {
+  it("spreads tvFocusProps on every tab button group (>=3 spreads)", () => {
     const matches = settingsModalSource.match(/\{\.\.\.tvFocusProps\}/g) ?? [];
-    // 3 tab buttons (user, admin, server) + 1 Logout = 4 minimum.
+    // 3 tab button groups (user, admin, server) = 3 minimum.
     // Using >= so future additions (e.g. overflow menu) don't break
     // the assertion while still catching accidental removals.
-    expect(matches.length).toBeGreaterThanOrEqual(4);
+    expect(matches.length).toBeGreaterThanOrEqual(3);
   });
 
   it("does NOT apply data-focusable unconditionally (non-TV must stay attribute-free)", () => {

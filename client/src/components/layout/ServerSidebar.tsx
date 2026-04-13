@@ -40,9 +40,7 @@ import { NewServerModal } from "../server/NewServerModal";
  * room id).
  */
 const SERVER_ORDER_STORAGE_KEY_PREFIX = "concord_server_order";
-// Separate persistence bucket for the vanilla Matrix federated
-// stack at the bottom of the sidebar. Stored independently from the
-// main list so the two drag orderings don't interfere — the main
+const ADD_SERVER_TILE_ID = "__add_server_tile__";
 
 function readStoredOrder(
   prefix: string,
@@ -80,6 +78,25 @@ const readStoredServerOrder = (userId: string | null) =>
 const writeStoredServerOrder = (userId: string | null, order: string[]) =>
   writeStoredOrder(SERVER_ORDER_STORAGE_KEY_PREFIX, userId, order);
 
+function normalizeServerOrder(serverIds: string[], stored: string[] | null): string[] {
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const id of stored ?? []) {
+    if (id !== ADD_SERVER_TILE_ID && !serverIds.includes(id)) continue;
+    if (seen.has(id)) continue;
+    next.push(id);
+    seen.add(id);
+  }
+  for (const id of serverIds) {
+    if (!seen.has(id)) {
+      next.push(id);
+      seen.add(id);
+    }
+  }
+  if (!seen.has(ADD_SERVER_TILE_ID)) next.push(ADD_SERVER_TILE_ID);
+  return next;
+}
+
 interface ServerSidebarProps {
   mobile?: boolean;
   onServerSelect?: () => void;
@@ -102,11 +119,16 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // INS-002B: user-preferred order, loaded from localStorage keyed on the
   // current user id. Held in state so drag operations can optimistically
   // update it without waiting for the next storage read.
-  const [preferredOrder, setPreferredOrder] = useState<string[] | null>(() =>
-    readStoredServerOrder(currentUserId),
+  const [preferredOrder, setPreferredOrder] = useState<string[]>(() =>
+    normalizeServerOrder([], readStoredServerOrder(currentUserId)),
   );
   useEffect(() => {
-    setPreferredOrder(readStoredServerOrder(currentUserId));
+    setPreferredOrder((current) =>
+      normalizeServerOrder(
+        current.filter((id) => id !== ADD_SERVER_TILE_ID),
+        readStoredServerOrder(currentUserId),
+      ),
+    );
   }, [currentUserId]);
 
   // Parallel state for the vanilla Matrix federated stack (bottom
@@ -186,11 +208,12 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // handled separately and do NOT participate in drag-reorder —
   // their position is deterministic from join order.
   const orderedServers = useMemo(() => {
-    if (!preferredOrder || preferredOrder.length === 0) return localServers;
+    if (preferredOrder.length === 0) return localServers;
     const byId = new Map(localServers.map((s) => [s.id, s] as const));
     const placed: typeof localServers = [];
     const placedIds = new Set<string>();
     for (const id of preferredOrder) {
+      if (id === ADD_SERVER_TILE_ID) continue;
       const srv = byId.get(id);
       if (srv) {
         placed.push(srv);
@@ -234,6 +257,50 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
       .reverse();
   }, [federatedServers]);
 
+  const visibleServers = useMemo(() => {
+    const byId = new Map<string, (typeof servers)[number]>();
+    for (const server of orderedServers) byId.set(server.id, server);
+    for (const entry of federatedStack) byId.set(entry.server.id, entry.server);
+    return [...byId.values()];
+  }, [federatedStack, orderedServers, servers]);
+
+  const railOrder = useMemo(
+    () =>
+      normalizeServerOrder(
+        visibleServers.map((server) => server.id),
+        preferredOrder,
+      ),
+    [preferredOrder, visibleServers],
+  );
+
+  useEffect(() => {
+    const next = normalizeServerOrder(
+      visibleServers.map((server) => server.id),
+      preferredOrder,
+    );
+    if (
+      next.length !== preferredOrder.length ||
+      next.some((id, index) => preferredOrder[index] !== id)
+    ) {
+      setPreferredOrder(next);
+    }
+    writeStoredServerOrder(currentUserId, next);
+  }, [currentUserId, preferredOrder, visibleServers]);
+
+  const topRailIds = useMemo(() => {
+    const split = railOrder.indexOf(ADD_SERVER_TILE_ID);
+    return split === -1 ? railOrder : railOrder.slice(0, split);
+  }, [railOrder]);
+  const bottomRailIds = useMemo(() => {
+    const split = railOrder.indexOf(ADD_SERVER_TILE_ID);
+    return split === -1 ? [ADD_SERVER_TILE_ID] : railOrder.slice(split);
+  }, [railOrder]);
+
+  const getRailServer = useCallback(
+    (id: string) => visibleServers.find((server) => server.id === id),
+    [visibleServers],
+  );
+
   // dnd-kit sensors — platform-specific.
   // Mobile: ONLY TouchSensor with 1-second hold. PointerSensor must NOT
   // be registered on touch devices because it fires at 5px movement,
@@ -254,15 +321,14 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const oldIndex = orderedServers.findIndex((s) => s.id === active.id);
-      const newIndex = orderedServers.findIndex((s) => s.id === over.id);
+      const oldIndex = railOrder.findIndex((id) => id === active.id);
+      const newIndex = railOrder.findIndex((id) => id === over.id);
       if (oldIndex === -1 || newIndex === -1) return;
-      const next = arrayMove(orderedServers, oldIndex, newIndex);
-      const nextIds = next.map((s) => s.id);
-      setPreferredOrder(nextIds);
-      writeStoredServerOrder(currentUserId, nextIds);
+      const next = arrayMove(railOrder, oldIndex, newIndex);
+      setPreferredOrder(next);
+      writeStoredServerOrder(currentUserId, next);
     },
-    [orderedServers, currentUserId],
+    [currentUserId, railOrder],
   );
 
   // Drag-end handler for the vanilla Matrix federated stack. Same
@@ -332,17 +398,253 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     setDMActive(true);
   };
 
+  const renderMobileRailItem = (id: string) => {
+    if (id === ADD_SERVER_TILE_ID) {
+      return (
+        <SortableServerRow key={id} id={id} orientation="row">
+          <button
+            onClick={() => setShowNewServer(true)}
+            className="btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-on-surface-variant hover:text-secondary hover:bg-secondary/5 transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+              <span className="material-symbols-outlined text-xl">add</span>
+            </div>
+            <span className="font-body font-medium">Add Server</span>
+          </button>
+        </SortableServerRow>
+      );
+    }
+
+    const server = getRailServer(id);
+    if (!server) return null;
+    const isActive = !dmActive && activeServerId === server.id;
+    const hasUnreads =
+      !isActive &&
+      server.channels.some((channel) => (unreadCounts.get(channel.matrix_room_id) ?? 0) > 0);
+    const hasHighlight = hasHighlightByServer.get(server.id) ?? false;
+    const isFromConcordFederation = concordFederatedIds.has(server.id);
+    const isDiscordBridge = server.bridgeType === "discord";
+    const isDisconnected = !syncing;
+    const statusDot = isDisconnected
+      ? "red"
+      : hasHighlight
+        ? "yellow"
+        : hasUnreads
+          ? "unread"
+          : null;
+
+    return (
+      <SortableServerRow key={server.id} id={server.id} orientation="row">
+        <button
+          onClick={() => handleServerClick(server.id)}
+          title={
+            isDisconnected
+              ? `${server.name} (disconnected)`
+              : isDiscordBridge
+                ? `${server.name} — Discord bridge`
+                : isFromConcordFederation
+                  ? `${server.name} — another Concord instance`
+                  : server.name
+          }
+          className={`btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl transition-all ${
+            isDisconnected ? "opacity-50 grayscale" : ""
+          } ${
+            isActive
+              ? isDiscordBridge
+                ? "bg-[#5865F2]/10 text-[#5865F2]"
+                : isFromConcordFederation
+                  ? "bg-secondary/10 text-secondary"
+                  : "bg-primary/10 text-primary"
+              : "text-on-surface hover:bg-surface-container-high"
+          }`}
+        >
+          <div className="relative flex-shrink-0">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-headline font-bold ${
+              isActive
+                ? isDiscordBridge
+                  ? "bg-[#5865F2] text-white"
+                  : isFromConcordFederation
+                    ? "bg-secondary text-on-secondary"
+                    : "primary-glow text-on-primary"
+                : isDiscordBridge
+                  ? "bg-[#5865F2]/15 text-[#5865F2] ring-1 ring-[#5865F2]/40"
+                  : isFromConcordFederation
+                    ? "bg-secondary/15 text-secondary ring-1 ring-secondary/40"
+                    : "bg-surface-container-highest text-on-surface-variant"
+            }`}>
+              {server.abbreviation || server.name.charAt(0).toUpperCase()}
+            </div>
+            {isDiscordBridge && (
+              <div
+                className="absolute -top-1 -left-1 w-4 h-4 bg-[#5865F2] rounded-full border-2 border-surface-container-low flex items-center justify-center"
+                aria-label="Discord bridge"
+              >
+                <span
+                  className="font-headline font-bold text-white"
+                  style={{ fontSize: "8px", lineHeight: 1 }}
+                >
+                  D
+                </span>
+              </div>
+            )}
+            {isFromConcordFederation && !isDiscordBridge && (
+              <div
+                className="absolute -top-1 -left-1 w-4 h-4 bg-secondary rounded-full border-2 border-surface-container-low flex items-center justify-center"
+                aria-label="Another Concord instance (federated)"
+              >
+                <span
+                  className="font-headline font-bold text-on-secondary"
+                  style={{ fontSize: "8px", lineHeight: 1 }}
+                >
+                  C
+                </span>
+              </div>
+            )}
+          </div>
+          <span className="truncate font-body font-medium">{server.name}</span>
+          {isDiscordBridge && (
+            <span className="text-[10px] uppercase tracking-wider text-[#5865F2]/80 font-label ml-1">
+              discord
+            </span>
+          )}
+          {isFromConcordFederation && !isDiscordBridge && (
+            <span className="text-[10px] uppercase tracking-wider text-secondary/80 font-label ml-1">
+              concord federated
+            </span>
+          )}
+          {statusDot === "red" && (
+            <div
+              className="w-2.5 h-2.5 rounded-full bg-error ml-auto flex-shrink-0"
+              aria-label="Disconnected"
+            />
+          )}
+          {statusDot === "yellow" && (
+            <div
+              className="w-2.5 h-2.5 rounded-full bg-yellow-500 ml-auto flex-shrink-0 node-pulse"
+              aria-label="Needs attention"
+            />
+          )}
+          {statusDot === "unread" && (
+            <div
+              className="w-2.5 h-2.5 rounded-full bg-primary ml-auto flex-shrink-0 node-pulse"
+              aria-label="Unread messages"
+            />
+          )}
+        </button>
+      </SortableServerRow>
+    );
+  };
+
+  const renderDesktopRailItem = (id: string) => {
+    if (id === ADD_SERVER_TILE_ID) {
+      return (
+        <SortableServerRow key={id} id={id} orientation="icon">
+          <button
+            onClick={() => setShowNewServer(true)}
+            title="Add Server"
+            className="btn-press w-12 h-12 rounded-2xl bg-surface-container-high text-on-surface-variant hover:bg-secondary/10 hover:text-secondary hover:rounded-xl flex items-center justify-center transition-all flex-shrink-0"
+          >
+            <span className="material-symbols-outlined text-xl">add</span>
+          </button>
+        </SortableServerRow>
+      );
+    }
+
+    const server = getRailServer(id);
+    if (!server) return null;
+    const isActive = !dmActive && activeServerId === server.id;
+    const hasUnreads = !isActive && server.channels.some(
+      (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
+    );
+    const hasHighlight = hasHighlightByServer.get(server.id) ?? false;
+    const isFromConcordFederation = concordFederatedIds.has(server.id);
+    const isDiscordBridge = server.bridgeType === "discord";
+    const isDisconnected = !syncing;
+    const statusDot = isDisconnected
+      ? "red"
+      : hasHighlight
+        ? "yellow"
+        : hasUnreads
+          ? "unread"
+          : null;
+
+    return (
+      <SortableServerRow key={server.id} id={server.id} orientation="icon">
+        <div
+          className={`relative group ${
+            isDisconnected ? "opacity-55 grayscale" : ""
+          }`}
+        >
+          <button
+            onClick={() => handleServerClick(server.id)}
+            title={
+              isDisconnected
+                ? `${server.name} — disconnected`
+                : isDiscordBridge
+                  ? `${server.name} — Discord`
+                  : server.name
+            }
+            aria-label={server.name}
+            className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
+              isActive
+                ? isDiscordBridge
+                  ? "bg-[#5865F2] text-white rounded-xl shadow-[0_0_12px_rgba(88,101,242,0.4)]"
+                  : isFromConcordFederation
+                    ? "bg-secondary text-on-secondary rounded-xl shadow-[0_0_12px_rgba(120,220,180,0.35)]"
+                    : "primary-glow text-on-primary rounded-xl"
+                : isDiscordBridge
+                  ? "bg-[#5865F2]/20 text-[#5865F2] rounded-2xl hover:rounded-xl hover:bg-[#5865F2]/35 ring-1 ring-[#5865F2]/40"
+                  : isFromConcordFederation
+                    ? "bg-secondary/15 text-secondary rounded-2xl hover:rounded-xl hover:bg-secondary/25 ring-1 ring-secondary/40"
+                    : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl hover:bg-surface-container-highest hover:text-on-surface"
+            }`}
+          >
+            {server.abbreviation || server.name.charAt(0).toUpperCase()}
+          </button>
+          {(isDiscordBridge || isFromConcordFederation) && (
+            <div
+              className={`absolute -top-0.5 -left-0.5 w-4 h-4 rounded-full border-2 border-surface flex items-center justify-center ${
+                isDiscordBridge ? "bg-[#5865F2]" : "bg-secondary"
+              }`}
+              aria-hidden="true"
+            >
+              {isDiscordBridge ? (
+                <span className="material-symbols-outlined text-white" style={{ fontSize: "10px" }}>videogame_asset</span>
+              ) : (
+                <span className="font-headline font-bold text-on-secondary" style={{ fontSize: "8px", lineHeight: 1 }}>C</span>
+              )}
+            </div>
+          )}
+          {statusDot === "red" && (
+            <div
+              className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-error rounded-full border-2 border-surface"
+              aria-label="Disconnected"
+            />
+          )}
+          {statusDot === "yellow" && (
+            <div
+              className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-yellow-500 rounded-full border-2 border-surface node-pulse"
+              aria-label="Needs attention"
+            />
+          )}
+          {statusDot === "unread" && (
+            <div
+              className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse"
+              aria-label="Unread messages"
+            />
+          )}
+        </div>
+      </SortableServerRow>
+    );
+  };
+
   // Mobile: full-width list view. The outer wrapper is a flex
-  // column (not a plain block) so flex-shrink-0 on children forces
-  // the parent's overflow-y-auto to scroll when content overflows,
-  // instead of squeezing entries to fit. The `[&>*]:shrink-0`
-  // arbitrary selector is a cheaper way to apply shrink-0 to every
-  // direct child than marking each row individually.
+  // column with a free spacer between the top and bottom rail stacks.
+  // Anything dragged below the add tile becomes part of the bottom
+  // stack, which keeps its items pinned near the bottom edge.
   if (mobile) {
     return (
-      <div className="h-full bg-surface-container-low">
-        {/* ── Top scroll region: local + Concord servers ── */}
-        <div className="overflow-y-auto overflow-x-hidden overscroll-y-auto p-3" style={{ height: "50%" }}>
+      <div className="h-full bg-surface-container-low overflow-y-auto overflow-x-hidden overscroll-y-auto p-3 flex flex-col">
         <h3 className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest px-2 mb-3">
           Your Servers
         </h3>
@@ -352,223 +654,20 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={orderedServers.map((s) => s.id)}
+            items={railOrder}
             strategy={verticalListSortingStrategy}
           >
-            <div className="space-y-0.5">
-              {orderedServers.map((server) => {
-                const isActive = !dmActive && activeServerId === server.id;
-                const hasUnreads = !isActive && server.channels.some(
-                  (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
-                );
-                const hasHighlight = hasHighlightByServer.get(server.id) ?? false;
-                // The main list now contains both native local
-                // servers and Concord-from-Concord federated ones.
-                // Vanilla Matrix federation is still pushed to the
-                // bottom stack below and doesn't reach this branch.
-                const isFromConcordFederation = concordFederatedIds.has(server.id);
-                const isDiscordBridge = server.bridgeType === "discord";
-                const isDisconnected = !syncing;
-                // Dot precedence: disconnected (red) > needs attention
-                // (yellow) > unread (primary). Only one dot at a time so
-                // the tile doesn't turn into a traffic light cluster.
-                const statusDot = isDisconnected
-                  ? "red"
-                  : hasHighlight
-                    ? "yellow"
-                    : hasUnreads
-                      ? "unread"
-                      : null;
-                return (
-                  <SortableServerRow
-                    key={server.id}
-                    id={server.id}
-                    orientation="row"
-                  >
-                    <button
-                      onClick={() => handleServerClick(server.id)}
-                      title={
-                        isDisconnected
-                          ? `${server.name} (disconnected)`
-                          : isDiscordBridge
-                            ? `${server.name} — Discord bridge`
-                            : isFromConcordFederation
-                              ? `${server.name} — another Concord instance`
-                              : server.name
-                      }
-                      className={`btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl transition-all ${
-                        isDisconnected ? "opacity-50 grayscale" : ""
-                      } ${
-                        isActive
-                          ? isDiscordBridge
-                            ? "bg-[#5865F2]/10 text-[#5865F2]"
-                            : isFromConcordFederation
-                              ? "bg-secondary/10 text-secondary"
-                              : "bg-primary/10 text-primary"
-                          : "text-on-surface hover:bg-surface-container-high"
-                      }`}
-                    >
-                      <div className="relative flex-shrink-0">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-headline font-bold ${
-                          isActive
-                            ? isDiscordBridge
-                              ? "bg-[#5865F2] text-white"
-                              : isFromConcordFederation
-                                ? "bg-secondary text-on-secondary"
-                                : "primary-glow text-on-primary"
-                            : isDiscordBridge
-                              ? "bg-[#5865F2]/15 text-[#5865F2] ring-1 ring-[#5865F2]/40"
-                              : isFromConcordFederation
-                                ? "bg-secondary/15 text-secondary ring-1 ring-secondary/40"
-                                : "bg-surface-container-highest text-on-surface-variant"
-                        }`}>
-                          {server.abbreviation || server.name.charAt(0).toUpperCase()}
-                        </div>
-                        {isDiscordBridge && (
-                          <div
-                            className="absolute -top-1 -left-1 w-4 h-4 bg-[#5865F2] rounded-full border-2 border-surface-container-low flex items-center justify-center"
-                            aria-label="Discord bridge"
-                          >
-                            <span
-                              className="font-headline font-bold text-white"
-                              style={{ fontSize: "8px", lineHeight: 1 }}
-                            >
-                              D
-                            </span>
-                          </div>
-                        )}
-                        {isFromConcordFederation && !isDiscordBridge && (
-                          <div
-                            className="absolute -top-1 -left-1 w-4 h-4 bg-secondary rounded-full border-2 border-surface-container-low flex items-center justify-center"
-                            aria-label="Another Concord instance (federated)"
-                          >
-                            <span
-                              className="font-headline font-bold text-on-secondary"
-                              style={{ fontSize: "8px", lineHeight: 1 }}
-                            >
-                              C
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      <span className="truncate font-body font-medium">{server.name}</span>
-                      {isDiscordBridge && (
-                        <span className="text-[10px] uppercase tracking-wider text-[#5865F2]/80 font-label ml-1">
-                          discord
-                        </span>
-                      )}
-                      {isFromConcordFederation && !isDiscordBridge && (
-                        <span className="text-[10px] uppercase tracking-wider text-secondary/80 font-label ml-1">
-                          concord federated
-                        </span>
-                      )}
-                      {statusDot === "red" && (
-                        <div
-                          className="w-2.5 h-2.5 rounded-full bg-error ml-auto flex-shrink-0"
-                          aria-label="Disconnected"
-                        />
-                      )}
-                      {statusDot === "yellow" && (
-                        <div
-                          className="w-2.5 h-2.5 rounded-full bg-yellow-500 ml-auto flex-shrink-0 node-pulse"
-                          aria-label="Needs attention"
-                        />
-                      )}
-                      {statusDot === "unread" && (
-                        <div
-                          className="w-2.5 h-2.5 rounded-full bg-primary ml-auto flex-shrink-0 node-pulse"
-                          aria-label="Unread messages"
-                        />
-                      )}
-                    </button>
-                  </SortableServerRow>
-                );
-              })}
+            <div className="flex flex-col min-h-0 flex-1">
+              <div className="space-y-0.5">
+                {topRailIds.map(renderMobileRailItem)}
+              </div>
+              <div className="flex-1 min-h-4" aria-hidden="true" />
+              <div className="space-y-0.5">
+                {bottomRailIds.map(renderMobileRailItem)}
+              </div>
             </div>
           </SortableContext>
         </DndContext>
-
-        <button
-          onClick={() => setShowNewServer(true)}
-          className="btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-on-surface-variant hover:text-secondary hover:bg-secondary/5 transition-all mt-2 flex-shrink-0"
-        >
-          <div className="w-10 h-10 rounded-xl bg-surface-container-highest flex items-center justify-center flex-shrink-0">
-            <span className="material-symbols-outlined text-xl">add</span>
-          </div>
-          <span className="font-body font-medium">Add Server</span>
-        </button>
-
-        {/* Flex spacer — pushes the federated search, federated
-            stack, and Explore button to the bottom of the mobile
-            column, mirroring the desktop sidebar's "explore at
-            bottom" layout. Collapses to zero when content overflows
-            so scrolling still behaves naturally. */}
-        <div className="flex-grow min-h-0" aria-hidden="true" />
-
-        {/* Bridge-space tiles: the only non-Concord entries the
-            sidebar still renders. These are local-homeserver
-            `m.space` rooms produced by bridges (currently just
-            mautrix-discord). They belong to the active source's
-            own infrastructure and are NOT cross-instance Matrix
-            federation. The old federated search input + catalog
-            placeholder tiles were removed along with the
-            federatedInstances store. */}
-        {federatedStack.map((entry) => {
-          const { server } = entry;
-          const isActive = !dmActive && activeServerId === server.id;
-          const hasUnreads =
-            !isActive &&
-            "channels" in server &&
-            server.channels.some(
-              (ch: { matrix_room_id: string }) =>
-                (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
-            );
-          return (
-            <button
-              key={server.id}
-              onClick={() => handleServerClick(server.id)}
-              className={`btn-press w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all flex-shrink-0 ${
-                isActive
-                  ? "bg-tertiary/15 text-tertiary ring-1 ring-tertiary/40"
-                  : "text-on-surface hover:bg-tertiary/10"
-              }`}
-            >
-              <div className="relative flex-shrink-0">
-                <div
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-headline font-bold ${
-                    isActive
-                      ? "bg-tertiary text-on-tertiary"
-                      : "bg-tertiary/15 text-tertiary ring-1 ring-tertiary/40"
-                  }`}
-                >
-                  {server.abbreviation || server.name.charAt(0).toUpperCase()}
-                </div>
-                <div
-                  className="absolute -top-1 -left-1 w-4 h-4 bg-tertiary rounded-full border-2 border-surface-container-low flex items-center justify-center"
-                  aria-hidden="true"
-                >
-                  <span
-                    className="material-symbols-outlined text-on-tertiary"
-                    style={{ fontSize: "10px" }}
-                  >
-                    link
-                  </span>
-                </div>
-              </div>
-              <div className="min-w-0 flex-1 text-left">
-                <div className="truncate font-body font-medium">{server.name}</div>
-                <div className="text-[10px] uppercase tracking-wider text-tertiary/80 font-label">
-                  bridge
-                </div>
-              </div>
-              {hasUnreads && (
-                <div className="w-2.5 h-2.5 rounded-full bg-primary flex-shrink-0 node-pulse" />
-              )}
-            </button>
-          );
-        })}
-
-        </div>
         {/* Modals — outside both scroll regions */}
         {showNewServer && <NewServerModal onClose={() => setShowNewServer(false)} />}
       </div>
@@ -587,9 +686,6 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
       <div className="h-full overflow-y-auto overflow-x-hidden py-3 flex flex-col items-center gap-2 [&>*]:shrink-0">
       {/* DM button */}
       <div className="relative group">
-        <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-primary transition-all ${
-          dmActive ? "h-8" : hasDMUnreads ? "h-2" : "h-0 group-hover:h-5"
-        }`} />
         <button
           onClick={handleDMClick}
           title="Direct Messages"
@@ -616,180 +712,20 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
         onDragEnd={handleDragEnd}
       >
         <SortableContext
-          items={orderedServers.map((s) => s.id)}
+          items={railOrder}
           strategy={verticalListSortingStrategy}
         >
-          {orderedServers.map((server) => {
-            const isActive = !dmActive && activeServerId === server.id;
-            const hasUnreads = !isActive && server.channels.some(
-              (ch) => (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
-            );
-            const hasHighlight = hasHighlightByServer.get(server.id) ?? false;
-            // After the bucket reorganization, the only federated
-            // servers that reach this main-list render path are
-            // Concord-on-Concord federated ones (bucket 2). Keep
-            // `isFromConcordFederation` as the explicit flag so the
-            // styling branches stay readable.
-            const isFromConcordFederation = concordFederatedIds.has(server.id);
-            const isDiscordBridge = server.bridgeType === "discord";
-            const isDisconnected = !syncing;
-            const statusDot = isDisconnected
-              ? "red"
-              : hasHighlight
-                ? "yellow"
-                : hasUnreads
-                  ? "unread"
-                  : null;
-            // Color scheme: Discord = blurple, Concord-fed = secondary, default = primary
-            const accentBar = isDiscordBridge ? "bg-[#5865F2]" : isFromConcordFederation ? "bg-secondary" : "bg-primary";
-            return (
-              <SortableServerRow
-                key={server.id}
-                id={server.id}
-                orientation="icon"
-              >
-                <div
-                  className={`relative group ${
-                    isDisconnected ? "opacity-55 grayscale" : ""
-                  }`}
-                >
-                  <div className={`absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full transition-all ${accentBar} ${
-                    isActive ? "h-8" : hasUnreads ? "h-2" : "h-0 group-hover:h-5"
-                  }`} />
-                  <button
-                    onClick={() => handleServerClick(server.id)}
-                    title={
-                      isDisconnected
-                        ? `${server.name} — disconnected`
-                        : isDiscordBridge
-                          ? `${server.name} — Discord`
-                          : server.name
-                    }
-                    aria-label={server.name}
-                    className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
-                      isActive
-                        ? isDiscordBridge
-                          ? "bg-[#5865F2] text-white rounded-xl shadow-[0_0_12px_rgba(88,101,242,0.4)]"
-                          : isFromConcordFederation
-                            ? "bg-secondary text-on-secondary rounded-xl shadow-[0_0_12px_rgba(120,220,180,0.35)]"
-                            : "primary-glow text-on-primary rounded-xl"
-                        : isDiscordBridge
-                          ? "bg-[#5865F2]/20 text-[#5865F2] rounded-2xl hover:rounded-xl hover:bg-[#5865F2]/35 ring-1 ring-[#5865F2]/40"
-                          : isFromConcordFederation
-                            ? "bg-secondary/15 text-secondary rounded-2xl hover:rounded-xl hover:bg-secondary/25 ring-1 ring-secondary/40"
-                            : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl hover:bg-surface-container-highest hover:text-on-surface"
-                    }`}
-                  >
-                    {server.abbreviation || server.name.charAt(0).toUpperCase()}
-                  </button>
-                  {(isDiscordBridge || isFromConcordFederation) && (
-                    <div
-                      className={`absolute -top-0.5 -left-0.5 w-4 h-4 rounded-full border-2 border-surface flex items-center justify-center ${
-                        isDiscordBridge ? "bg-[#5865F2]" : "bg-secondary"
-                      }`}
-                      aria-hidden="true"
-                    >
-                      {isDiscordBridge ? (
-                        <span className="material-symbols-outlined text-white" style={{ fontSize: "10px" }}>videogame_asset</span>
-                      ) : (
-                        <span className="font-headline font-bold text-on-secondary" style={{ fontSize: "8px", lineHeight: 1 }}>C</span>
-                      )}
-                    </div>
-                  )}
-                  {/* Single status dot, top-right. Precedence established
-                      above: red (disconnected) beats yellow (attention)
-                      beats primary (unread). */}
-                  {statusDot === "red" && (
-                    <div
-                      className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-error rounded-full border-2 border-surface"
-                      aria-label="Disconnected"
-                    />
-                  )}
-                  {statusDot === "yellow" && (
-                    <div
-                      className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-yellow-500 rounded-full border-2 border-surface node-pulse"
-                      aria-label="Needs attention"
-                    />
-                  )}
-                  {statusDot === "unread" && (
-                    <div
-                      className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse"
-                      aria-label="Unread messages"
-                    />
-                  )}
-                </div>
-              </SortableServerRow>
-            );
-          })}
+          <div className="w-full flex flex-col items-center min-h-0 flex-1">
+            <div className="w-full flex flex-col items-center gap-2">
+              {topRailIds.map(renderDesktopRailItem)}
+            </div>
+            <div className="flex-1 min-h-4" aria-hidden="true" />
+            <div className="w-full flex flex-col items-center gap-2">
+              {bottomRailIds.map(renderDesktopRailItem)}
+            </div>
+          </div>
         </SortableContext>
       </DndContext>
-
-      {/* Add server — sits right below the Concord server list. */}
-      <button
-        onClick={() => setShowNewServer(true)}
-        title="Add Server"
-        className="btn-press w-12 h-12 rounded-2xl bg-surface-container-high text-on-surface-variant hover:bg-secondary/10 hover:text-secondary hover:rounded-xl flex items-center justify-center transition-all flex-shrink-0"
-      >
-        <span className="material-symbols-outlined text-xl">add</span>
-      </button>
-
-      {federatedStack.length > 0 && (
-        <div className="w-8 h-px bg-outline-variant/20 my-1 flex-shrink-0" />
-      )}
-
-      {federatedStack.map((entry) => {
-        const { server } = entry;
-        const isActive = !dmActive && activeServerId === server.id;
-        const isDiscordBridge = server.bridgeType === "discord";
-        const hasUnreads =
-          !isActive &&
-          "channels" in server &&
-          server.channels.some(
-            (ch: { matrix_room_id: string }) =>
-              (unreadCounts.get(ch.matrix_room_id) ?? 0) > 0,
-          );
-        // Discord = blurple, Matrix = green
-        const accent = isDiscordBridge ? "#5865F2" : "#22c55e";
-        const inactiveClass = isDiscordBridge
-          ? "bg-[#5865F2]/20 text-[#5865F2] rounded-2xl hover:rounded-xl hover:bg-[#5865F2]/35 ring-1 ring-[#5865F2]/40"
-          : "bg-green-500/15 text-green-400 rounded-2xl hover:rounded-xl hover:bg-green-500/25 ring-1 ring-green-500/40";
-        const activeClass = isDiscordBridge
-          ? "bg-[#5865F2] text-white rounded-xl shadow-[0_0_12px_rgba(88,101,242,0.4)]"
-          : "bg-green-600 text-white rounded-xl shadow-[0_0_12px_rgba(34,197,94,0.35)]";
-        return (
-          <div key={server.id} className="relative group flex-shrink-0">
-            <div
-              className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 rounded-r-full transition-all"
-              style={{ backgroundColor: accent, height: isActive ? 32 : hasUnreads ? 8 : 0 }}
-            />
-            <button
-              onClick={() => handleServerClick(server.id)}
-              title={`${server.name}${isDiscordBridge ? " (Discord)" : " (Matrix)"}`}
-              aria-label={`${server.name} bridge`}
-              className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
-                isActive ? activeClass : inactiveClass
-              }`}
-            >
-              {server.abbreviation || server.name.charAt(0).toUpperCase()}
-            </button>
-            <div
-              className="absolute -top-0.5 -left-0.5 w-4 h-4 rounded-full border-2 border-surface flex items-center justify-center"
-              style={{ backgroundColor: accent }}
-              aria-hidden="true"
-            >
-              <span
-                className="material-symbols-outlined text-white"
-                style={{ fontSize: "10px" }}
-              >
-                {isDiscordBridge ? "videogame_asset" : "language"}
-              </span>
-            </div>
-            {hasUnreads && (
-              <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border-2 border-surface node-pulse" />
-            )}
-          </div>
-        );
-      })}
       {/* Modals */}
       {showNewServer && <NewServerModal onClose={() => setShowNewServer(false)} />}
       {/* ExploreModal mount removed from desktop ServerSidebar — it

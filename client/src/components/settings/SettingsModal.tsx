@@ -41,7 +41,7 @@ export function SettingsPanel() {
   const [isAdmin, setIsAdmin] = useState(false);
   const { isTauri, isMobile, isTV } = usePlatform();
 
-  // TV mode (INS-023): every tab button + the Logout button get
+  // TV mode (INS-023): every tab button gets
   // DPAD focus attributes so the shared `useDpadNav({ group: "tv-main" })`
   // handler registered in ChatLayout can traverse the settings shell.
   // Helper stays local so the JSX stays compact.
@@ -249,17 +249,6 @@ export function SettingsPanel() {
             activeTab={serverSubTab!}
           />
         )}
-
-        {/* Logout button — always visible at bottom */}
-        <div className="mt-8 pt-6 border-t border-outline-variant/15 flex justify-start">
-          <button
-            onClick={() => useAuthStore.getState().logout()}
-            {...tvFocusProps}
-            className="text-error border border-error/30 rounded px-4 py-2 hover:bg-error/10 transition-colors text-sm font-label font-medium min-h-[44px]"
-          >
-            Logout
-          </button>
-        </div>
       </div>
     </div>
   );

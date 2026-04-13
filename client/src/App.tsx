@@ -2,7 +2,6 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import { useAuthStore } from "./stores/auth";
 import { useServerStore } from "./stores/server";
-import { useSourcesStore } from "./stores/sources";
 import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession, MAX_RECONNECT_ATTEMPTS, RECONNECT_BASE_DELAY_MS } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
@@ -63,26 +62,11 @@ function buildConcordFavicon(primary: string, secondary: string): string {
 }
 
 export default function App() {
-  // Desktop/native mode: require a server picker pass before anything
-  // else. Native apps ALWAYS start hollow — no pre-configured server,
-  // no "implicit" target. The picker is the first thing a Tauri build
-  // sees on first launch, and the only way to skip it is to have
-  // completed the picker in a previous session (persisted via the
-  // zustand `serverConfig` store, NOT via the legacy Tauri
-  // plugin-store `server_url` slot, which has been retired because it
-  // could silently skip the picker forever if a stale value leaked
-  // through Syncthing or a prior install).
-  //
-  // Mobile web also goes through the picker — it has no implicit
-  // origin-based server association either. Desktop web (non-Tauri,
-  // non-mobile) is the one case that boots straight into the chat
-  // shell because its origin IS the server.
   const hasNewConfig = useServerConfigStore((s) => s.config !== null);
-  const { isMobile, isTV } = usePlatform();
+  const { isTauri, isTV } = usePlatform();
   const [serverConnected, setServerConnected] = useState(() =>
     computeInitialServerConnected({
-      isDesktop: isDesktopMode(),
-      isMobile,
+      isNative: isTauri,
       hasNewConfig,
     }),
   );
@@ -385,66 +369,6 @@ export default function App() {
     />
   ) : null;
 
-  // Hollow-shell-first contract (2026-04-10 user spec): native builds
-  // ALWAYS render the full ChatLayout on boot, regardless of whether a
-  // server has been picked or the user is logged in. The "add source"
-  // flow lives inside the Sources column's `+` tile and opens the
-  // ServerPickerScreen as a modal overlay. The old boot-time gate
-  // (`if (!serverConnected) return <ServerPickerScreen />`) has been
-  // retired — the picker is no longer a pre-shell modal.
-  //
-  // `addSourceModalOpen` drives the modal. ChatLayout's SourcesPanel
-  // calls back into `openAddSourceModal` when the user clicks `+`.
-  //
-  // `serverConnected` and `setServerConnected` remain as state so the
-  // existing modal-success path can still flip App out of any transient
-  // states — but they no longer gate ChatLayout visibility.
-  // Cold-launch picker: native builds with zero connected sources
-  // auto-open the picker modal on first render. The user can either
-  // pick one of the source types (Concord / Matrix / Discord / Host)
-  // or hit Skip to dismiss and reach the hollow shell. Returning
-  // users (with at least one persisted source) skip this auto-open
-  // and go straight to their existing shell.
-  //
-  // The auto-open lives in the useState initializer so it only fires
-  // on the first render of this component instance. Subsequent
-  // re-opens happen via the explicit `+ Add Source` tile in the
-  // Sources column.
-  const [addSourceModalOpen, setAddSourceModalOpen] = useState(() => {
-    if (typeof window === "undefined") return false;
-    if (!("__TAURI_INTERNALS__" in window)) return false;
-    return useSourcesStore.getState().sources.length === 0;
-  });
-  const openAddSourceModal = useCallback(() => setAddSourceModalOpen(true), []);
-  // Cancelling the modal must also reset `serverConnected` back to
-  // `false`. Without this, the modal's internal ternary —
-  //   !isLoggedIn && !serverConnected → ServerPickerScreen
-  //   !isLoggedIn                     → LoginForm
-  // — would open directly to LoginForm on the NEXT `+` tile click,
-  // because the earlier picker run had already flipped the flag true.
-  // Resetting on close means every re-open starts at the picker,
-  // which is what the user expects when they abort mid-wizard and
-  // come back later.
-  const closeAddSourceModal = useCallback(() => {
-    setAddSourceModalOpen(false);
-    setServerConnected(false);
-  }, []);
-
-  // Auto-close the add-source modal once the user is authenticated.
-  // `isLoggedIn` flips true from inside LoginForm's successful-login
-  // path. This effect MUST be declared before the early returns below
-  // (`if (isLoading) return ...`, `if (path.startsWith("/submit/"))
-  // return ...`) — React's rules of hooks require a consistent hook
-  // call order between renders, and an early return followed by a
-  // useEffect trips "Rendered more hooks than during the previous
-  // render" the instant `isLoading` flips, which ErrorBoundary catches
-  // and renders as a blank surface.
-  useEffect(() => {
-    if (isLoggedIn && addSourceModalOpen) {
-      closeAddSourceModal();
-    }
-  }, [isLoggedIn, addSourceModalOpen, closeAddSourceModal]);
-
   // Public submit page — no auth required
   const path = window.location.pathname;
   if (path.startsWith("/submit/")) {
@@ -468,61 +392,33 @@ export default function App() {
     );
   }
 
-  // Shell content. Rendered at all times per the hollow-shell-first
-  // contract (2026-04-10). The child components — SourcesPanel,
-  // ServerSidebar, ChannelSidebar, main content area — each handle
-  // their own empty states when there is no source / no server / no
-  // authenticated Matrix client, so this tree renders cleanly even
-  // during the first-launch hollow state.
+  if (!serverConnected) {
+    return (
+      <>
+        <ServerPickerScreen onConnected={() => setServerConnected(true)} />
+        {launchOverlay}
+      </>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return (
+      <>
+        <LoginForm />
+        {launchOverlay}
+      </>
+    );
+  }
+
   const shellContent = (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
-        <ChatLayout onAddSource={openAddSourceModal} />
+        <ChatLayout />
       </div>
       <VoiceConnectionBar />
       <DirectInviteBanner />
     </div>
   );
-
-  // The "add source" wizard modal. Opened by the `+` tile in
-  // SourcesPanel; advances through the existing ServerPickerScreen and
-  // (if the user is not already authenticated on the picked instance)
-  // the LoginForm. Both sub-components stay fullscreen-shaped but are
-  // displayed as a centred overlay inside the modal container. On
-  // successful picker connection the flow falls through to LoginForm;
-  // when `isLoggedIn` flips true the modal auto-closes via the effect
-  // below.
-  const addSourceModal = addSourceModalOpen ? (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center">
-      <div className="relative w-full h-full overflow-auto">
-        <button
-          type="button"
-          onClick={closeAddSourceModal}
-          className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center transition-colors"
-          title="Cancel"
-          aria-label="Cancel add source"
-        >
-          <span className="material-symbols-outlined text-on-surface">close</span>
-        </button>
-        {/* Wizard stages keyed only on `serverConnected` so the modal
-            renders the picker even when the user is already logged in
-            on a prior source (add-second-source flow). Previously the
-            ternary checked `!isLoggedIn && !serverConnected` which
-            fell through to `null` for an already-authed user, leaving
-            the modal visually empty. Stage 3 (`serverConnected &&
-            isLoggedIn`) is handled by the useEffect above which
-            auto-closes the modal. */}
-        {!serverConnected ? (
-          <ServerPickerScreen
-            onConnected={() => setServerConnected(true)}
-            onSkip={closeAddSourceModal}
-          />
-        ) : !isLoggedIn ? (
-          <LoginForm />
-        ) : null}
-      </div>
-    </div>
-  ) : null;
 
   return (
     <>
@@ -563,7 +459,6 @@ export default function App() {
         ) : (
           shellContent
         )}
-        {addSourceModal}
         <ToastContainer />
       </ErrorBoundary>
       {launchOverlay}

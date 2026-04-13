@@ -86,6 +86,9 @@ describe("discoverHomeserver", () => {
           features: ["chat", "voice"],
         });
       }
+      if (url.endsWith("/config.json")) {
+        return notFound();
+      }
       throw new Error(`unexpected fetch: ${url}`);
     });
 
@@ -98,13 +101,14 @@ describe("discoverHomeserver", () => {
     expect(config).toMatchObject({
       host: "example.org",
       homeserver_url: "https://matrix.example.org",
+      server_name: undefined,
       api_base: "https://api.example.org/api",
       identity_server_url: "https://identity.example.org",
       livekit_url: "wss://livekit.example.org",
       instance_name: "Example Concord",
       features: ["chat", "voice"],
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
   /**
@@ -148,12 +152,44 @@ describe("discoverHomeserver", () => {
     expect(config).toEqual({
       host: "example.org",
       homeserver_url: "https://example.org",
+      server_name: undefined,
       api_base: "https://example.org/api",
       identity_server_url: undefined,
       livekit_url: undefined,
       instance_name: undefined,
       features: undefined,
+      turn_servers: undefined,
+      node_role: undefined,
+      tunnel_anchor: undefined,
     });
+  });
+
+  it("falls back to Element config.json delegation when matrix well-known is absent", async () => {
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (url.endsWith("/.well-known/matrix/client")) return notFound();
+      if (url.endsWith("/.well-known/concord/client")) return notFound();
+      if (url.endsWith("/config.json")) {
+        return jsonResponse(200, {
+          default_server_config: {
+            "m.homeserver": {
+              base_url: "https://mozilla.modular.im",
+              server_name: "mozilla.org",
+            },
+            "m.identity_server": {
+              base_url: "https://vector.im",
+            },
+          },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const config = await discoverHomeserver("chat.mozilla.org");
+
+    expect(config.homeserver_url).toBe("https://mozilla.modular.im");
+    expect(config.server_name).toBe("mozilla.org");
+    expect(config.identity_server_url).toBe("https://vector.im");
+    expect(config.api_base).toBe("https://chat.mozilla.org/api");
   });
 
   /**

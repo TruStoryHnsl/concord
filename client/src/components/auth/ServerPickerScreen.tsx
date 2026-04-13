@@ -162,18 +162,16 @@ function formatDiscoveryError(err: unknown): {
 
 export function ServerPickerScreen({ onConnected, onSkip }: Props) {
   const { isTauri, isMobile } = usePlatform();
-  // Hosting is a desktop-only affordance. Mobile Tauri builds, mobile
-  // web, and TV all skip the Join/Host menu entirely and go straight
-  // to the hostname input. Hosting requires a machine that can run
-  // the full Concord stack (Docker Compose) locally, which phones and
-  // TVs cannot.
+  // Hosting is a desktop-only affordance, but the top-level menu is
+  // available on every native shell so mobile users still land on the
+  // same Host/Join decision point before they enter a domain.
   const canHost = isTauri && !isMobile;
 
   const [host, setHost] = useState("");
-  // Initial phase: show the top-level menu on platforms that can host,
-  // otherwise go directly to the Join hostname input.
+  // Native apps always start at the top-level menu. Browser-only paths
+  // no longer use this screen on boot.
   const [state, setState] = useState<UiState>(() =>
-    canHost ? { phase: "menu" } : { phase: "input", origin: "join" },
+    isTauri ? { phase: "menu" } : { phase: "input", origin: "join" },
   );
   const [pasteBlob, setPasteBlob] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -291,13 +289,13 @@ export function ServerPickerScreen({ onConnected, onSkip }: Props) {
   // hosting phase after the user has already navigated away.
   const handleReset = useCallback(() => {
     hostingGenerationRef.current += 1;
-    if (canHost) {
+    if (isTauri) {
       setState({ phase: "menu" });
       setHost("");
     } else {
       setState({ phase: "input", origin: "join" });
     }
-  }, [canHost]);
+  }, [isTauri]);
 
   // "Change" from the success screen: return to the hostname input,
   // preserving the origin so the user doesn't have to re-pick Join

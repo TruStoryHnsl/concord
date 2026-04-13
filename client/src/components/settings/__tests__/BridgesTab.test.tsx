@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { BridgesTab } from "../BridgesTab";
 import * as servitudeApi from "../../../api/servitude";
 import * as bridgesApi from "../../../api/bridges";
+import { useAuthStore } from "../../../stores/auth";
 
 /**
  * INS-024 Wave 4: BridgesTab component tests.
@@ -36,6 +37,11 @@ vi.mock("../../../api/bridges", async (importOriginal) => {
     discordBridgeDisable: vi.fn(),
     discordBridgeStatus: vi.fn(),
     discordBridgeEnableAndStart: vi.fn(),
+    discordBridgeHttpStatus: vi.fn(),
+    discordBridgeHttpEnable: vi.fn(),
+    discordBridgeHttpDisable: vi.fn(),
+    discordBridgeHttpRotate: vi.fn(),
+    discordBridgeHttpSaveBotToken: vi.fn(),
   };
 });
 
@@ -45,6 +51,7 @@ const mockedEnable = vi.mocked(bridgesApi.discordBridgeEnable);
 const mockedEnableAndStart = vi.mocked(bridgesApi.discordBridgeEnableAndStart);
 const mockedDisable = vi.mocked(bridgesApi.discordBridgeDisable);
 const mockedStatus = vi.mocked(bridgesApi.discordBridgeStatus);
+const mockedHttpStatus = vi.mocked(bridgesApi.discordBridgeHttpStatus);
 
 const defaultStatus: bridgesApi.BridgeStatus = {
   has_bot_token: false,
@@ -63,18 +70,36 @@ describe("<BridgesTab />", () => {
     mockedEnableAndStart.mockReset();
     mockedDisable.mockReset();
     mockedStatus.mockReset();
-    // Clear localStorage for ToS state.
+    mockedHttpStatus.mockReset();
+    // Clear localStorage for ToS state before seeding auth.
     localStorage.clear();
+    useAuthStore.setState({
+      client: null,
+      userId: "@tester:concorrd.com",
+      accessToken: "token123",
+      isLoggedIn: true,
+      isLoading: false,
+      syncing: true,
+    });
   });
 
-  it("renders the browser banner when Tauri is absent", async () => {
+  it("renders the docker bridge section when Tauri is absent", async () => {
     mockedIsTauri.mockReturnValue(false);
     mockedStatus.mockResolvedValue(defaultStatus);
+    mockedHttpStatus.mockResolvedValue({
+      enabled: false,
+      bot_token_configured: false,
+      appservice_id: null,
+      sender_mxid_localpart: null,
+      user_namespace_regex: null,
+      alias_namespace_regex: null,
+      registration_file_path: null,
+    });
 
     render(<BridgesTab />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("bridges-browser-banner")).toBeInTheDocument();
+      expect(screen.getByTestId("docker-bridge-section")).toBeInTheDocument();
     });
   });
 

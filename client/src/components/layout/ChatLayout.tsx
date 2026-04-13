@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef, Component, type ReactNode } from "react";
+import type { IPublicRoomsChunkRoom } from "matrix-js-sdk";
 import {
   useMatrixSync,
   useRoomMessages,
@@ -21,7 +22,11 @@ import { useNotifications } from "../../hooks/useNotifications";
 import { useSettingsStore } from "../../stores/settings";
 import { useVoiceStore } from "../../stores/voice";
 import { SourcesPanel } from "./SourcesPanel";
-import { useSourcesStore } from "../../stores/sources";
+import {
+  sourceMatchesMatrixDomain,
+  useSourcesStore,
+  type ConcordSource,
+} from "../../stores/sources";
 import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
 import { useDisplayName } from "../../hooks/useDisplayName";
@@ -43,8 +48,22 @@ import { SettingsPanel } from "../settings/SettingsModal";
 // ServerSettingsPanel is now folded into the unified SettingsPanel (INS-012)
 import { BugReportModal } from "../BugReportModal";
 import { StatsModal } from "../StatsModal";
-import { discordBridgeHttpListGuilds, discordVoiceBridgeHttpListRooms } from "../../api/bridges";
+import { SourceBrandIcon, inferSourceBrand } from "../sources/sourceBrand";
+import {
+  discordBridgeHttpListGuilds,
+  discordVoiceBridgeHttpListRooms,
+} from "../../api/bridges";
 import { getRoomDiagnostics, type RoomDiagnostics } from "../../api/concord";
+import {
+  buildMatrixSourceDraft,
+  clearPendingSourceSso,
+  clearPendingSourceSsoQueryParams,
+  hasPendingSourceSsoCallback,
+  readPendingSourceSso,
+  upsertMatrixSourceRecord,
+  writePendingSourceSso,
+  type MatrixSourceDraft,
+} from "../sources/matrixSourceAuth";
 
 /** Lightweight error boundary that silently recovers instead of hiding content. */
 class SilentBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { ok: boolean }> {
@@ -151,6 +170,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     setAddSourceOpen(true);
     onAddSource?.();
   }, [onAddSource]);
+  useEffect(() => {
+    if (hasPendingSourceSsoCallback()) {
+      setAddSourceOpen(true);
+    }
+  }, []);
   // Explore modal state. Hoisted from ServerSidebar to ChatLayout
   // so the SourcesPanel — which now owns the Explore tile per the
   // 2026-04-11 spec — can open the modal from inside the Sources
@@ -970,7 +994,15 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           } else if (view === "servers" || view === "channels" || view === "chat") {
             useDMStore.getState().setDMActive(false);
           }
-          if (view === "settings") openSettings();
+          if (view === "settings") {
+            if (mobileView === "settings" || settingsOpen || serverSettingsId) {
+              closeServerSettings();
+              closeSettings();
+              setMobileView("chat");
+              return;
+            }
+            openSettings();
+          }
           setMobileView(view);
         }}
       />
@@ -1434,30 +1466,184 @@ function SourceServerBrowser({
   source,
   onClose,
 }: {
-  source?: { id: string; host: string; instanceName?: string; platform?: string };
+  source?: ConcordSource;
   onClose: () => void;
 }) {
   const servers = useServerStore((s) => s.servers);
+  const loadServers = useServerStore((s) => s.loadServers);
   const setActiveServer = useServerStore((s) => s.setActiveServer);
   const setDMActive = useDMStore((s) => s.setDMActive);
+  const client = useAuthStore((s) => s.client);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const addToast = useToastStore((s) => s.addToast);
+  const updateSource = useSourcesStore((s) => s.updateSource);
   const label = source?.instanceName ?? source?.host ?? "Source";
-  const sourceHost = source?.host?.toLowerCase() ?? "";
+  const sourceBrand = inferSourceBrand({
+    platform: source?.platform,
+    host: source?.host,
+    instanceName: source?.instanceName,
+    serverName: source?.serverName,
+  });
+  const [publicRooms, setPublicRooms] = useState<IPublicRoomsChunkRoom[]>([]);
+  const [publicRoomsLoading, setPublicRoomsLoading] = useState(false);
+  const [publicRoomsError, setPublicRoomsError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
 
   // Only show servers whose rooms belong to this source's host
-  const sourceServers = servers.filter((s) => {
-    if (s.bridgeType) return false; // bridge servers belong to their own source
-    if (s.federated) return false;
-    // Match by extracting domain from the first channel's room ID
-    const roomId = s.channels?.[0]?.matrix_room_id ?? "";
-    const roomHost = roomId.split(":")[1]?.toLowerCase() ?? "";
-    return sourceHost && roomHost === sourceHost;
-  });
+  const sourceServers = useMemo(
+    () =>
+      servers.filter((server) => {
+        if (server.bridgeType) return false;
+        if (server.federated) return false;
+        const roomId = server.channels?.[0]?.matrix_room_id ?? "";
+        const roomHost = roomId.split(":")[1]?.toLowerCase() ?? "";
+        return !!source && sourceMatchesMatrixDomain(source, roomHost);
+      }),
+    [servers, source],
+  );
+
+  useEffect(() => {
+    if (!source || source.platform !== "matrix" || source.authFlows?.length) return;
+    let cancelled = false;
+    import("../../api/matrix")
+      .then(({ fetchLoginFlows }) => fetchLoginFlows(source.homeserverUrl))
+      .then((flows) => {
+        if (!cancelled) updateSource(source.id, { authFlows: flows, authError: undefined });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [source, updateSource]);
+
+  const loadSourceDirectory = useCallback(async () => {
+    if (!source || source.platform !== "matrix") return;
+    setPublicRoomsLoading(true);
+    setPublicRoomsError(null);
+    setAuthRequired(false);
+    try {
+      const sdk = await import("matrix-js-sdk");
+      const browseClient =
+        source.accessToken && source.userId && source.deviceId
+          ? sdk.createClient({
+              baseUrl: source.homeserverUrl,
+              accessToken: source.accessToken,
+              userId: source.userId,
+              deviceId: source.deviceId,
+            })
+          : sdk.createClient({ baseUrl: source.homeserverUrl });
+      const response = await browseClient.publicRooms({
+        server: source.serverName ?? source.host,
+        limit: 50,
+      });
+      setPublicRooms(
+        [...(response.chunk ?? [])].sort((a, b) =>
+          (b.num_joined_members ?? 0) - (a.num_joined_members ?? 0),
+        ),
+      );
+      updateSource(source.id, { authError: undefined });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load public rooms";
+      setPublicRoomsError(message);
+      setAuthRequired(
+        /M_FORBIDDEN|M_UNKNOWN_TOKEN|401|403|restricted|forbidden|unknown token/i.test(
+          message,
+        ),
+      );
+      updateSource(source.id, {
+        authError: message,
+        status: source.accessToken ? "error" : "disconnected",
+      });
+    } finally {
+      setPublicRoomsLoading(false);
+    }
+  }, [source, updateSource]);
+
+  useEffect(() => {
+    if (source?.platform !== "matrix") return;
+    loadSourceDirectory();
+  }, [source?.id, source?.platform, loadSourceDirectory]);
+
+  const handlePasswordLogin = useCallback(async () => {
+    if (!source || !authUsername.trim() || !authPassword) return;
+    setAuthBusy(true);
+    setPublicRoomsError(null);
+    try {
+      const { loginWithPasswordAtBaseUrl } = await import("../../api/matrix");
+      const session = await loginWithPasswordAtBaseUrl(
+        source.homeserverUrl,
+        authUsername.trim(),
+        authPassword,
+      );
+      updateSource(source.id, {
+        accessToken: session.accessToken,
+        userId: session.userId,
+        deviceId: session.deviceId,
+        authError: undefined,
+        status: "connected",
+      });
+      setAuthPassword("");
+      addToast(`Connected ${label}`, "success");
+      await loadSourceDirectory();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sign in";
+      setPublicRoomsError(message);
+      updateSource(source.id, { authError: message, status: "error" });
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [addToast, authPassword, authUsername, label, loadSourceDirectory, source, updateSource]);
+
+  const handleSsoLogin = useCallback(async () => {
+    if (!source) return;
+    const { buildSsoRedirectUrl } = await import("../../api/matrix");
+    const redirectUrl = new URL(window.location.href);
+    redirectUrl.searchParams.delete("loginToken");
+    redirectUrl.searchParams.set("source_sso", "1");
+    writePendingSourceSso({
+      sourceId: source.id,
+      homeserverUrl: source.homeserverUrl,
+    });
+    window.location.assign(
+      buildSsoRedirectUrl(source.homeserverUrl, redirectUrl.toString()),
+    );
+  }, [source]);
+
+  const handleJoinRoom = useCallback(
+    async (room: IPublicRoomsChunkRoom) => {
+      if (!client || !source) return;
+      const target = room.canonical_alias ?? room.room_id;
+      const viaServer =
+        room.canonical_alias?.split(":")[1] ??
+        room.room_id.split(":")[1] ??
+        source.serverName ??
+        source.host;
+      setJoiningRoomId(room.room_id);
+      try {
+        await client.joinRoom(target, { viaServers: [viaServer] });
+        if (accessToken) await loadServers(accessToken);
+        addToast(`Connected ${room.name ?? target}`, "success");
+        onClose();
+      } catch (err) {
+        addToast(err instanceof Error ? err.message : "Failed to connect room", "error");
+      } finally {
+        setJoiningRoomId(null);
+      }
+    },
+    [accessToken, addToast, client, loadServers, onClose, source],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-md mx-4 bg-surface-container rounded-2xl border border-outline-variant/20 shadow-2xl p-6 max-h-[85vh] flex flex-col">
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
+          <div className="w-9 h-9 rounded-xl bg-surface-container-high flex items-center justify-center flex-shrink-0">
+            <SourceBrandIcon brand={sourceBrand} size={18} />
+          </div>
           <h2 className="flex-1 text-lg font-headline font-semibold text-on-surface">{label}</h2>
           <button
             onClick={onClose}
@@ -1467,31 +1653,160 @@ function SourceServerBrowser({
           </button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
-          {sourceServers.length === 0 ? (
-            <p className="text-sm text-on-surface-variant text-center py-8">No servers</p>
-          ) : (
-            <div className="space-y-0.5">
-              {sourceServers.map((srv) => (
-                <button
-                  key={srv.id}
-                  onClick={() => {
-                    setDMActive(false);
-                    setActiveServer(srv.id);
-                    onClose();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-primary/10 text-left group transition-colors"
-                >
-                  <span className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold flex-shrink-0">
-                    {srv.abbreviation || srv.name.charAt(0).toUpperCase()}
-                  </span>
-                  <span className="text-sm text-on-surface group-hover:text-primary transition-colors">
-                    {srv.name}
-                  </span>
-                  <span className="text-xs text-on-surface-variant ml-auto">{srv.channels.length} ch</span>
-                </button>
-              ))}
+          <div className="space-y-5">
+            {source?.platform === "matrix" && (
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/60 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-on-surface">
+                      {source.userId ? `Signed in as ${source.userId}` : "Source login"}
+                    </p>
+                    <p className="mt-1 text-xs text-on-surface-variant break-all">
+                      {source.serverName ?? source.host} via {source.homeserverUrl}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadSourceDirectory}
+                    disabled={publicRoomsLoading}
+                    className="px-3 py-1.5 rounded-lg bg-surface text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest text-xs transition-colors disabled:opacity-40"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {(authRequired || !source.accessToken) && (
+                  <div className="mt-4 space-y-3">
+                    <p className="text-xs text-on-surface-variant">
+                      This source can browse more rooms after you sign in. Concord still joins rooms through your current Concord session.
+                    </p>
+                    {(source.authFlows ?? []).includes("password") && (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={authUsername}
+                          onChange={(event) => setAuthUsername(event.target.value)}
+                          placeholder="Matrix username"
+                          className="w-full px-3 py-2 bg-surface rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                        />
+                        <input
+                          type="password"
+                          value={authPassword}
+                          onChange={(event) => setAuthPassword(event.target.value)}
+                          placeholder="Password"
+                          className="w-full px-3 py-2 bg-surface rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={handlePasswordLogin}
+                          disabled={authBusy || !authUsername.trim() || !authPassword}
+                          className="w-full py-2 rounded-lg bg-primary text-on-primary text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                        >
+                          {authBusy ? "Signing in..." : "Sign in with password"}
+                        </button>
+                      </div>
+                    )}
+                    {(source.authFlows ?? []).includes("sso") && (
+                      <button
+                        type="button"
+                        onClick={handleSsoLogin}
+                        className="w-full py-2 rounded-lg bg-secondary/15 text-secondary text-sm font-medium hover:bg-secondary/20 transition-colors"
+                      >
+                        Continue with SSO
+                      </button>
+                    )}
+                  </div>
+                )}
+                {publicRoomsError && (
+                  <p className="mt-3 text-xs text-error">{publicRoomsError}</p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                  Connected in Concord
+                </p>
+                <span className="text-xs text-on-surface-variant">
+                  {sourceServers.length}
+                </span>
+              </div>
+              {sourceServers.length === 0 ? (
+                <p className="text-sm text-on-surface-variant text-center py-4">No connected rooms yet</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {sourceServers.map((srv) => (
+                    <button
+                      key={srv.id}
+                      onClick={() => {
+                        setDMActive(false);
+                        setActiveServer(srv.id);
+                        onClose();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-primary/10 text-left group transition-colors"
+                    >
+                      <span className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold flex-shrink-0">
+                        {srv.abbreviation || srv.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="text-sm text-on-surface group-hover:text-primary transition-colors">
+                        {srv.name}
+                      </span>
+                      <span className="text-xs text-on-surface-variant ml-auto">{srv.channels.length} ch</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+
+            {source?.platform === "matrix" && (
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                    Public rooms
+                  </p>
+                  <span className="text-xs text-on-surface-variant">
+                    {publicRoomsLoading ? "Loading..." : publicRooms.length}
+                  </span>
+                </div>
+                {publicRoomsLoading ? (
+                  <p className="text-sm text-on-surface-variant text-center py-6">Loading rooms…</p>
+                ) : publicRooms.length === 0 ? (
+                  <p className="text-sm text-on-surface-variant text-center py-6">
+                    {publicRoomsError ? "Directory unavailable" : "No public rooms returned"}
+                  </p>
+                ) : (
+                  <div className="space-y-0.5">
+                    {publicRooms.map((room) => (
+                      <button
+                        key={room.room_id}
+                        onClick={() => handleJoinRoom(room)}
+                        disabled={joiningRoomId === room.room_id}
+                        className="w-full flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-secondary/10 text-left group transition-colors disabled:opacity-50"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-secondary/12 ring-1 ring-secondary/20 flex items-center justify-center text-secondary text-xs font-bold flex-shrink-0">
+                          {(room.name ?? "#").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm text-on-surface group-hover:text-secondary transition-colors block truncate">
+                            {room.name ?? room.canonical_alias ?? room.room_id}
+                          </span>
+                          <span className="text-[11px] text-on-surface-variant block truncate">
+                            {room.canonical_alias ?? room.room_id}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-on-surface-variant flex-shrink-0">
+                          {joiningRoomId === room.room_id
+                            ? "Connecting..."
+                            : `${room.num_joined_members ?? 0}`}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1758,6 +2073,7 @@ function AddSourceModal({
     | "pick"
     | "concord"
     | "matrix"
+    | "matrix-auth"
     | "discord"
     | "discord-bot"
     | "discord-account"
@@ -1773,9 +2089,48 @@ function AddSourceModal({
 
   // Matrix form state
   const [matrixHost, setMatrixHost] = useState("");
+  const [matrixUsername, setMatrixUsername] = useState("");
+  const [matrixPassword, setMatrixPassword] = useState("");
+  const [matrixDraft, setMatrixDraft] = useState<MatrixSourceDraft | null>(null);
 
   const addSource = useSourcesStore((s) => s.addSource);
+  const updateSource = useSourcesStore((s) => s.updateSource);
+  const sources = useSourcesStore((s) => s.sources);
   const accessToken = useAuthStore((s) => s.accessToken);
+  const resumeHandled = useRef(false);
+
+  useEffect(() => {
+    if (resumeHandled.current) return;
+    const pending = readPendingSourceSso();
+    const loginToken = new URLSearchParams(window.location.search).get("loginToken");
+    if (!pending || !loginToken) return;
+    resumeHandled.current = true;
+    setScreen("validating");
+    import("../../api/matrix")
+      .then(({ loginWithTokenAtBaseUrl }) =>
+        loginWithTokenAtBaseUrl(pending.homeserverUrl, loginToken),
+      )
+      .then((session) => {
+        updateSource(pending.sourceId, {
+          accessToken: session.accessToken,
+          userId: session.userId,
+          deviceId: session.deviceId,
+          authError: undefined,
+          status: "connected",
+        });
+        clearPendingSourceSso();
+        clearPendingSourceSsoQueryParams();
+        onSourceAdded();
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "Source login failed";
+        updateSource(pending.sourceId, { authError: message, status: "error" });
+        clearPendingSourceSso();
+        clearPendingSourceSsoQueryParams();
+        setError(message);
+        setScreen("error");
+      });
+  }, [onSourceAdded, updateSource]);
 
   const handleConnectConcord = async () => {
     const trimmed = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -1807,20 +2162,81 @@ function AddSourceModal({
     }
   };
 
-  const handleConnectMatrix = () => {
+  const handleDiscoverMatrix = async () => {
     const trimmed = matrixHost.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    if (!trimmed) return;
-    addSource({
-      host: trimmed,
-      instanceName: trimmed,
-      inviteToken: "",
-      apiBase: `https://${trimmed}`,
-      homeserverUrl: `https://${trimmed}`,
-      status: "connected",
-      enabled: true,
-      platform: "matrix",
-    });
-    onSourceAdded();
+    if (!trimmed) {
+      setError("Enter a Matrix homeserver");
+      setScreen("error");
+      return;
+    }
+    setScreen("validating");
+    try {
+      const [{ discoverHomeserver }, { fetchLoginFlows }] = await Promise.all([
+        import("../../api/wellKnown"),
+        import("../../api/matrix"),
+      ]);
+      const config = await discoverHomeserver(trimmed);
+      const flows = await fetchLoginFlows(config.homeserver_url);
+      setMatrixDraft(buildMatrixSourceDraft(trimmed, config, flows));
+      setMatrixUsername("");
+      setMatrixPassword("");
+      setScreen("matrix-auth");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't reach that homeserver");
+      setScreen("error");
+    }
+  };
+
+  const handleMatrixPasswordLogin = async () => {
+    if (!matrixDraft || !matrixUsername.trim() || !matrixPassword) return;
+    setScreen("validating");
+    try {
+      const { loginWithPasswordAtBaseUrl } = await import("../../api/matrix");
+      const session = await loginWithPasswordAtBaseUrl(
+        matrixDraft.homeserverUrl,
+        matrixUsername.trim(),
+        matrixPassword,
+      );
+      upsertMatrixSourceRecord({
+        sources,
+        addSource,
+        updateSource,
+        draft: matrixDraft,
+        session,
+      });
+      onSourceAdded();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Source login failed";
+      setError(message);
+      setScreen("error");
+    }
+  };
+
+  const handleMatrixSsoLogin = async () => {
+    if (!matrixDraft) return;
+    try {
+      const { buildSsoRedirectUrl } = await import("../../api/matrix");
+      const sourceId = upsertMatrixSourceRecord({
+        sources,
+        addSource,
+        updateSource,
+        draft: matrixDraft,
+      });
+      writePendingSourceSso({
+        sourceId,
+        homeserverUrl: matrixDraft.homeserverUrl,
+      });
+      const redirectUrl = new URL(window.location.href);
+      redirectUrl.searchParams.delete("loginToken");
+      redirectUrl.searchParams.set("source_sso", "1");
+      window.location.assign(
+        buildSsoRedirectUrl(matrixDraft.homeserverUrl, redirectUrl.toString()),
+      );
+    } catch (err) {
+      clearPendingSourceSso();
+      setError(err instanceof Error ? err.message : "Unable to start SSO");
+      setScreen("error");
+    }
   };
 
   const handleCheckDiscordBridge = async () => {
@@ -1897,8 +2313,8 @@ function AddSourceModal({
                 onClick={() => setScreen("concord")}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
               >
-                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center flex-shrink-0">
-                  <span className="material-symbols-outlined text-on-primary text-xl">hub</span>
+                <div className="w-10 h-10 rounded-xl bg-primary/12 ring-1 ring-primary/25 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="concord" size={20} />
                 </div>
                 <div>
                   <p className="text-sm font-medium text-on-surface">Concord Instance</p>
@@ -1912,8 +2328,8 @@ function AddSourceModal({
                 onClick={() => setScreen("matrix")}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-teal-500/40 hover:bg-surface-container-high transition-all text-left group"
               >
-                <div className="w-10 h-10 rounded-xl bg-teal-700 flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-lg font-bold">M</span>
+                <div className="w-10 h-10 rounded-xl bg-[#111318] ring-1 ring-white/10 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="matrix" size={18} />
                 </div>
                 <div>
                   <p className="text-sm font-medium text-on-surface">Matrix Network</p>
@@ -1927,8 +2343,8 @@ function AddSourceModal({
                 onClick={() => setScreen("discord")}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-[#5865F2]/40 hover:bg-surface-container-high transition-all text-left group"
               >
-                <div className="w-10 h-10 rounded-xl bg-[#5865F2] flex items-center justify-center flex-shrink-0">
-                  <span className="material-symbols-outlined text-white text-xl">videogame_asset</span>
+                <div className="w-10 h-10 rounded-xl bg-[#5865F2]/12 ring-1 ring-[#5865F2]/30 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="discord" size={18} />
                 </div>
                 <div>
                   <p className="text-sm font-medium text-on-surface">Discord</p>
@@ -1982,7 +2398,7 @@ function AddSourceModal({
             <Header title="Matrix Network" onBack={back} />
             <div className="space-y-4">
               <p className="text-xs text-on-surface-variant">
-                Add a Matrix homeserver to browse federated rooms and public servers.
+                Add a Matrix homeserver, discover its login methods, and use that account for remote room discovery.
               </p>
               <div>
                 <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Homeserver</label>
@@ -1995,12 +2411,70 @@ function AddSourceModal({
                 />
               </div>
               <button
-                onClick={handleConnectMatrix}
+                onClick={handleDiscoverMatrix}
                 disabled={!matrixHost.trim()}
                 className="w-full py-2.5 bg-teal-700 text-white rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-teal-600 transition-colors"
               >
-                Add
+                Continue
               </button>
+            </div>
+          </>
+        )}
+
+        {screen === "matrix-auth" && matrixDraft && (
+          <>
+            <Header title={inferSourceBrand({ host: matrixDraft.host, serverName: matrixDraft.serverName }) === "mozilla" ? "Mozilla Source" : "Matrix Source"} onBack={() => setScreen("matrix")} />
+            <div className="space-y-4">
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/60 p-4 space-y-2">
+                <p className="text-sm font-medium text-on-surface">{matrixDraft.instanceName}</p>
+                <p className="text-xs text-on-surface-variant break-all">
+                  {matrixDraft.serverName ?? matrixDraft.host} via {matrixDraft.homeserverUrl}
+                </p>
+                <p className="text-xs text-on-surface-variant">
+                  Available login methods: {matrixDraft.authFlows.length > 0 ? matrixDraft.authFlows.join(", ") : "none advertised"}
+                </p>
+              </div>
+
+              {matrixDraft.authFlows.includes("password") && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={matrixUsername}
+                    onChange={(event) => setMatrixUsername(event.target.value)}
+                    placeholder="Matrix username"
+                    className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                  />
+                  <input
+                    type="password"
+                    value={matrixPassword}
+                    onChange={(event) => setMatrixPassword(event.target.value)}
+                    placeholder="Password"
+                    className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                  />
+                  <button
+                    onClick={handleMatrixPasswordLogin}
+                    disabled={!matrixUsername.trim() || !matrixPassword}
+                    className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
+                  >
+                    Sign in with password
+                  </button>
+                </div>
+              )}
+
+              {matrixDraft.authFlows.includes("sso") && (
+                <button
+                  onClick={handleMatrixSsoLogin}
+                  className="w-full py-2.5 bg-secondary/15 text-secondary rounded-lg text-sm font-medium hover:bg-secondary/20 transition-colors"
+                >
+                  Continue with SSO
+                </button>
+              )}
+
+              {!matrixDraft.authFlows.some((flow) => flow === "password" || flow === "sso") && (
+                <p className="text-xs text-on-surface-variant">
+                  This homeserver did not advertise an interactive login flow that Concord can complete here yet.
+                </p>
+              )}
             </div>
           </>
         )}

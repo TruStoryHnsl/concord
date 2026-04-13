@@ -7,6 +7,7 @@ import { Avatar } from "../ui/Avatar";
 export function ProfileTab() {
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
+  const logout = useAuthStore((s) => s.logout);
   const addToast = useToastStore((s) => s.addToast);
 
   const currentName = userId?.split(":")[0].replace("@", "") ?? "";
@@ -124,6 +125,15 @@ export function ProfileTab() {
 
       {/* Two-factor authentication */}
       <TOTPSection />
+
+      <div className="border-t border-outline-variant/15 pt-6">
+        <button
+          onClick={logout}
+          className="text-error border border-error/30 rounded px-4 py-2 hover:bg-error/10 transition-colors text-sm font-label font-medium min-h-[44px]"
+        >
+          Logout
+        </button>
+      </div>
     </div>
   );
 }

@@ -48,6 +48,8 @@ export interface HomeserverConfig {
   host: string;
   /** Matrix homeserver base URL (from `.well-known/matrix/client`). */
   homeserver_url: string;
+  /** Canonical Matrix server_name when the deployment advertises one. */
+  server_name?: string;
   /** Concord API base URL (from `.well-known/concord/client`, or fallback). */
   api_base: string;
   /** Optional Matrix identity server URL. */
@@ -146,7 +148,7 @@ function assertHttpsUrl(raw: unknown, sourceLabel: string): string {
  * consume are listed; unknown keys are ignored per spec.
  */
 interface MatrixClientWellKnown {
-  "m.homeserver"?: { base_url?: string };
+  "m.homeserver"?: { base_url?: string; server_name?: string };
   "m.identity_server"?: { base_url?: string };
 }
 
@@ -160,6 +162,12 @@ interface ConcordClientWellKnown {
   instance_name?: string;
   features?: string[];
   turn_servers?: Array<{ urls: string | string[] }>;
+  node_role?: unknown;
+  tunnel_anchor?: unknown;
+}
+
+interface ElementWebConfig {
+  default_server_config?: MatrixClientWellKnown;
 }
 
 /**
@@ -281,7 +289,7 @@ export async function discoverHomeserver(
   // cross-origin responses that lack Access-Control-Allow-Origin,
   // which is common for the concord well-known on deployments that
   // only add CORS to the matrix well-known inline response.
-  const [matrixSettled, concordSettled] = await Promise.allSettled([
+  const [matrixSettled, concordSettled, elementConfigSettled] = await Promise.allSettled([
     fetchWellKnown<MatrixClientWellKnown>(
       canonicalHost,
       "/.well-known/matrix/client",
@@ -291,6 +299,11 @@ export async function discoverHomeserver(
       canonicalHost,
       "/.well-known/concord/client",
       "concord/client",
+    ),
+    fetchWellKnown<ElementWebConfig>(
+      canonicalHost,
+      "/config.json",
+      "element-web config",
     ),
   ]);
 
@@ -307,6 +320,10 @@ export async function discoverHomeserver(
     concordSettled.status === "fulfilled"
       ? concordSettled.value
       : { status: "absent" };
+  const elementConfigResult: WellKnownResult<ElementWebConfig> =
+    elementConfigSettled.status === "fulfilled"
+      ? elementConfigSettled.value
+      : { status: "absent" };
 
   // ---------------------------------------------------------------
   // Matrix homeserver URL resolution
@@ -315,10 +332,17 @@ export async function discoverHomeserver(
   // `https://<host>` as the homeserver base URL. If present, the
   // `m.homeserver.base_url` field is REQUIRED — a present-but-malformed
   // well-known is a hard error, not something we silently ignore.
+  const matrixConfig =
+    matrixResult.status === "ok"
+      ? matrixResult.body
+      : elementConfigResult.status === "ok"
+        ? elementConfigResult.body.default_server_config
+        : undefined;
   let homeserverUrl: string;
   let identityServerUrl: string | undefined;
-  if (matrixResult.status === "ok") {
-    const raw = matrixResult.body["m.homeserver"]?.base_url;
+  let serverName: string | undefined;
+  if (matrixConfig) {
+    const raw = matrixConfig["m.homeserver"]?.base_url;
     if (raw === undefined) {
       // Present but missing the required field → treat as fallback.
       // This is the safest reading of the spec: a half-filled document
@@ -330,7 +354,11 @@ export async function discoverHomeserver(
     } else {
       homeserverUrl = assertHttpsUrl(raw, "m.homeserver.base_url");
     }
-    const idRaw = matrixResult.body["m.identity_server"]?.base_url;
+    const advertisedServerName = matrixConfig["m.homeserver"]?.server_name;
+    if (typeof advertisedServerName === "string" && advertisedServerName.length > 0) {
+      serverName = advertisedServerName.trim().toLowerCase();
+    }
+    const idRaw = matrixConfig["m.identity_server"]?.base_url;
     if (idRaw !== undefined) {
       identityServerUrl = assertHttpsUrl(idRaw, "m.identity_server.base_url");
     }
@@ -353,6 +381,8 @@ export async function discoverHomeserver(
   let instanceName: string | undefined;
   let features: string[] | undefined;
   let turnServers: HomeserverConfig["turn_servers"] | undefined;
+  let nodeRole: string | undefined;
+  let tunnelAnchor: boolean | undefined;
   if (concordResult.status === "ok") {
     const body = concordResult.body;
     if (typeof body.api_base === "string" && body.api_base.length > 0) {
@@ -395,6 +425,15 @@ export async function discoverHomeserver(
           s !== null && typeof s === "object" && "urls" in s,
       );
     }
+    if (
+      typeof body.node_role === "string" &&
+      ["anchor", "leaf", "hybrid"].includes(body.node_role)
+    ) {
+      nodeRole = body.node_role;
+    }
+    if (typeof body.tunnel_anchor === "boolean") {
+      tunnelAnchor = body.tunnel_anchor;
+    }
   } else {
     apiBase = assertHttpsUrl(
       `https://${canonicalHost}/api`,
@@ -405,11 +444,14 @@ export async function discoverHomeserver(
   return {
     host: canonicalHost,
     homeserver_url: homeserverUrl,
+    server_name: serverName,
     api_base: apiBase,
     identity_server_url: identityServerUrl,
     livekit_url: livekitUrl,
     instance_name: instanceName,
     features,
     turn_servers: turnServers,
+    node_role: nodeRole,
+    tunnel_anchor: tunnelAnchor,
   };
 }

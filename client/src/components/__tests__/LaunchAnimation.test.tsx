@@ -32,7 +32,7 @@ describe("<LaunchAnimation />", () => {
     expect(splash).toBeInTheDocument();
     expect(splash.getAttribute("data-phase")).toBe("showing");
     // Concord wordmark must be visible in the splash body.
-    expect(screen.getByText(/^Concord$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/^Concord$/).length).toBeGreaterThan(0);
   });
 
   it("stays in 'showing' while isLoading is true, even after min duration", () => {

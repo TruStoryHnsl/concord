@@ -5,28 +5,25 @@ describe("computeInitialServerConnected", () => {
   it("skips the picker on desktop web when no config is set", () => {
     expect(
       computeInitialServerConnected({
-        isDesktop: false,
-        isMobile: false,
+        isNative: false,
         hasNewConfig: false,
       }),
     ).toBe(true);
   });
 
-  it("shows the picker on mobile web when no config is set", () => {
+  it("skips the picker on mobile web when no config is set", () => {
     expect(
       computeInitialServerConnected({
-        isDesktop: false,
-        isMobile: true,
+        isNative: false,
         hasNewConfig: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("shows the picker on Tauri desktop when no config is set", () => {
     expect(
       computeInitialServerConnected({
-        isDesktop: true,
-        isMobile: false,
+        isNative: true,
         hasNewConfig: false,
       }),
     ).toBe(false);
@@ -35,24 +32,20 @@ describe("computeInitialServerConnected", () => {
   it("shows the picker on Tauri mobile (iOS/Android native) when no config is set", () => {
     expect(
       computeInitialServerConnected({
-        isDesktop: true,
-        isMobile: true,
+        isNative: true,
         hasNewConfig: false,
       }),
     ).toBe(false);
   });
 
   it("skips the picker on any platform once serverConfig has a HomeserverConfig", () => {
-    for (const isDesktop of [true, false]) {
-      for (const isMobile of [true, false]) {
+    for (const isNative of [true, false]) {
         expect(
           computeInitialServerConnected({
-            isDesktop,
-            isMobile,
+            isNative,
             hasNewConfig: true,
           }),
         ).toBe(true);
-      }
     }
   });
 
@@ -69,8 +62,7 @@ describe("computeInitialServerConnected", () => {
     // even accept it as an input), the gate must still show the
     // picker on a native build that hasn't completed one.
     const input = {
-      isDesktop: true,
-      isMobile: false,
+      isNative: true,
       hasNewConfig: false,
     } as const;
     expect(computeInitialServerConnected(input)).toBe(false);

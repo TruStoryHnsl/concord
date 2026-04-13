@@ -16,8 +16,6 @@ export function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [validatingInvite, setValidatingInvite] = useState(false);
   const [instanceName, setInstanceName] = useState("Concord");
-  const [showWelcome, setShowWelcome] = useState(true);
-  const [welcomeFading, setWelcomeFading] = useState(false);
   const [showDownloads, setShowDownloads] = useState(false);
 
   // TOTP verification state
@@ -38,12 +36,6 @@ export function LoginForm() {
         }
       })
       .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const fadeTimer = setTimeout(() => setWelcomeFading(true), 1500);
-    const hideTimer = setTimeout(() => setShowWelcome(false), 2200);
-    return () => { clearTimeout(fadeTimer); clearTimeout(hideTimer); };
   }, []);
 
   useEffect(() => {
@@ -99,6 +91,11 @@ export function LoginForm() {
         }
         login(result.accessToken, result.userId, result.deviceId);
       } else {
+        if (!inviteToken.trim()) {
+          setError("A valid registration token is required to create an account.");
+          setLoading(false);
+          return;
+        }
         const result = await registerUser(username, password, inviteToken || undefined);
         login(result.access_token, result.user_id, result.device_id);
         sessionStorage.removeItem(INVITE_STORAGE_KEY);
@@ -165,6 +162,7 @@ export function LoginForm() {
           </div>
         ) : (
         <>
+        <ConcordLogo size={80} className="mx-auto mb-5" />
         <h1 className="text-3xl font-headline font-bold text-on-surface text-center mb-2">
           {instanceName}
         </h1>
@@ -210,6 +208,7 @@ export function LoginForm() {
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}
+              required
             />
           )}
           {error && <p className="text-error text-sm font-body">{error}</p>}
@@ -231,7 +230,10 @@ export function LoginForm() {
             <button
               type={mode === "register" ? "submit" : "button"}
               onClick={mode !== "register" ? () => setMode("register") : undefined}
-              disabled={mode === "register" && (loading || validatingInvite)}
+              disabled={
+                mode === "register" &&
+                (loading || validatingInvite || !inviteToken.trim())
+              }
               className={`flex-1 py-3 font-headline font-semibold rounded-xl transition-all ${
                 mode === "register"
                   ? "primary-glow text-on-primary hover:brightness-110 shadow-lg shadow-primary/20 disabled:opacity-40"
@@ -279,31 +281,6 @@ export function LoginForm() {
         </>
         )}
       </div>
-
-      {/* Welcome overlay — rendered LAST so paint order also wins.
-          `fixed inset-0` covers the viewport regardless of any parent stacking context.
-          `z-50` matches every other full-screen modal in the app. */}
-      {showWelcome && (
-        <div
-          className={`fixed inset-0 z-50 bg-surface flex items-center justify-center transition-opacity duration-700 ${
-            welcomeFading ? "opacity-0 pointer-events-none" : "opacity-100"
-          }`}
-          style={{ backgroundColor: "var(--color-surface)" }}
-        >
-          <div className="text-center">
-            <ConcordLogo
-              size={96}
-              className="mx-auto mb-4 animate-[fadeSlideUp_0.6s_ease-out]"
-            />
-            <h1 className="text-5xl font-headline font-bold text-primary mb-3 animate-[fadeSlideUp_0.6s_ease-out_0.1s_both]">
-              {instanceName}
-            </h1>
-            <p className="text-on-surface-variant text-lg font-body animate-[fadeSlideUp_0.6s_ease-out_0.2s_both]">
-              Welcome back
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

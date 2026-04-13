@@ -38,7 +38,7 @@ describe("<SourcesPanel />", () => {
     expect(onSourceSelect).toHaveBeenCalledWith("src_matrix");
   });
 
-  it("right click opens the source menu without toggling the source", () => {
+  it("right click opens the source browser directly without toggling the source", () => {
     const onSourceOpen = vi.fn();
     render(
       <SourcesPanel
@@ -50,11 +50,6 @@ describe("<SourcesPanel />", () => {
     fireEvent.contextMenu(screen.getByTitle("Matrix — Matrix"));
 
     expect(useSourcesStore.getState().sources[0].enabled).toBe(true);
-    expect(screen.getByRole("button", { name: /open source menu/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /disable source/i })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /open source menu/i }));
-
     expect(onSourceOpen).toHaveBeenCalledWith("src_matrix");
   });
 });

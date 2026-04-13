@@ -21,6 +21,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
+import { useToastStore } from "../../stores/toast";
 import {
   discordBridgeHttpGetChannel,
   discordBridgeHttpGetInviteUrl,
@@ -28,9 +29,11 @@ import {
   discordBridgeHttpListGuilds,
   type DiscordVoiceBridgeRoom,
   discordVoiceBridgeHttpListRooms,
+  discordVoiceBridgeHttpRestart,
   discordVoiceBridgeHttpStart,
   discordVoiceBridgeHttpUpsertRoom,
 } from "../../api/bridges";
+import { SourceBrandIcon } from "./sourceBrand";
 
 // ── Alias parser ────────────────────────────────────────────────────────────
 
@@ -137,6 +140,42 @@ type Screen =
   | "login-account"
   | "bridge-guild";
 
+function voiceMappingsStorageKey(userId: string | null): string {
+  return userId ? `concord_discord_voice_mappings:${userId}` : "concord_discord_voice_mappings";
+}
+
+function readCachedVoiceMappings(userId: string | null): DiscordVoiceBridgeRoom[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(voiceMappingsStorageKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is DiscordVoiceBridgeRoom =>
+        item &&
+        typeof item === "object" &&
+        typeof item.id === "number" &&
+        typeof item.matrix_room_id === "string" &&
+        typeof item.discord_guild_id === "string" &&
+        typeof item.discord_channel_id === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedVoiceMappings(
+  userId: string | null,
+  rooms: DiscordVoiceBridgeRoom[],
+): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    voiceMappingsStorageKey(userId),
+    JSON.stringify(rooms),
+  );
+}
+
 // ── Header ───────────────────────────────────────────────────────────────────
 
 function Header({
@@ -158,8 +197,9 @@ function Header({
           <span className="material-symbols-outlined text-lg">arrow_back</span>
         </button>
       )}
-      {/* Discord blurple accent dot */}
-      <div className="w-2 h-2 rounded-full bg-[#5865F2] flex-shrink-0" />
+      <div className="w-9 h-9 rounded-xl bg-[#5865F2]/12 ring-1 ring-[#5865F2]/30 flex items-center justify-center flex-shrink-0">
+        <SourceBrandIcon brand="discord" size={18} />
+      </div>
       <h2 className="flex-1 text-lg font-headline font-semibold text-on-surface">
         {title}
       </h2>
@@ -217,6 +257,7 @@ function LinkStepList({ steps }: { steps: LinkStep[] }) {
 export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
+  const addToast = useToastStore((s) => s.addToast);
   const servers = useServerStore((s) => s.servers);
   const activeServerId = useServerStore((s) => s.activeServerId);
   const activeChannelId = useServerStore((s) => s.activeChannelId);
@@ -244,7 +285,9 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const [discordGuilds, setDiscordGuilds] = useState<{ id: string; name: string; icon: string | null }[]>([]);
   const [guildsLoading, setGuildsLoading] = useState(false);
   const [bridgingGuildId, setBridgingGuildId] = useState<string | null>(null);
-  const [voiceMappings, setVoiceMappings] = useState<DiscordVoiceBridgeRoom[]>([]);
+  const [voiceMappings, setVoiceMappings] = useState<DiscordVoiceBridgeRoom[]>(
+    () => readCachedVoiceMappings(userId),
+  );
 
   const openInviteScreen = useCallback(async () => {
     setScreen("invite-bot");
@@ -442,6 +485,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
         ]);
         if (cancelled) return;
         setVoiceMappings(rooms);
+        writeCachedVoiceMappings(userId, rooms);
 
         const latestServers = useServerStore.getState().servers;
         for (const room of rooms) {
@@ -486,7 +530,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, ensureDiscordGuild, resolvedGuildNames, servers.length]);
+  }, [accessToken, ensureDiscordGuild, resolvedGuildNames, servers.length, userId]);
 
   // ── Navigate to a bridged room ─────────────────────────────────────────────
 
@@ -630,13 +674,21 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           );
 
           startStep("write-voice-mapping", "Write Discord voice mapping");
-          await discordVoiceBridgeHttpUpsertRoom(accessToken, {
+          const mapping = await discordVoiceBridgeHttpUpsertRoom(accessToken, {
             channel_id: voiceChannel.id,
             discord_guild_id: discordGuildId,
             discord_channel_id: info.id,
             enabled: true,
           }).catch((err) => failCurrentStep("write-voice-mapping", err));
           finishStep("write-voice-mapping", "ok", `discord_channel=${info.id}`);
+          setVoiceMappings((prev) => {
+            const next = [
+              ...prev.filter((entry) => entry.id !== mapping.id),
+              mapping,
+            ];
+            writeCachedVoiceMappings(userId, next);
+            return next;
+          });
 
           startStep("start-voice-sidecar", "Start Discord voice sidecar");
           const startResult = await discordVoiceBridgeHttpStart(accessToken)
@@ -759,6 +811,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     accessToken,
     activeChannelId,
     activeServerId,
+    addToast,
     channelId,
     client,
     discordGuilds,
@@ -771,6 +824,20 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     testMsg,
     userId,
   ]);
+
+  const handleReloadBridge = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const result = await discordVoiceBridgeHttpRestart(accessToken);
+      addToast(result.message, "success");
+      voiceOverlayLoadedForToken.current = null;
+      const rooms = await discordVoiceBridgeHttpListRooms(accessToken);
+      setVoiceMappings(rooms);
+      writeCachedVoiceMappings(userId, rooms);
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Bridge reload failed", "error");
+    }
+  }, [accessToken, addToast, userId]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -848,6 +915,13 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
               )}
             </div>
             <div className="mt-4 pt-4 border-t border-outline-variant/10 flex-shrink-0 space-y-2">
+              <button
+                onClick={handleReloadBridge}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface text-xs transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">refresh</span>
+                Reload bridge
+              </button>
               <button
                 onClick={async () => {
                   setScreen("bridge-guild");

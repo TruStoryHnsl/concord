@@ -94,6 +94,8 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const openServerSettings = useSettingsStore((s) => s.openServerSettings);
+  const settingsOpen = useSettingsStore((s) => s.settingsOpen);
+  const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
   const channelNotifications = useSettingsStore((s) => s.channelNotifications);
   const setChannelNotificationLevel = useSettingsStore((s) => s.setChannelNotificationLevel);
   const closeSettings = useSettingsStore((s) => s.closeSettings);
@@ -303,7 +305,14 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
         <div className="flex items-center gap-1">
           {canOpenSettings && (
             <button
-              onClick={() => openServerSettings(server.id)}
+              onClick={() => {
+                if (settingsOpen && serverSettingsId === server.id) {
+                  closeServerSettings();
+                  closeSettings();
+                  return;
+                }
+                openServerSettings(server.id);
+              }}
               title="Server Settings"
               className="text-on-surface-variant hover:text-on-surface transition-colors"
             >
@@ -706,6 +715,10 @@ export function UserBar({
   logout: () => void;
 }) {
   const openSettings = useSettingsStore((s) => s.openSettings);
+  const settingsOpen = useSettingsStore((s) => s.settingsOpen);
+  const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
+  const closeSettings = useSettingsStore((s) => s.closeSettings);
+  const closeServerSettings = useSettingsStore((s) => s.closeServerSettings);
   // `__TAURI_INTERNALS__` is the canonical Tauri v2 global; see the
   // comment in `client/src/api/serverUrl.ts` for the full history.
   const isNative =
@@ -749,7 +762,14 @@ export function UserBar({
       </div>
       <div className="flex items-center gap-1">
         <button
-          onClick={() => openSettings()}
+          onClick={() => {
+            if (settingsOpen || serverSettingsId) {
+              closeServerSettings();
+              closeSettings();
+              return;
+            }
+            openSettings();
+          }}
           className="flex items-center gap-1 px-2 py-1 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
           title="Settings"
         >
@@ -764,13 +784,6 @@ export function UserBar({
             <span className="material-symbols-outlined text-lg">swap_horiz</span>
           </button>
         )}
-        <button
-          onClick={logout}
-          className="px-2 py-1 rounded-lg text-xs text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors font-label"
-          title="Sign out of your account on this instance"
-        >
-          Logout
-        </button>
       </div>
     </div>
   );

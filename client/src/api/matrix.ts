@@ -1,6 +1,8 @@
 import * as sdk from "matrix-js-sdk";
 import { getHomeserverUrl } from "./serverUrl";
 
+export type MatrixLoginFlowKind = "password" | "sso" | "token";
+
 function buildStoreKey(userId: string, homeserverUrl: string): string {
   const scope = `${userId}|${homeserverUrl}`.replace(/[^A-Za-z0-9_.-]+/g, "_");
   return `concord_matrix_store_${scope}`;
@@ -10,8 +12,9 @@ export function createMatrixClient(
   accessToken: string,
   userId: string,
   deviceId: string,
+  homeserverUrl = getHomeserverUrl(),
 ): sdk.MatrixClient {
-  const baseUrl = getHomeserverUrl();
+  const baseUrl = homeserverUrl;
   const store =
     typeof window !== "undefined" &&
     typeof window.indexedDB !== "undefined" &&
@@ -33,15 +36,68 @@ export function createMatrixClient(
   return client;
 }
 
+export async function fetchLoginFlows(
+  homeserverUrl: string,
+): Promise<MatrixLoginFlowKind[]> {
+  const tempClient = sdk.createClient({ baseUrl: homeserverUrl });
+  const response = await tempClient.loginFlows();
+  const supported = new Set<MatrixLoginFlowKind>();
+  for (const flow of response.flows ?? []) {
+    if (flow.type === "m.login.password") supported.add("password");
+    if (flow.type === "m.login.sso" || flow.type === "m.login.cas") {
+      supported.add("sso");
+    }
+    if (flow.type === "m.login.token") supported.add("token");
+  }
+  return [...supported];
+}
+
+export function buildSsoRedirectUrl(
+  homeserverUrl: string,
+  redirectUrl: string,
+  idpId?: string,
+): string {
+  const path = idpId
+    ? `/_matrix/client/v3/login/sso/redirect/${encodeURIComponent(idpId)}`
+    : "/_matrix/client/v3/login/sso/redirect";
+  const url = new URL(path, homeserverUrl.endsWith("/") ? homeserverUrl : `${homeserverUrl}/`);
+  url.searchParams.set("redirectUrl", redirectUrl);
+  return url.toString();
+}
+
 export async function loginWithPassword(
   username: string,
   password: string,
 ): Promise<{ accessToken: string; userId: string; deviceId: string }> {
-  const tempClient = sdk.createClient({ baseUrl: getHomeserverUrl() });
+  return loginWithPasswordAtBaseUrl(getHomeserverUrl(), username, password);
+}
+
+export async function loginWithPasswordAtBaseUrl(
+  homeserverUrl: string,
+  username: string,
+  password: string,
+): Promise<{ accessToken: string; userId: string; deviceId: string }> {
+  const tempClient = sdk.createClient({ baseUrl: homeserverUrl });
   const response = await tempClient.login("m.login.password", {
     user: username,
     password,
     initial_device_display_name: "Concord Web",
+  });
+  return {
+    accessToken: response.access_token,
+    userId: response.user_id,
+    deviceId: response.device_id,
+  };
+}
+
+export async function loginWithTokenAtBaseUrl(
+  homeserverUrl: string,
+  loginToken: string,
+): Promise<{ accessToken: string; userId: string; deviceId: string }> {
+  const tempClient = sdk.createClient({ baseUrl: homeserverUrl });
+  const response = await tempClient.login("m.login.token", {
+    token: loginToken,
+    initial_device_display_name: "Concord Source",
   });
   return {
     accessToken: response.access_token,

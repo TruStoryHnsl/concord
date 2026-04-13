@@ -15,6 +15,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { MatrixLoginFlowKind } from "../api/matrix";
 import { useServerConfigStore } from "./serverConfig";
 
 export interface ConcordSource {
@@ -30,10 +31,20 @@ export interface ConcordSource {
   accessToken?: string;
   /** Matrix user ID on this instance (e.g., "@user:chat.example.com"). */
   userId?: string;
+  /** Matrix device ID for the authenticated source session. */
+  deviceId?: string;
   /** Concord API base URL (from well-known discovery). */
   apiBase: string;
   /** Matrix homeserver URL (from well-known discovery). */
   homeserverUrl: string;
+  /** Canonical Matrix server_name after login/discovery, if known. */
+  serverName?: string;
+  /** Original typed host when discovery delegates elsewhere. */
+  delegatedFrom?: string;
+  /** Server-advertised login flows supported by this source. */
+  authFlows?: MatrixLoginFlowKind[];
+  /** Last source-auth error surfaced to the user. */
+  authError?: string;
   /** Connection status. */
   status: "connecting" | "connected" | "disconnected" | "error";
   /** Whether this source's servers are visible in the server column. */
@@ -46,10 +57,47 @@ export interface ConcordSource {
   platform?: "concord" | "matrix" | "discord-bot" | "discord-account";
 }
 
+export function getSourceHomeserverHost(source: Pick<ConcordSource, "homeserverUrl">): string | null {
+  if (!source.homeserverUrl) return null;
+  try {
+    return new URL(source.homeserverUrl).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function getSourceMatrixDomains(
+  source: Pick<ConcordSource, "host" | "serverName" | "delegatedFrom" | "homeserverUrl">,
+): string[] {
+  const domains = new Set<string>();
+  const push = (value?: string) => {
+    const normalized = value?.trim().toLowerCase();
+    if (normalized) domains.add(normalized);
+  };
+  push(source.host);
+  push(source.serverName);
+  push(source.delegatedFrom);
+  push(getSourceHomeserverHost(source) ?? undefined);
+  return [...domains];
+}
+
+export function sourceMatchesMatrixDomain(
+  source: Pick<ConcordSource, "host" | "serverName" | "delegatedFrom" | "homeserverUrl">,
+  domain: string,
+): boolean {
+  const normalized = domain.trim().toLowerCase();
+  if (!normalized) return false;
+  return getSourceMatrixDomains(source).includes(normalized);
+}
+
 export interface SourcesState {
   sources: ConcordSource[];
   /** Add a new source. Returns the generated source ID. */
   addSource: (source: Omit<ConcordSource, "id" | "addedAt">) => string;
+  /** Persist a new source tile order. */
+  reorderSources: (activeId: string, overId: string) => void;
+  /** Replace the full persisted source order. */
+  setSourceOrder: (orderedIds: string[]) => void;
   /** Update an existing source by ID. */
   updateSource: (id: string, patch: Partial<ConcordSource>) => void;
   /** Remove a source by ID. */
@@ -103,6 +151,37 @@ export const useSourcesStore = create<SourcesState>()(
         };
         set((state) => ({ sources: [...state.sources, full] }));
         return id;
+      },
+
+      reorderSources: (activeId, overId) => {
+        if (activeId === overId) return;
+        set((state) => {
+          const from = state.sources.findIndex((source) => source.id === activeId);
+          const to = state.sources.findIndex((source) => source.id === overId);
+          if (from === -1 || to === -1) return state;
+          const next = [...state.sources];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          return { sources: next };
+        });
+      },
+
+      setSourceOrder: (orderedIds) => {
+        set((state) => {
+          const byId = new Map(state.sources.map((source) => [source.id, source] as const));
+          const ordered: ConcordSource[] = [];
+          const seen = new Set<string>();
+          for (const id of orderedIds) {
+            const source = byId.get(id);
+            if (!source || seen.has(id)) continue;
+            ordered.push(source);
+            seen.add(id);
+          }
+          for (const source of state.sources) {
+            if (!seen.has(source.id)) ordered.push(source);
+          }
+          return { sources: ordered };
+        });
       },
 
       updateSource: (id, patch) => {
@@ -220,7 +299,7 @@ export const useSourcesStore = create<SourcesState>()(
           : { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       ),
       partialize: (state) => ({ sources: state.sources }),
-      version: 2,
+      version: 3,
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as { sources?: ConcordSource[] };
         if (version === 0 && state.sources) {
@@ -234,6 +313,16 @@ export const useSourcesStore = create<SourcesState>()(
           state.sources = state.sources.map((s) => ({
             ...s,
             platform: s.platform ?? "concord",
+          }));
+        }
+        if (version < 3 && state.sources) {
+          state.sources = state.sources.map((s) => ({
+            ...s,
+            serverName: s.serverName ?? undefined,
+            delegatedFrom: s.delegatedFrom ?? undefined,
+            authFlows: s.authFlows ?? undefined,
+            authError: s.authError ?? undefined,
+            deviceId: s.deviceId ?? undefined,
           }));
         }
         return state as SourcesState;

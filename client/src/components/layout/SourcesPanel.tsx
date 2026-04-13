@@ -1,53 +1,160 @@
-/**
- * SourcesPanel — thin icon-only source switcher.
- *
- * Design: narrow dark column (w-14), square tiles per source,
- * no text labels. Each tile has a title tooltip. Active source
- * gets a white left-side pill indicator. Header: Explore. Footer:
- * Add Source below the registered source stack.
- *
- * Tile colors:
- *   concord / default → primary brand color, first letter
- *   matrix            → teal, "M"
- *   discord-bot       → Discord blurple (#5865F2), game controller icon
- *   discord-account   → Discord blurple (#5865F2), person icon
- */
-
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useAuthStore } from "../../stores/auth";
 import { useSourcesStore, type ConcordSource } from "../../stores/sources";
+import {
+  SourceBrandIcon,
+  inferSourceBrand,
+  type SourceBrand,
+} from "../sources/sourceBrand";
+
+const SOURCE_RAIL_STORAGE_KEY_PREFIX = "concord_source_rail_order";
+const ADD_SOURCE_TILE_ID = "__add_source_tile__";
+
+function readStoredRailOrder(userId: string | null): string[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(
+      `${SOURCE_RAIL_STORAGE_KEY_PREFIX}:${userId ?? "anon"}`,
+    );
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredRailOrder(userId: string | null, order: string[]): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    `${SOURCE_RAIL_STORAGE_KEY_PREFIX}:${userId ?? "anon"}`,
+    JSON.stringify(order),
+  );
+}
+
+function normalizeRailOrder(sourceIds: string[], stored: string[] | null): string[] {
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const id of stored ?? []) {
+    if (id !== ADD_SOURCE_TILE_ID && !sourceIds.includes(id)) continue;
+    if (seen.has(id)) continue;
+    next.push(id);
+    seen.add(id);
+  }
+  for (const id of sourceIds) {
+    if (!seen.has(id)) {
+      next.push(id);
+      seen.add(id);
+    }
+  }
+  if (!seen.has(ADD_SOURCE_TILE_ID)) next.push(ADD_SOURCE_TILE_ID);
+  return next;
+}
 
 function sourceTile(source: ConcordSource): {
+  brand: SourceBrand;
   bg: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
 } {
   const label = source.instanceName ?? source.host;
-  switch (source.platform) {
-    case "discord-bot":
+  const brand = inferSourceBrand(source);
+  switch (brand) {
+    case "discord":
       return {
+        brand,
         bg: "bg-[#5865F2]",
-        icon: <span className="material-symbols-outlined text-white text-lg">videogame_asset</span>,
-        label: `Discord Bridge — ${label}`,
+        icon: <SourceBrandIcon brand={brand} size={20} />,
+        label:
+          source.platform === "discord-account"
+            ? `Discord Account — ${label}`
+            : `Discord Bridge — ${label}`,
       };
-    case "discord-account":
+    case "mozilla":
       return {
-        bg: "bg-[#5865F2]",
-        icon: <span className="material-symbols-outlined text-white text-lg">person_play</span>,
-        label: `Discord Account — ${label}`,
+        brand,
+        bg: "bg-[#111318]",
+        icon: <SourceBrandIcon brand={brand} size={18} />,
+        label: `Mozilla — ${label}`,
       };
     case "matrix":
       return {
-        bg: "bg-teal-700",
-        icon: <span className="text-white text-sm font-bold">M</span>,
+        brand,
+        bg: "bg-[#111318]",
+        icon: <SourceBrandIcon brand={brand} size={18} />,
         label: `Matrix — ${label}`,
       };
     default:
       return {
-        bg: "bg-primary",
-        icon: <span className="text-on-primary text-sm font-bold">{label.charAt(0).toUpperCase()}</span>,
+        brand,
+        bg: "bg-primary/12 ring-1 ring-primary/25",
+        icon: <SourceBrandIcon brand={brand} size={20} />,
         label,
       };
   }
+}
+
+function SortableSourceTile({
+  source,
+  onToggle,
+  onSourceOpen,
+}: {
+  source: ConcordSource;
+  onToggle: (id: string) => void;
+  onSourceOpen?: (sourceId: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: source.id });
+  const { bg, icon, label } = sourceTile(source);
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.7 : 1,
+      }}
+      className="w-full flex items-center justify-center flex-shrink-0"
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        onClick={() => onToggle(source.id)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onSourceOpen?.(source.id);
+        }}
+        title={label}
+        className={`group w-11 h-11 flex items-center justify-center transition-all duration-150 ${bg} ${
+          source.enabled
+            ? "rounded-2xl shadow-lg scale-100 text-on-surface"
+            : "rounded-xl hover:rounded-2xl scale-95 hover:scale-100 opacity-45 hover:opacity-80 grayscale"
+        }`}
+      >
+        {icon}
+      </button>
+    </div>
+  );
 }
 
 export function SourcesPanel({
@@ -62,27 +169,87 @@ export function SourcesPanel({
   onSourceOpen?: (sourceId: string) => void;
   onExplore?: () => void;
 }) {
+  const currentUserId = useAuthStore((s) => s.userId);
   const sources = useSourcesStore((s) => s.sources);
   const toggleSource = useSourcesStore((s) => s.toggleSource);
-  const [menu, setMenu] = useState<{ sourceId: string; x: number; y: number } | null>(null);
+  const setSourceOrder = useSourcesStore((s) => s.setSourceOrder);
 
-  useEffect(() => {
-    if (!menu) return;
-    const handleClick = () => setMenu(null);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
-    };
-    window.addEventListener("click", handleClick);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("click", handleClick);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [menu]);
+  const isTouchDevice =
+    typeof window !== "undefined" &&
+    ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+  const sensors = useSensors(
+    ...(isTouchDevice
+      ? [useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } })]
+      : [useSensor(PointerSensor, { activationConstraint: { distance: 6 } })]),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   const handleToggle = (id: string) => {
     toggleSource(id);
     onSourceSelect?.(id);
+  };
+
+  const [railOrder, setRailOrder] = useState<string[]>(() =>
+    normalizeRailOrder(
+      sources.map((source) => source.id),
+      readStoredRailOrder(currentUserId),
+    ),
+  );
+
+  useEffect(() => {
+    setRailOrder((current) => {
+      const next = normalizeRailOrder(
+        sources.map((source) => source.id),
+        current.length > 0 ? current : readStoredRailOrder(currentUserId),
+      );
+      writeStoredRailOrder(currentUserId, next);
+      return next;
+    });
+  }, [currentUserId, sources]);
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    setRailOrder((current) => {
+      const from = current.indexOf(String(active.id));
+      const to = current.indexOf(String(over.id));
+      if (from === -1 || to === -1) return current;
+      const next = arrayMove(current, from, to);
+      writeStoredRailOrder(currentUserId, next);
+      setSourceOrder(next.filter((id) => id !== ADD_SOURCE_TILE_ID));
+      return next;
+    });
+  };
+
+  const topRailIds = useMemo(() => {
+    const split = railOrder.indexOf(ADD_SOURCE_TILE_ID);
+    return split === -1 ? railOrder : railOrder.slice(0, split);
+  }, [railOrder]);
+  const bottomRailIds = useMemo(() => {
+    const split = railOrder.indexOf(ADD_SOURCE_TILE_ID);
+    return split === -1 ? [ADD_SOURCE_TILE_ID] : railOrder.slice(split);
+  }, [railOrder]);
+
+  const renderRailTile = (id: string) => {
+    if (id === ADD_SOURCE_TILE_ID) {
+      return (
+        <SortableAddSourceTile
+          key={id}
+          onAddSource={onAddSource}
+        />
+      );
+    }
+    const source = sources.find((entry) => entry.id === id);
+    if (!source) return null;
+    return (
+      <SortableSourceTile
+        key={source.id}
+        source={source}
+        onToggle={handleToggle}
+        onSourceOpen={onSourceOpen}
+      />
+    );
   };
 
   return (
@@ -92,7 +259,7 @@ export function SourcesPanel({
           <button
             onClick={onExplore}
             title="Explore"
-            className="w-10 h-10 rounded-xl hover:rounded-2xl bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-all duration-150"
+            className="w-11 h-11 rounded-2xl hover:rounded-xl bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-all duration-150"
           >
             <span className="material-symbols-outlined text-xl">explore</span>
           </button>
@@ -104,91 +271,56 @@ export function SourcesPanel({
       )}
 
       {/* Source tiles — scrollable, top-down */}
-      <div className="flex-1 min-h-0 overflow-y-auto w-full flex flex-col items-center gap-2 py-1 scrollbar-none">
-        {sources.map((source) => {
-          const { bg, icon, label } = sourceTile(source);
-          const isEnabled = source.enabled;
-          return (
-            <div
-              key={source.id}
-              className="relative w-full flex items-center justify-center flex-shrink-0"
-            >
-              {/* Active pill — white bar on the left edge */}
-              <div
-                className={`absolute left-0 w-1 rounded-r-full bg-white transition-all duration-150 ${
-                  isEnabled ? "h-8 opacity-100" : "h-2 opacity-0 group-hover:opacity-60 group-hover:h-4"
-                }`}
-              />
-              <button
-                onClick={() => handleToggle(source.id)}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setMenu({ sourceId: source.id, x: event.clientX, y: event.clientY });
-                }}
-                title={label}
-                className={`group w-10 h-10 flex items-center justify-center transition-all duration-150 ${bg} ${
-                  isEnabled
-                    ? "rounded-2xl shadow-lg scale-100"
-                    : "rounded-xl hover:rounded-2xl scale-95 hover:scale-100 opacity-50 hover:opacity-80 grayscale"
-                }`}
-              >
-                {icon}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="flex-shrink-0 pt-2">
-        <button
-          onClick={onAddSource}
-          title="Add Source"
-          className="w-10 h-10 rounded-xl hover:rounded-2xl bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-all duration-150"
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={railOrder}
+          strategy={verticalListSortingStrategy}
         >
-          <span className="material-symbols-outlined text-xl">add</span>
-        </button>
-      </div>
-
-      {menu && (() => {
-        const source = sources.find((entry) => entry.id === menu.sourceId);
-        if (!source) return null;
-        return (
-          <div
-            className="fixed inset-0 z-50"
-            onClick={() => setMenu(null)}
-          >
-            <div
-              className="absolute min-w-44 rounded-xl border border-outline-variant/20 bg-surface-container shadow-2xl p-1"
-              style={{ left: menu.x, top: menu.y }}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <button
-                onClick={() => {
-                  onSourceOpen?.(source.id);
-                  setMenu(null);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-container-high transition-colors"
-              >
-                <span className="material-symbols-outlined text-base">open_in_new</span>
-                Open source menu
-              </button>
-              <button
-                onClick={() => {
-                  handleToggle(source.id);
-                  setMenu(null);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface hover:bg-surface-container-high transition-colors"
-              >
-                <span className="material-symbols-outlined text-base">
-                  {source.enabled ? "visibility_off" : "visibility"}
-                </span>
-                {source.enabled ? "Disable source" : "Enable source"}
-              </button>
+          <div className="flex-1 min-h-0 w-full flex flex-col items-center py-1">
+            <div className="w-full flex flex-col items-center gap-2">
+              {topRailIds.map(renderRailTile)}
+            </div>
+            <div className="flex-1 min-h-4" aria-hidden="true" />
+            <div className="w-full flex flex-col items-center gap-2">
+              {bottomRailIds.map(renderRailTile)}
             </div>
           </div>
-        );
-      })()}
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
+function SortableAddSourceTile({
+  onAddSource,
+}: {
+  onAddSource: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: ADD_SOURCE_TILE_ID });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.7 : 1,
+      }}
+      className="w-full flex items-center justify-center flex-shrink-0"
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        onClick={onAddSource}
+        title="Add Source"
+        className="w-11 h-11 rounded-2xl hover:rounded-xl bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-all duration-150"
+      >
+        <span className="material-symbols-outlined text-xl">add</span>
+      </button>
     </div>
   );
 }
