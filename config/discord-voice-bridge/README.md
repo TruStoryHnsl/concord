@@ -4,5 +4,8 @@
 `discord_voice_bridges` table and read by the
 `concord-discord-voice-bridge` sidecar.
 
+It is intentionally untracked in Git. Runtime rewrites must not dirty
+the worktree or get mistaken for source changes during deploys.
+
 The file does not contain secrets. Discord and LiveKit credentials are
 injected through environment variables in `docker-compose.yml`.
