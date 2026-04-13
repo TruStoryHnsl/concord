@@ -131,6 +131,33 @@ describe("<ExploreModal />", () => {
     expect(mockedListExploreServers).not.toHaveBeenCalled();
   });
 
+  it("fetches only once per open cycle, then refetches after close and reopen", async () => {
+    mockedListExploreServers.mockResolvedValue([
+      {
+        domain: "alpha.example.org",
+        name: "Alpha Instance",
+        description: null,
+      },
+    ]);
+
+    const { rerender } = render(<ExploreModal isOpen={true} onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Instance")).toBeInTheDocument();
+    });
+    expect(mockedListExploreServers).toHaveBeenCalledTimes(1);
+
+    rerender(<ExploreModal isOpen={true} onClose={() => {}} />);
+    expect(mockedListExploreServers).toHaveBeenCalledTimes(1);
+
+    rerender(<ExploreModal isOpen={false} onClose={() => {}} />);
+    rerender(<ExploreModal isOpen={true} onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(mockedListExploreServers).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("does not render connected sources in the explore list", async () => {
     mockedListExploreServers.mockResolvedValueOnce([]);
     useSourcesStore.setState({
