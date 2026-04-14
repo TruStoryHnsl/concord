@@ -22,6 +22,7 @@ import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { CustomAudioRenderer } from "./components/voice/CustomAudioRenderer";
+import { buildLiveKitAudioCaptureOptions } from "./voice/noiseGate";
 
 // Capture invite token immediately at module load — before React mounts,
 // before session restoration, before anything can clear the URL.
@@ -103,6 +104,9 @@ export default function App() {
   const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
   const autoGainControl = useSettingsStore((s) => s.autoGainControl);
   const preferredInputDeviceId = useSettingsStore((s) => s.preferredInputDeviceId);
+  const masterInputVolume = useSettingsStore((s) => s.masterInputVolume);
+  const inputNoiseGateEnabled = useSettingsStore((s) => s.inputNoiseGateEnabled);
+  const inputNoiseGateThresholdDb = useSettingsStore((s) => s.inputNoiseGateThresholdDb);
 
   // Appearance — mirror the persisted chatFontSize preference into the
   // `--concord-chat-font-size` CSS variable so `.concord-message-body`
@@ -440,14 +444,31 @@ export default function App() {
                 },
               }),
             }}
-            audio={micGranted && !isDesktopMode()}
+            audio={
+              micGranted && !isDesktopMode()
+                ? buildLiveKitAudioCaptureOptions({
+                    masterInputVolume,
+                    preferredInputDeviceId,
+                    echoCancellation,
+                    noiseSuppression,
+                    autoGainControl,
+                    inputNoiseGateEnabled,
+                    inputNoiseGateThresholdDb,
+                  })
+                : false
+            }
             video={false}
             options={{
               audioCaptureDefaults: {
-                echoCancellation,
-                noiseSuppression,
-                autoGainControl,
-                ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
+                ...buildLiveKitAudioCaptureOptions({
+                  masterInputVolume,
+                  preferredInputDeviceId,
+                  echoCancellation,
+                  noiseSuppression,
+                  autoGainControl,
+                  inputNoiseGateEnabled,
+                  inputNoiseGateThresholdDb,
+                }),
               },
             }}
             onDisconnected={handleVoiceDisconnect}

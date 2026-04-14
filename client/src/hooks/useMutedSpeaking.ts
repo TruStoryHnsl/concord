@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { computeSignalLevelDb } from "../voice/noiseGate";
 
 /**
  * Monitors the local microphone while the user is muted in LiveKit.
@@ -10,7 +11,8 @@ import { useEffect, useRef, useState } from "react";
  */
 export function useMutedSpeaking(
   isMicEnabled: boolean,
-  preferredDeviceId?: string,
+  audioConstraints?: MediaTrackConstraints,
+  thresholdDb = -42,
 ): boolean {
   const [speaking, setSpeaking] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -29,9 +31,7 @@ export function useMutedSpeaking(
       let stream: MediaStream | null = null;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: preferredDeviceId
-            ? { deviceId: { ideal: preferredDeviceId } }
-            : true,
+          audio: audioConstraints ?? true,
         });
 
         // Bail-out checkpoint #1: cleanup may have run while getUserMedia
@@ -48,15 +48,14 @@ export function useMutedSpeaking(
         analyser.smoothingTimeConstant = 0.5;
         source.connect(analyser);
 
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const THRESHOLD = 15;
+        const data = new Float32Array(analyser.fftSize);
 
         const interval = setInterval(() => {
-          analyser.getByteFrequencyData(data);
-          let sum = 0;
-          for (let i = 0; i < data.length; i++) sum += data[i];
-          const avg = sum / data.length;
-          setSpeaking(avg > THRESHOLD);
+          analyser.getFloatTimeDomainData(data);
+          const levelDb = computeSignalLevelDb(data);
+          setSpeaking((prev) =>
+            prev ? levelDb >= thresholdDb - 4 : levelDb >= thresholdDb,
+          );
         }, 100);
 
         const fullCleanup = () => {
@@ -94,7 +93,7 @@ export function useMutedSpeaking(
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [isMicEnabled, preferredDeviceId]);
+  }, [isMicEnabled, audioConstraints, thresholdDb]);
 
   return speaking;
 }

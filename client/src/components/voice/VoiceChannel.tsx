@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   useParticipants,
   useLocalParticipant,
@@ -26,6 +26,11 @@ import {
   splitDiscordVoiceBridgeParticipants,
 } from "./discordVoiceBridge";
 import { joinVoiceSession } from "./joinVoiceSession";
+import {
+  buildLiveKitAudioCaptureOptions,
+  buildMicTrackConstraints,
+  getVoiceInputProcessor,
+} from "../../voice/noiseGate";
 
 interface VoiceChannelProps {
   roomId: string;
@@ -288,6 +293,9 @@ function VoiceRoomUI({
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
   const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
   const autoGainControl = useSettingsStore((s) => s.autoGainControl);
+  const masterInputVolume = useSettingsStore((s) => s.masterInputVolume);
+  const inputNoiseGateEnabled = useSettingsStore((s) => s.inputNoiseGateEnabled);
+  const inputNoiseGateThresholdDb = useSettingsStore((s) => s.inputNoiseGateThresholdDb);
   const userVolumes = useSettingsStore((s) => s.userVolumes);
   const setUserVolume = useSettingsStore((s) => s.setUserVolume);
   const masterOutputVolume = useSettingsStore((s) => s.masterOutputVolume);
@@ -390,9 +398,55 @@ function VoiceRoomUI({
   const isCameraEnabled = localParticipant.isCameraEnabled;
   const isScreenShareEnabled = localParticipant.isScreenShareEnabled;
   const preferredInputDeviceId = useSettingsStore((s) => s.preferredInputDeviceId);
+  const voiceInputSettings = {
+    masterInputVolume,
+    preferredInputDeviceId,
+    echoCancellation,
+    noiseSuppression,
+    autoGainControl,
+    inputNoiseGateEnabled,
+    inputNoiseGateThresholdDb,
+  } as const;
+  const mutedSpeakingConstraints = useMemo(
+    () => buildMicTrackConstraints(voiceInputSettings),
+    [
+      masterInputVolume,
+      preferredInputDeviceId,
+      echoCancellation,
+      noiseSuppression,
+      autoGainControl,
+      inputNoiseGateEnabled,
+      inputNoiseGateThresholdDb,
+    ],
+  );
 
   // Detect speaking while self-muted (local-only reminder)
-  const isMutedSpeaking = useMutedSpeaking(isMicEnabled, preferredInputDeviceId ?? undefined);
+  const isMutedSpeaking = useMutedSpeaking(
+    isMicEnabled,
+    mutedSpeakingConstraints,
+    inputNoiseGateThresholdDb,
+  );
+
+  useEffect(() => {
+    const processor = getVoiceInputProcessor(voiceInputSettings);
+    const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
+    if (!micTrack) return;
+    const currentProcessor = micTrack.getProcessor();
+    if (!currentProcessor || currentProcessor.name !== processor.name) {
+      micTrack.setProcessor(processor).catch((error) => {
+        console.warn("Failed to enable local mic noise gate", error);
+      });
+    }
+  }, [
+    localParticipant,
+    masterInputVolume,
+    preferredInputDeviceId,
+    echoCancellation,
+    noiseSuppression,
+    autoGainControl,
+    inputNoiseGateEnabled,
+    inputNoiseGateThresholdDb,
+  ]);
 
   const [cameraLoading, setCameraLoading] = useState(false);
 
@@ -442,19 +496,17 @@ function VoiceRoomUI({
       if (!isMicEnabled) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation,
-              noiseSuppression,
-              autoGainControl,
-              ...(preferredInputDeviceId && { deviceId: { ideal: preferredInputDeviceId } }),
-            },
+            audio: buildMicTrackConstraints(voiceInputSettings),
           });
           stream.getTracks().forEach((t) => t.stop());
         } catch {
           // Permission already granted or will be handled by LiveKit
         }
       }
-      await localParticipant.setMicrophoneEnabled(!isMicEnabled);
+      await localParticipant.setMicrophoneEnabled(
+        !isMicEnabled,
+        !isMicEnabled ? buildLiveKitAudioCaptureOptions(voiceInputSettings) : undefined,
+      );
     } catch (err) {
       console.error("Mic toggle failed:", err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -468,7 +520,7 @@ function VoiceRoomUI({
         setMicError(msg);
       }
     }
-  }, [localParticipant, isMicEnabled, echoCancellation, noiseSuppression, autoGainControl, preferredInputDeviceId]);
+  }, [localParticipant, isMicEnabled, masterInputVolume, preferredInputDeviceId, echoCancellation, noiseSuppression, autoGainControl, inputNoiseGateEnabled, inputNoiseGateThresholdDb]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">

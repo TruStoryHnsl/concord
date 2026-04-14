@@ -4,6 +4,7 @@ import { getHomeserverUrl } from "../../api/serverUrl";
 import { useServerConfigStore } from "../../stores/serverConfig";
 import { useSettingsStore } from "../../stores/settings";
 import { useVoiceStore } from "../../stores/voice";
+import { buildMicTrackConstraints } from "../../voice/noiseGate";
 
 interface JoinVoiceSessionParams {
   roomId: string;
@@ -27,18 +28,24 @@ export async function joinVoiceSession({
     noiseSuppression,
     autoGainControl,
     preferredInputDeviceId,
+    masterInputVolume,
+    inputNoiseGateEnabled,
+    inputNoiseGateThresholdDb,
   } = useSettingsStore.getState();
 
   let micGranted = false;
   if (navigator.mediaDevices?.getUserMedia) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
+        audio: buildMicTrackConstraints({
+          masterInputVolume,
+          preferredInputDeviceId,
           echoCancellation,
           noiseSuppression,
           autoGainControl,
-          ...(preferredInputDeviceId && { deviceId: { ideal: preferredInputDeviceId } }),
-        },
+          inputNoiseGateEnabled,
+          inputNoiseGateThresholdDb,
+        }),
       });
       stream.getTracks().forEach((track) => track.stop());
       micGranted = true;

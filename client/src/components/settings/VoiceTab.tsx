@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSettingsStore } from "../../stores/settings";
 import { Slider } from "../ui/Slider";
+import {
+  buildMicTrackConstraints,
+  computeSignalLevelDb,
+  INPUT_NOISE_GATE_DB_MAX,
+  INPUT_NOISE_GATE_DB_MIN,
+  normalizeSignalLevelDbToMeter,
+} from "../../voice/noiseGate";
 
 export function VoiceTab() {
   const masterInputVolume = useSettingsStore((s) => s.masterInputVolume);
@@ -17,9 +24,14 @@ export function VoiceTab() {
   const setNoiseSuppression = useSettingsStore((s) => s.setNoiseSuppression);
   const autoGainControl = useSettingsStore((s) => s.autoGainControl);
   const setAutoGainControl = useSettingsStore((s) => s.setAutoGainControl);
+  const inputNoiseGateEnabled = useSettingsStore((s) => s.inputNoiseGateEnabled);
+  const setInputNoiseGateEnabled = useSettingsStore((s) => s.setInputNoiseGateEnabled);
+  const inputNoiseGateThresholdDb = useSettingsStore((s) => s.inputNoiseGateThresholdDb);
+  const setInputNoiseGateThresholdDb = useSettingsStore((s) => s.setInputNoiseGateThresholdDb);
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [micLevel, setMicLevel] = useState(0);
+  const [micLevelDb, setMicLevelDb] = useState(-72);
   // Mic test is OFF by default. Privacy: we never open the microphone unless
   // the user explicitly presses "Test microphone" — opening Settings → Voice
   // should not trigger a browser mic-in-use indicator. Auto-stops after 30s
@@ -66,14 +78,15 @@ export function VoiceTab() {
     try {
       if (!navigator.mediaDevices) return;
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: preferredInputDeviceId
-            ? { exact: preferredInputDeviceId }
-            : undefined,
+        audio: buildMicTrackConstraints({
+          masterInputVolume,
+          preferredInputDeviceId,
           echoCancellation,
           noiseSuppression,
           autoGainControl,
-        },
+          inputNoiseGateEnabled,
+          inputNoiseGateThresholdDb,
+        }),
       });
       streamRef.current = stream;
       const ctx = new AudioContext();
@@ -84,11 +97,12 @@ export function VoiceTab() {
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      const data = new Uint8Array(analyser.frequencyBinCount);
+      const data = new Float32Array(analyser.fftSize);
       const tick = () => {
-        analyser.getByteFrequencyData(data);
-        const peak = Math.max(...data) / 255;
-        setMicLevel(peak);
+        analyser.getFloatTimeDomainData(data);
+        const levelDb = computeSignalLevelDb(data);
+        setMicLevelDb(levelDb);
+        setMicLevel(normalizeSignalLevelDbToMeter(levelDb));
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
@@ -102,10 +116,13 @@ export function VoiceTab() {
       setMetering(false);
     }
   }, [
+    masterInputVolume,
     preferredInputDeviceId,
     echoCancellation,
     noiseSuppression,
     autoGainControl,
+    inputNoiseGateEnabled,
+    inputNoiseGateThresholdDb,
     releaseMic,
   ]);
 
@@ -188,7 +205,7 @@ export function VoiceTab() {
             {metering ? "Stop test" : "Test microphone"}
           </button>
         </div>
-        <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden">
+        <div className="relative h-2 bg-surface-container-highest rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-75"
             style={{
@@ -201,10 +218,18 @@ export function VoiceTab() {
                     : "#22c55e",
             }}
           />
+          {inputNoiseGateEnabled && (
+            <div
+              className="absolute top-0 bottom-0 w-px bg-primary/80"
+              style={{
+                left: `${normalizeSignalLevelDbToMeter(inputNoiseGateThresholdDb) * 100}%`,
+              }}
+            />
+          )}
         </div>
         <p className="text-xs text-on-surface-variant mt-1.5">
           {metering
-            ? "Mic is open — speak to test. Auto-stops after 30 seconds."
+            ? `Mic is open — ${Math.round(micLevelDb)} dB. Auto-stops after 30 seconds.`
             : "Tap Test microphone to verify your input. Mic stays off otherwise."}
         </p>
       </div>
@@ -231,6 +256,24 @@ export function VoiceTab() {
           checked={autoGainControl}
           onChange={setAutoGainControl}
         />
+        <Toggle
+          label="Speech Gate"
+          description="Suppresses mic audio below the selected dB threshold to reduce speaker bleed and room noise"
+          checked={inputNoiseGateEnabled}
+          onChange={setInputNoiseGateEnabled}
+        />
+        <Slider
+          label="Speech Gate Threshold"
+          value={inputNoiseGateThresholdDb}
+          min={INPUT_NOISE_GATE_DB_MIN}
+          max={INPUT_NOISE_GATE_DB_MAX}
+          step={1}
+          onChange={setInputNoiseGateThresholdDb}
+          formatValue={(v) => `${Math.round(v)} dB`}
+        />
+        <p className="text-xs text-on-surface-variant -mt-2">
+          Louder thresholds block more speaker bleed. Quieter thresholds let more soft speech through.
+        </p>
       </div>
     </div>
   );

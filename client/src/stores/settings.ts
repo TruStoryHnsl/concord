@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useServerStore } from "./server";
+import {
+  INPUT_NOISE_GATE_DB_DEFAULT,
+  INPUT_NOISE_GATE_DB_MAX,
+  INPUT_NOISE_GATE_DB_MIN,
+} from "../voice/noiseGate";
 
 interface SettingsState {
   // Output
@@ -29,6 +34,8 @@ interface SettingsState {
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
+  inputNoiseGateEnabled: boolean;
+  inputNoiseGateThresholdDb: number;
 
   // Notifications
   notificationsEnabled: boolean;
@@ -73,6 +80,8 @@ interface SettingsState {
   setEchoCancellation: (v: boolean) => void;
   setNoiseSuppression: (v: boolean) => void;
   setAutoGainControl: (v: boolean) => void;
+  setInputNoiseGateEnabled: (v: boolean) => void;
+  setInputNoiseGateThresholdDb: (db: number) => void;
   setNotificationsEnabled: (v: boolean) => void;
   setDefaultNotificationLevel: (level: "all" | "mentions" | "nothing") => void;
   setServerNotificationLevel: (serverId: string, level: "all" | "mentions" | "nothing" | "default") => void;
@@ -131,6 +140,8 @@ const defaults = {
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
+  inputNoiseGateEnabled: true,
+  inputNoiseGateThresholdDb: INPUT_NOISE_GATE_DB_DEFAULT,
   notificationsEnabled: true,
   defaultNotificationLevel: "all" as const,
   serverNotifications: {} as Record<string, "all" | "mentions" | "nothing">,
@@ -174,6 +185,15 @@ export const useSettingsStore = create<SettingsState>()(
       setEchoCancellation: (v) => set({ echoCancellation: v }),
       setNoiseSuppression: (v) => set({ noiseSuppression: v }),
       setAutoGainControl: (v) => set({ autoGainControl: v }),
+      setInputNoiseGateEnabled: (v) => set({ inputNoiseGateEnabled: v }),
+      setInputNoiseGateThresholdDb: (db) => {
+        if (!Number.isFinite(db)) return;
+        const clamped = Math.max(
+          INPUT_NOISE_GATE_DB_MIN,
+          Math.min(INPUT_NOISE_GATE_DB_MAX, Math.round(db)),
+        );
+        set({ inputNoiseGateThresholdDb: clamped });
+      },
       setNotificationsEnabled: (v) => set({ notificationsEnabled: v }),
       setDefaultNotificationLevel: (level) => set({ defaultNotificationLevel: level }),
       setServerNotificationLevel: (serverId, level) =>
