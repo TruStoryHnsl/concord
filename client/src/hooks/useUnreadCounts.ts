@@ -2,6 +2,20 @@ import { useEffect, useState, useRef } from "react";
 import { RoomEvent, NotificationCountType } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
 
+async function markRoomRead(
+  client: ReturnType<typeof useAuthStore.getState>["client"],
+  roomId: string,
+): Promise<void> {
+  if (!client) return;
+  const room = client.getRoom(roomId);
+  if (!room) return;
+  const timeline = room.getLiveTimeline().getEvents();
+  const lastEvent = timeline[timeline.length - 1];
+  const lastEventId = lastEvent?.getId?.();
+  if (!lastEvent || !lastEventId) return;
+  await client.setRoomReadMarkers(roomId, lastEventId, lastEvent);
+}
+
 export function useUnreadCounts(): Map<string, number> {
   const client = useAuthStore((s) => s.client);
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
@@ -149,15 +163,9 @@ export function useSendReadReceipt(
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     switchDebounceRef.current = setTimeout(() => {
-      const room = client.getRoom(roomId);
-      if (!room) return;
-      const timeline = room.getLiveTimeline().getEvents();
-      const lastEvent = timeline[timeline.length - 1];
-      if (lastEvent) {
-        client.sendReadReceipt(lastEvent).catch(() => {
-          // Non-critical — silently ignore
-        });
-      }
+      markRoomRead(client, roomId).catch(() => {
+        // Non-critical — silently ignore
+      });
     }, 300);
 
     return () => {
@@ -188,15 +196,9 @@ export function useSendReadReceipt(
 
       if (liveDebounceRef.current) clearTimeout(liveDebounceRef.current);
       liveDebounceRef.current = setTimeout(() => {
-        const activeRoom = client.getRoom(roomId);
-        if (!activeRoom) return;
-        const timeline = activeRoom.getLiveTimeline().getEvents();
-        const lastEvent = timeline[timeline.length - 1];
-        if (lastEvent) {
-          client.sendReadReceipt(lastEvent).catch(() => {
-            // Non-critical — silently ignore
-          });
-        }
+        markRoomRead(client, roomId).catch(() => {
+          // Non-critical — silently ignore
+        });
       }, 500);
     };
 

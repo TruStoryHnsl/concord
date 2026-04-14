@@ -14,6 +14,8 @@ describe("DiscordSourceBrowser contracts", () => {
   });
 
   it("opens bridged voice entries as voice channels on the Discord guild server", () => {
+    expect(source).toContain("resolveDiscordVoiceEntry");
+    expect(source).toContain("entry.roomId === channel.roomId || entry.channelId === channel.channelId");
     expect(source).toContain('channelType: channel.kind === "voice" ? "voice" : "text"');
     expect(source).toContain('preferBridgeServer: channel.kind === "voice"');
     expect(source).toContain("await joinVoiceSession({");

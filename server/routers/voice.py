@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from dependencies import require_server_member
 from errors import ConcordError
-from models import Channel, ServerMember
+from models import Channel, DiscordVoiceBridge, ServerMember
 from routers.servers import get_user_id
+from services.discord_voice_config import reconcile_voice_bridge_row, write_voice_bridge_rooms
 from services.livekit_tokens import generate_token, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,18 @@ async def get_voice_token(
     )
     channel = result.scalar_one_or_none()
     if not channel:
+        bridge_result = await db.execute(
+            select(DiscordVoiceBridge).where(
+                DiscordVoiceBridge.matrix_room_id == body.room_name
+            )
+        )
+        bridge_row = bridge_result.scalar_one_or_none()
+        if bridge_row is not None:
+            channel, repaired = await reconcile_voice_bridge_row(db, bridge_row)
+            if repaired:
+                await db.commit()
+                await write_voice_bridge_rooms(db)
+    if not channel:
         raise ConcordError(
             error_code="RESOURCE_NOT_FOUND",
             message="Voice channel not found",
@@ -197,7 +210,7 @@ async def get_voice_token(
 
     token = generate_token(
         identity=user_id,
-        room_name=body.room_name,
+        room_name=channel.matrix_room_id,
         name=display_name,
     )
 

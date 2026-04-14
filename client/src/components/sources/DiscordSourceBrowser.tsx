@@ -19,6 +19,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { ClientEvent } from "matrix-js-sdk";
+import type { Channel as ConcordChannel, Server as ConcordServer } from "../../api/concord";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
@@ -138,6 +139,56 @@ interface CachedDiscordVoiceChannel {
   guildId: string;
   guildName: string;
   channelId: string;
+}
+
+interface ResolvedDiscordVoiceEntry {
+  roomId: string;
+  name: string;
+  channel?: ConcordChannel;
+  mapping?: DiscordVoiceBridgeRoom;
+  server?: ConcordServer;
+}
+
+function resolveDiscordVoiceEntry(params: {
+  channel: BridgedChannel & { guildName: string };
+  voiceMappings: DiscordVoiceBridgeRoom[];
+  servers: ConcordServer[];
+}): ResolvedDiscordVoiceEntry {
+  const { channel, voiceMappings, servers } = params;
+  const mapping =
+    voiceMappings.find(
+      (entry) =>
+        entry.matrix_room_id === channel.roomId ||
+        (
+          entry.discord_guild_id === channel.guildId &&
+          entry.discord_channel_id === channel.channelId
+        ),
+    ) ?? null;
+
+  const liveChannel =
+    servers
+      .flatMap((server) => server.channels)
+      .find(
+        (entry) =>
+          entry.matrix_room_id === channel.roomId ||
+          (mapping !== null && (
+            entry.matrix_room_id === mapping.matrix_room_id ||
+            entry.id === mapping.channel_id
+          )),
+      ) ?? null;
+
+  const liveServer =
+    servers.find((server) =>
+      server.channels.some((entry) => entry.matrix_room_id === liveChannel?.matrix_room_id),
+    ) ?? null;
+
+  return {
+    roomId: mapping?.matrix_room_id ?? liveChannel?.matrix_room_id ?? channel.roomId,
+    name: liveChannel?.name ?? channel.name,
+    channel: liveChannel ?? undefined,
+    mapping: mapping ?? undefined,
+    server: liveServer ?? undefined,
+  };
 }
 
 interface LinkStep {
@@ -640,44 +691,43 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   }, [resolvedGroups, userId]);
 
   useEffect(() => {
-    if (voiceMappings.length === 0) return;
     setCachedVoiceChannels((previous) => {
-      const previousByRoom = new Map(previous.map((channel) => [channel.roomId, channel] as const));
-      const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
-
-      for (const mapping of voiceMappings) {
-        const localChannel = servers
-          .flatMap((server) => server.channels)
-          .find(
-            (channel) =>
-              channel.matrix_room_id === mapping.matrix_room_id ||
-              channel.id === mapping.channel_id,
-          );
-        const previousEntry =
-          previousByRoom.get(mapping.matrix_room_id) ??
-          previous.find((channel) => channel.channelId === mapping.discord_channel_id);
-        const guildName =
-          resolvedGuildNames.get(mapping.discord_guild_id) ??
-          discordGuilds.find((guild) => guild.id === mapping.discord_guild_id)?.name ??
-          previousEntry?.guildName ??
-          `Guild ${mapping.discord_guild_id}`;
-        const channelName =
-          localChannel?.name ??
-          previousEntry?.name ??
-          `Voice ${mapping.discord_channel_id.slice(-4)}`;
-
-        merged.set(mapping.matrix_room_id, {
-          roomId: mapping.matrix_room_id,
-          name: channelName,
-          guildId: mapping.discord_guild_id,
-          guildName,
-          channelId: mapping.discord_channel_id,
-        });
-      }
-
-      const next = [...merged.values()].sort((a, b) =>
-        `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+      const previousByDiscordChannel = new Map(
+        previous.map((channel) => [channel.channelId, channel] as const),
       );
+      const next = voiceMappings
+        .map((mapping) => {
+          const localChannel = servers
+            .flatMap((server) => server.channels)
+            .find(
+              (channel) =>
+                channel.matrix_room_id === mapping.matrix_room_id ||
+                channel.id === mapping.channel_id,
+            );
+          const previousEntry =
+            previousByDiscordChannel.get(mapping.discord_channel_id) ??
+            previous.find((channel) => channel.roomId === mapping.matrix_room_id);
+          const guildName =
+            resolvedGuildNames.get(mapping.discord_guild_id) ??
+            discordGuilds.find((guild) => guild.id === mapping.discord_guild_id)?.name ??
+            previousEntry?.guildName ??
+            `Guild ${mapping.discord_guild_id}`;
+          const channelName =
+            previousEntry?.name ??
+            localChannel?.name ??
+            `Voice ${mapping.discord_channel_id.slice(-4)}`;
+
+          return {
+            roomId: mapping.matrix_room_id,
+            name: channelName,
+            guildId: mapping.discord_guild_id,
+            guildName,
+            channelId: mapping.discord_channel_id,
+          };
+        })
+        .sort((a, b) =>
+          `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+        );
       writeCachedVoiceChannels(userId, next);
       return next;
     });
@@ -737,10 +787,13 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       ) {
         group.guildName = channel.guildName;
       }
-      const existing = group.channels.find((entry) => entry.roomId === channel.roomId);
+      const existing = group.channels.find(
+        (entry) => entry.roomId === channel.roomId || entry.channelId === channel.channelId,
+      );
       if (existing) {
         existing.kind = "voice";
         existing.name = channel.name;
+        existing.roomId = channel.roomId;
         continue;
       }
       group.channels.push({
@@ -786,10 +839,15 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
 
       const group = groups.get(guildId)!;
       group.guildName = guildName;
-      const existing = group.channels.find((channel) => channel.roomId === mapping.matrix_room_id);
+      const existing = group.channels.find(
+        (channel) =>
+          channel.roomId === mapping.matrix_room_id ||
+          channel.channelId === mapping.discord_channel_id,
+      );
       if (existing) {
         existing.kind = "voice";
         existing.name = channelName;
+        existing.roomId = mapping.matrix_room_id;
         continue;
       }
       group.channels.push({
@@ -898,41 +956,43 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
         );
         if (cancelled) return;
         setCachedVoiceChannels((previous) => {
-          const previousByRoom = new Map(previous.map((channel) => [channel.roomId, channel] as const));
-          const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
-          for (const { room, info } of channelMetadata) {
-            const localChannel = useServerStore
-              .getState()
-              .servers
-              .flatMap((server) => server.channels)
-              .find(
-                (channel) =>
-                  channel.matrix_room_id === room.matrix_room_id ||
-                  channel.id === room.channel_id,
-              );
-            const previousEntry =
-              previousByRoom.get(room.matrix_room_id) ??
-              previous.find((channel) => channel.channelId === room.discord_channel_id);
-            const guildName =
-              guilds.find((guild) => guild.id === room.discord_guild_id)?.name ??
-              previousEntry?.guildName ??
-              `Guild ${room.discord_guild_id}`;
-            const channelName =
-              info?.name ??
-              previousEntry?.name ??
-              localChannel?.name ??
-              `Voice ${room.discord_channel_id.slice(-4)}`;
-            merged.set(room.matrix_room_id, {
-              roomId: room.matrix_room_id,
-              name: channelName,
-              guildId: room.discord_guild_id,
-              guildName,
-              channelId: room.discord_channel_id,
-            });
-          }
-          const next = [...merged.values()].sort((a, b) =>
-            `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+          const previousByDiscordChannel = new Map(
+            previous.map((channel) => [channel.channelId, channel] as const),
           );
+          const next = channelMetadata
+            .map(({ room, info }) => {
+              const localChannel = useServerStore
+                .getState()
+                .servers
+                .flatMap((server) => server.channels)
+                .find(
+                  (channel) =>
+                    channel.matrix_room_id === room.matrix_room_id ||
+                    channel.id === room.channel_id,
+                );
+              const previousEntry =
+                previousByDiscordChannel.get(room.discord_channel_id) ??
+                previous.find((channel) => channel.roomId === room.matrix_room_id);
+              const guildName =
+                guilds.find((guild) => guild.id === room.discord_guild_id)?.name ??
+                previousEntry?.guildName ??
+                `Guild ${room.discord_guild_id}`;
+              const channelName =
+                info?.name ??
+                previousEntry?.name ??
+                localChannel?.name ??
+                `Voice ${room.discord_channel_id.slice(-4)}`;
+              return {
+                roomId: room.matrix_room_id,
+                name: channelName,
+                guildId: room.discord_guild_id,
+                guildName,
+                channelId: room.discord_channel_id,
+              };
+            })
+            .sort((a, b) =>
+              `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+            );
           writeCachedVoiceChannels(userId, next);
           return next;
         });
@@ -996,14 +1056,20 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       const channel = browseGroups
         .flatMap((g) => g.channels.map((ch) => ({ ...ch, guildName: g.guildName })))
         .find((ch) => ch.roomId === roomId);
+      const resolvedVoiceEntry =
+        channel?.kind === "voice"
+          ? resolveDiscordVoiceEntry({ channel, voiceMappings, servers })
+          : null;
+      const targetRoomId = resolvedVoiceEntry?.roomId ?? roomId;
+      const targetChannelName = resolvedVoiceEntry?.name ?? channel?.name ?? roomId;
 
-      const currentRoom = client?.getRoom(roomId);
+      const currentRoom = client?.getRoom(targetRoomId);
       if (
         client &&
         (!currentRoom || currentRoom.getMyMembership() !== "join")
       ) {
         try {
-          await client.joinRoom(roomId);
+          await client.joinRoom(targetRoomId);
           if (accessToken) await loadServers(accessToken);
         } catch {
           // Keep remembered bridge entries visible even while the room is
@@ -1031,14 +1097,15 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             discordGuilds.find((guild) => guild.id === channel.guildId)?.icon ?? null,
           ),
           channel: {
-            roomId: channel.roomId,
-            name: channel.name,
+            roomId: targetRoomId,
+            name: targetChannelName,
             channelType: channel.kind === "voice" ? "voice" : "text",
+            id: resolvedVoiceEntry?.channel?.id,
           },
           preferBridgeServer: channel.kind === "voice",
         });
         if (channel.kind === "voice" && accessToken) {
-          if (voiceConnected && voiceChannelId && voiceChannelId !== channel.roomId) {
+          if (voiceConnected && voiceChannelId && voiceChannelId !== targetRoomId) {
             addToast("Already connected to another voice channel", "info");
           } else {
             const targetServer = useServerStore
@@ -1047,8 +1114,8 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
               .find((server) => server.id === targetServerId);
             try {
               await joinVoiceSession({
-                roomId: channel.roomId,
-                channelName: channel.name,
+                roomId: targetRoomId,
+                channelName: targetChannelName,
                 serverId: targetServerId,
                 accessToken,
                 activeServer: targetServer,
@@ -1060,12 +1127,12 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           }
         }
       } else {
-        setActiveChannel(roomId);
+        setActiveChannel(targetRoomId);
       }
 
       onClose();
     },
-    [accessToken, addToast, browseGroups, client, discordGuilds, ensureDiscordGuild, loadServers, onClose, setActiveChannel, setDMActive, voiceChannelId, voiceConnected],
+    [accessToken, addToast, browseGroups, client, discordGuilds, ensureDiscordGuild, loadServers, onClose, servers, setActiveChannel, setDMActive, voiceChannelId, voiceConnected, voiceMappings],
   );
 
   // ── Link flow ─────────────────────────────────────────────────────────────

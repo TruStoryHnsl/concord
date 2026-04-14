@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -14,6 +14,7 @@ from routers.servers import get_user_id
 from services.discord_voice_config import (
     ROOMS_FILE,
     list_voice_bridge_rooms,
+    reconcile_voice_bridge_rows,
     write_voice_bridge_rooms,
 )
 from services.docker_control import (
@@ -88,6 +89,9 @@ async def discord_voice_bridge_rooms(
     db: AsyncSession = Depends(get_db),
 ) -> list[DiscordVoiceBridgeResponse]:
     """List Discord voice mappings visible to the current admin."""
+    if await reconcile_voice_bridge_rows(db):
+        await db.commit()
+        await write_voice_bridge_rooms(db)
     result = await db.execute(select(DiscordVoiceBridge).order_by(DiscordVoiceBridge.id))
     rows: list[DiscordVoiceBridgeResponse] = []
     for row in result.scalars().all():
@@ -106,9 +110,14 @@ async def discord_voice_bridge_upsert_room(
     channel = await _get_voice_channel(body.channel_id, user_id, db)
 
     result = await db.execute(
-        select(DiscordVoiceBridge).where(
+        select(DiscordVoiceBridge).where(or_(
             DiscordVoiceBridge.matrix_room_id == channel.matrix_room_id,
-        )
+            DiscordVoiceBridge.channel_id == channel.id,
+            and_(
+                DiscordVoiceBridge.discord_guild_id == body.discord_guild_id,
+                DiscordVoiceBridge.discord_channel_id == body.discord_channel_id,
+            ),
+        ))
     )
     row = result.scalar_one_or_none()
     if row is None:
@@ -123,6 +132,9 @@ async def discord_voice_bridge_upsert_room(
         )
         db.add(row)
     else:
+        row.server_id = channel.server_id
+        row.channel_id = channel.id
+        row.matrix_room_id = channel.matrix_room_id
         row.discord_guild_id = body.discord_guild_id
         row.discord_channel_id = body.discord_channel_id
         row.enabled = body.enabled
@@ -157,6 +169,8 @@ async def discord_voice_bridge_sync(
     db: AsyncSession = Depends(get_db),
 ) -> DiscordVoiceMutationResponse:
     """Rewrite rooms.json from the database without changing Docker state."""
+    if await reconcile_voice_bridge_rows(db):
+        await db.commit()
     rooms = await list_voice_bridge_rooms(db)
     for room in rooms:
         await require_server_admin(room["server_id"], user_id, db)
@@ -172,6 +186,8 @@ async def discord_voice_bridge_start(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DiscordVoiceMutationResponse:
+    if await reconcile_voice_bridge_rows(db):
+        await db.commit()
     rooms = await list_voice_bridge_rooms(db)
     for room in rooms:
         await require_server_admin(room["server_id"], user_id, db)
@@ -198,6 +214,8 @@ async def discord_voice_bridge_restart(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DiscordVoiceMutationResponse:
+    if await reconcile_voice_bridge_rows(db):
+        await db.commit()
     rooms = await list_voice_bridge_rooms(db)
     for room in rooms:
         await require_server_admin(room["server_id"], user_id, db)
@@ -218,6 +236,8 @@ async def discord_voice_bridge_stop(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DiscordVoiceMutationResponse:
+    if await reconcile_voice_bridge_rows(db):
+        await db.commit()
     rooms = await list_voice_bridge_rooms(db)
     for room in rooms:
         await require_server_admin(room["server_id"], user_id, db)

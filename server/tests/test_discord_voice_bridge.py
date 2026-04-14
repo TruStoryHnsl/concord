@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
-from models import Channel, Server, ServerMember
+from models import Channel, DiscordVoiceBridge, Server, ServerMember
 from tests.conftest import login_as, logout
 
 
@@ -121,6 +122,105 @@ async def test_upsert_room_writes_sidecar_rooms_file(
             }
         ]
     }
+    logout()
+
+
+async def test_upsert_room_repairs_existing_mapping_by_discord_channel_identity(
+    client: AsyncClient,
+    db_session: Any,
+    voice_bridge_tmp_dir: Path,
+) -> None:
+    voice_channel, _ = await _seed_server_with_channels(db_session)
+    stale_voice = Channel(
+        server_id=voice_channel.server_id,
+        matrix_room_id="!voice-old:test.local",
+        name="Voice Old",
+        channel_type="voice",
+    )
+    db_session.add(stale_voice)
+    await db_session.commit()
+    await db_session.refresh(stale_voice)
+
+    stale_row = DiscordVoiceBridge(
+        server_id=voice_channel.server_id,
+        channel_id=stale_voice.id,
+        matrix_room_id=stale_voice.matrix_room_id,
+        discord_guild_id="123456789012345678",
+        discord_channel_id="234567890123456789",
+        enabled=True,
+        created_by="@test_admin:test.local",
+    )
+    db_session.add(stale_row)
+    await db_session.commit()
+
+    login_as("@test_admin:test.local")
+    resp = await client.post(
+        "/api/admin/bridges/discord/voice/rooms",
+        json={
+            "channel_id": voice_channel.id,
+            "discord_guild_id": "123456789012345678",
+            "discord_channel_id": "234567890123456789",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == stale_row.id
+    assert body["channel_id"] == voice_channel.id
+    assert body["matrix_room_id"] == voice_channel.matrix_room_id
+
+    rows = (await db_session.execute(select(DiscordVoiceBridge))).scalars().all()
+    await db_session.refresh(rows[0])
+    assert len(rows) == 1
+    assert rows[0].channel_id == voice_channel.id
+    assert rows[0].matrix_room_id == voice_channel.matrix_room_id
+
+    rooms = json.loads((voice_bridge_tmp_dir / "rooms.json").read_text(encoding="utf-8"))
+    assert rooms["rooms"][0]["channel_id"] == voice_channel.id
+    assert rooms["rooms"][0]["matrix_room_id"] == voice_channel.matrix_room_id
+    logout()
+
+
+async def test_list_rooms_repairs_stale_bridge_row_to_the_only_voice_channel(
+    client: AsyncClient,
+    db_session: Any,
+    voice_bridge_tmp_dir: Path,
+) -> None:
+    voice_channel, _ = await _seed_server_with_channels(db_session)
+    stale_row = DiscordVoiceBridge(
+        server_id=voice_channel.server_id,
+        channel_id=999,
+        matrix_room_id="!voice-stale:test.local",
+        discord_guild_id="123456789012345678",
+        discord_channel_id="234567890123456789",
+        enabled=True,
+        created_by="@test_admin:test.local",
+    )
+    db_session.add(stale_row)
+    await db_session.commit()
+
+    login_as("@test_admin:test.local")
+    resp = await client.get("/api/admin/bridges/discord/voice/rooms")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == [
+        {
+            "id": stale_row.id,
+            "server_id": voice_channel.server_id,
+            "channel_id": voice_channel.id,
+            "matrix_room_id": voice_channel.matrix_room_id,
+            "discord_guild_id": "123456789012345678",
+            "discord_channel_id": "234567890123456789",
+            "enabled": True,
+        }
+    ]
+
+    await db_session.refresh(stale_row)
+    assert stale_row.channel_id == voice_channel.id
+    assert stale_row.matrix_room_id == voice_channel.matrix_room_id
+
+    rooms = json.loads((voice_bridge_tmp_dir / "rooms.json").read_text(encoding="utf-8"))
+    assert rooms["rooms"][0]["channel_id"] == voice_channel.id
+    assert rooms["rooms"][0]["matrix_room_id"] == voice_channel.matrix_room_id
     logout()
 
 
