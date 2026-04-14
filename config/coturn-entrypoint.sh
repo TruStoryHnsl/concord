@@ -24,6 +24,8 @@ if [ "${TURN_TLS_ENABLED:-false}" = "true" ]; then
     "--tls-listening-port=${TURN_TLS_PORT:-5349}" \
     "--cert=${TURN_TLS_CERT_FILE}" \
     "--pkey=${TURN_TLS_KEY_FILE}"
+else
+  set -- "$@" --no-tls --no-dtls
 fi
 
 exec turnserver -c /etc/turnserver.conf "$@"

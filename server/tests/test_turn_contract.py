@@ -126,4 +126,5 @@ def test_turn_stack_architecture_is_env_driven() -> None:
     assert "alt-listening-port=5349" not in turn_config
     assert "--external-ip=${TURN_EXTERNAL_IP}" in turn_entrypoint
     assert "--tls-listening-port=${TURN_TLS_PORT:-5349}" in turn_entrypoint
+    assert "--no-tls --no-dtls" in turn_entrypoint
     assert 'TURN_EXTERNAL_IP="${TURN_EXTERNAL_IP}"' in install_script
