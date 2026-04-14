@@ -59,6 +59,12 @@ interface PreviewData {
   url: string;
 }
 
+type RichBlockVariant = "center" | "right" | "small" | "large";
+
+type RichMarkdownSegment =
+  | { kind: "markdown"; body: string }
+  | { kind: "block"; variant: RichBlockVariant; body: string };
+
 // Module-level cache so the same URL isn't fetched multiple times across renders
 const previewCache = new Map<string, PreviewData | null>();
 
@@ -146,6 +152,46 @@ const sanitizeSchema = {
     ],
   },
 } as typeof defaultSchema;
+
+const RICH_BLOCK_REGEX = /\[(center|right|small|large)\]([\s\S]*?)\[\/\1\]/gi;
+
+function splitRichMarkdown(body: string): RichMarkdownSegment[] {
+  const segments: RichMarkdownSegment[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = RICH_BLOCK_REGEX.exec(body)) !== null) {
+    const [full, variant, content] = match;
+    const start = match.index;
+    if (start > cursor) {
+      segments.push({ kind: "markdown", body: body.slice(cursor, start) });
+    }
+    segments.push({
+      kind: "block",
+      variant: variant as RichBlockVariant,
+      body: content.trim(),
+    });
+    cursor = start + full.length;
+  }
+
+  if (cursor < body.length) {
+    segments.push({ kind: "markdown", body: body.slice(cursor) });
+  }
+
+  return segments.filter((segment) => segment.body.trim().length > 0);
+}
+
+function renderMarkdownBody(body: string) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+      components={markdownComponents}
+    >
+      {body}
+    </ReactMarkdown>
+  );
+}
 
 /**
  * Components map: applies Tailwind utility classes to rendered markdown
@@ -638,6 +684,7 @@ export function MessageContent({ message }: MessageContentProps) {
   // ChartRenderer, never a crash.
   const urls = extractUrls(body);
   const hasChart = message.chartRaw !== undefined && message.chartRaw !== null;
+  const richSegments = splitRichMarkdown(body);
   return (
     // `text-sm` intentionally removed — font-size is now owned by
     // `.concord-message-body` in `index.css`, which reads the user's
@@ -645,15 +692,27 @@ export function MessageContent({ message }: MessageContentProps) {
     // Default is 14px so existing users see no visual change until
     // they actively adjust the slider in Settings → Appearance.
     <div className="text-on-surface markdown-content concord-message-body">
-      {body && (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
-          components={markdownComponents}
-        >
-          {body}
-        </ReactMarkdown>
-      )}
+      {richSegments.length > 0
+        ? richSegments.map((segment, index) => {
+            if (segment.kind === "markdown") {
+              return <div key={`md-${index}`}>{renderMarkdownBody(segment.body)}</div>;
+            }
+            const block = segment as Extract<RichMarkdownSegment, { kind: "block" }>;
+            const className =
+              block.variant === "center"
+                ? "text-center"
+                : block.variant === "right"
+                  ? "text-right"
+                  : block.variant === "small"
+                    ? "text-[0.85em] text-on-surface-variant"
+                    : "text-[1.15em] leading-relaxed";
+            return (
+              <div key={`blk-${index}`} className={className}>
+                {renderMarkdownBody(block.body)}
+              </div>
+            );
+          })
+        : null}
       {hasChart && <ChartRenderer raw={message.chartRaw} />}
       {urls.map((u) => (
         <LinkPreview key={u} url={u} />

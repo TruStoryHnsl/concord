@@ -910,28 +910,15 @@ OVERRIDEEOF
   info "HTTPS port mapping enabled (docker-compose.override.yml)"
 fi
 
-# coturn external-ip: detect and add so TURN relay addresses are correct.
-# Required when the host is behind NAT (public IP differs from local IP).
 COTURN_PUBLIC_IP="${SERVER_PUBLIC_IP:-$(detect_public_ip)}"
 COTURN_LOCAL_IP="$(detect_lan_ip)"
+TURN_EXTERNAL_IP=""
 if [ -n "$COTURN_PUBLIC_IP" ] && [ -n "$COTURN_LOCAL_IP" ] && [ "$COTURN_PUBLIC_IP" != "$COTURN_LOCAL_IP" ]; then
-  cat >> docker-compose.override.yml <<OVERRIDEEOF
-  coturn:
-    command:
-      - --static-auth-secret=\${TURN_SECRET}
-      - --realm=\${TURN_DOMAIN:-localhost}
-      - --external-ip=${COTURN_PUBLIC_IP}/${COTURN_LOCAL_IP}
-OVERRIDEEOF
-  info "coturn external-ip: ${COTURN_PUBLIC_IP}/${COTURN_LOCAL_IP}"
+  TURN_EXTERNAL_IP="${COTURN_PUBLIC_IP}/${COTURN_LOCAL_IP}"
+  info "coturn external-ip: ${TURN_EXTERNAL_IP}"
 elif [ -n "$COTURN_PUBLIC_IP" ]; then
-  cat >> docker-compose.override.yml <<OVERRIDEEOF
-  coturn:
-    command:
-      - --static-auth-secret=\${TURN_SECRET}
-      - --realm=\${TURN_DOMAIN:-localhost}
-      - --external-ip=${COTURN_PUBLIC_IP}
-OVERRIDEEOF
-  info "coturn external-ip: ${COTURN_PUBLIC_IP}"
+  TURN_EXTERNAL_IP="${COTURN_PUBLIC_IP}"
+  info "coturn external-ip: ${TURN_EXTERNAL_IP}"
 fi
 
 # ── Write .env ───────────────────────────────────────────────────────────
@@ -983,6 +970,9 @@ LIVEKIT_API_SECRET="${LK_SECRET}"
 TURN_SECRET="${TURN_SECRET_VAL}"
 TURN_DOMAIN="${LIVEKIT_TURN_DOMAIN}"
 TURN_HOST="${TURN_HOST:-${LIVEKIT_TURN_DOMAIN}}"
+TURN_EXTERNAL_IP="${TURN_EXTERNAL_IP}"
+TURN_TLS_ENABLED=false
+TURN_TLS_PORT=5349
 
 # ── Admin ──────────────────────────────────────────────────────────
 ADMIN_USER_IDS="${ADMIN_USER_ID}"

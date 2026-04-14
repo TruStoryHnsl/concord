@@ -6,6 +6,7 @@ import { MessageContent } from "./MessageContent";
 import { ReactionPills, QuickReactBar } from "./ReactionBar";
 import { useDisplayName } from "../../hooks/useDisplayName";
 import { useLocalServerName } from "../../hooks/useFederation";
+import { ChatWidgetBanner } from "./ChatWidgetBanner";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -82,6 +83,7 @@ export const MessageList = memo(function MessageList({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [reactingId, setReactingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const stickyWidgets = messages.filter((message) => message.widgetRaw && !message.redacted).slice(-3);
 
   // Track whether user is at/near bottom
   const bottomObserverCallback = useCallback(
@@ -161,6 +163,20 @@ export const MessageList = memo(function MessageList({
     <div ref={containerRef} className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4 space-y-1 selectable">
       {/* Top sentinel for scrollback */}
       <div ref={topRef} className="h-1" />
+      {stickyWidgets.length > 0 && (
+        <div className="sticky top-0 z-20 flex flex-col gap-2 pb-2">
+          {stickyWidgets.map((widgetMessage) => (
+            <ChatWidgetBanner
+              key={`sticky-${widgetMessage.id}`}
+              message={widgetMessage}
+              currentUserId={currentUserId}
+              onReact={onReact}
+              onRemoveReaction={onRemoveReaction}
+              compact
+            />
+          ))}
+        </div>
+      )}
       {isPaginating && (
         <div className="flex justify-center py-2">
           <span className="inline-block w-4 h-4 border-2 border-outline-variant border-t-primary rounded-full animate-spin" />
@@ -279,6 +295,14 @@ export const MessageList = memo(function MessageList({
                         <span className="text-[10px] text-on-surface-variant/50 font-label">(edited)</span>
                       )}
                     </div>
+                    {Boolean(msg.widgetRaw) && (
+                      <ChatWidgetBanner
+                        message={msg}
+                        currentUserId={currentUserId}
+                        onReact={onReact}
+                        onRemoveReaction={onRemoveReaction}
+                      />
+                    )}
                     <MessageContent message={msg} />
                     <ReactionPills
                       reactions={msg.reactions}
@@ -290,6 +314,14 @@ export const MessageList = memo(function MessageList({
                 </div>
               ) : (
                 <div className="pl-10">
+                  {Boolean(msg.widgetRaw) && (
+                    <ChatWidgetBanner
+                      message={msg}
+                      currentUserId={currentUserId}
+                      onReact={onReact}
+                      onRemoveReaction={onRemoveReaction}
+                    />
+                  )}
                   <MessageContent message={msg} />
                   {msg.edited && (
                     <span className="text-[10px] text-on-surface-variant/50 font-label ml-1">(edited)</span>

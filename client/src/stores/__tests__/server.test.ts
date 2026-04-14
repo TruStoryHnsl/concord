@@ -5,6 +5,7 @@ import {
   type FederatedRoomLike,
 } from "../server";
 import type { Server } from "../../api/concord";
+import { listServers } from "../../api/concord";
 
 /**
  * Unit tests for `useServerStore.hydrateFederatedRooms` — the loose-room
@@ -286,6 +287,96 @@ describe("useServerStore.ensureDiscordGuild", () => {
       name: "General",
       channel_type: "voice",
       matrix_room_id: "!voice:example.org",
+    });
+  });
+});
+
+describe("useServerStore.loadServers", () => {
+  beforeEach(() => {
+    vi.mocked(listServers).mockReset();
+    useServerStore.setState({
+      servers: [],
+      activeServerId: null,
+      activeChannelId: null,
+      members: {},
+    });
+  });
+
+  it("falls back to the lobby welcome channel when the current selection is stale", async () => {
+    vi.mocked(listServers).mockResolvedValue([
+      {
+        id: "srv_lobby",
+        name: "Concord Lobby",
+        icon_url: null,
+        owner_id: "@owner:example.org",
+        visibility: "public",
+        abbreviation: "LOB",
+        media_uploads_enabled: true,
+        channels: [
+          {
+            id: 1,
+            name: "welcome",
+            channel_type: "text",
+            matrix_room_id: "!welcome:example.org",
+            position: 0,
+          },
+          {
+            id: 2,
+            name: "general",
+            channel_type: "text",
+            matrix_room_id: "!general:example.org",
+            position: 1,
+          },
+        ],
+      },
+      {
+        id: "srv_tc17",
+        name: "TC#17",
+        icon_url: null,
+        owner_id: "@owner:example.org",
+        visibility: "public",
+        abbreviation: "TC",
+        media_uploads_enabled: true,
+        channels: [
+          {
+            id: 3,
+            name: "general",
+            channel_type: "text",
+            matrix_room_id: "!tc17:example.org",
+            position: 0,
+          },
+        ],
+      },
+    ]);
+
+    useServerStore.setState({
+      servers: [],
+      activeServerId: "srv_removed",
+      activeChannelId: "!removed:example.org",
+      members: {},
+    });
+
+    await useServerStore.getState().loadServers("token");
+
+    expect(useServerStore.getState().activeServerId).toBe("srv_lobby");
+    expect(useServerStore.getState().activeChannelId).toBe("!welcome:example.org");
+  });
+
+  it("can clear the full session-scoped server state", () => {
+    useServerStore.setState({
+      servers: [concordServer("srv_1", ["!one:example.org"])],
+      activeServerId: "srv_1",
+      activeChannelId: "!one:example.org",
+      members: { srv_1: [] },
+    });
+
+    useServerStore.getState().resetState();
+
+    expect(useServerStore.getState()).toMatchObject({
+      servers: [],
+      activeServerId: null,
+      activeChannelId: null,
+      members: {},
     });
   });
 });

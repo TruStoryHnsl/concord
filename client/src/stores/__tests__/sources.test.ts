@@ -8,6 +8,7 @@ import {
 describe("sources store", () => {
   beforeEach(() => {
     useSourcesStore.setState({
+      boundUserId: "@alice:concorrd.com",
       sources: [
         {
           id: "src_matrix",
@@ -22,6 +23,7 @@ describe("sources store", () => {
           enabled: true,
           addedAt: new Date().toISOString(),
           platform: "matrix",
+          ownerUserId: "@alice:concorrd.com",
         },
         {
           id: "src_concord",
@@ -34,6 +36,7 @@ describe("sources store", () => {
           enabled: true,
           addedAt: new Date().toISOString(),
           platform: "concord",
+          ownerUserId: null,
         },
       ],
     });
@@ -65,5 +68,19 @@ describe("sources store", () => {
     expect(sourceMatchesMatrixDomain(source, "mozilla.org")).toBe(true);
     expect(sourceMatchesMatrixDomain(source, "mozilla.modular.im")).toBe(true);
     expect(sourceMatchesMatrixDomain(source, "matrix.org")).toBe(false);
+  });
+
+  it("drops user-owned sources when a different Concord user binds to the store", () => {
+    useSourcesStore.getState().bindToUser("@bob:concorrd.com");
+    expect(useSourcesStore.getState().sources.map((source) => source.id)).toEqual([
+      "src_concord",
+    ]);
+  });
+
+  it("preserves instance-global primary sources on logout", () => {
+    useSourcesStore.getState().bindToUser(null);
+    expect(useSourcesStore.getState().sources.map((source) => source.id)).toEqual([
+      "src_concord",
+    ]);
   });
 });

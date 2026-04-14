@@ -367,11 +367,18 @@ services:
     image: coturn/coturn:4.6
     restart: unless-stopped
     network_mode: host
+    entrypoint: ["/bin/sh", "/etc/concord-turn/coturn-entrypoint.sh"]
     volumes:
       - ./config/turnserver.conf:/etc/turnserver.conf:ro
-    command:
-      - --static-auth-secret=${TURN_SECRET}
-      - --realm=${TURN_DOMAIN:-localhost}
+      - ./config/coturn-entrypoint.sh:/etc/concord-turn/coturn-entrypoint.sh:ro
+    environment:
+      TURN_SECRET: ${TURN_SECRET}
+      TURN_DOMAIN: ${TURN_DOMAIN:-localhost}
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-}
+      TURN_TLS_ENABLED: ${TURN_TLS_ENABLED:-false}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      TURN_TLS_CERT_FILE: ${TURN_TLS_CERT_FILE:-}
+      TURN_TLS_KEY_FILE: ${TURN_TLS_KEY_FILE:-}
     healthcheck:
       # STUN binding request to localhost:3478 — if coturn is alive it
       # responds with a binding response. turnutils_stunclient ships

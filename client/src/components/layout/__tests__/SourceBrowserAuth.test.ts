@@ -20,4 +20,12 @@ describe("source browser auth wiring", () => {
     expect(chatLayoutSource).toContain("browseClient.publicRooms");
     expect(chatLayoutSource).toContain("client.joinRoom");
   });
+
+  it("surfaces preloaded source catalog entries for release integrations", () => {
+    expect(chatLayoutSource).toContain("Explore Sources");
+    expect(chatLayoutSource).toContain("matrix.org");
+    expect(chatLayoutSource).toContain("Mozilla");
+    expect(chatLayoutSource).toContain("Slack");
+    expect(chatLayoutSource).toContain("Reticulum");
+  });
 });

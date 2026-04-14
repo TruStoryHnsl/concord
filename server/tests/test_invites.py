@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from models import Server, InviteToken
+from tests.conftest import login_as, logout
 
 
 # ---------------------------------------------------------------------
@@ -195,3 +196,63 @@ async def test_is_valid_handles_naive_datetimes():
 
     invite.expires_at = now_naive_past
     assert invite.is_valid is False
+
+
+async def test_update_invite_can_extend_expiry_and_change_use_budget(client, seeded_server, db_session):
+    invite = await _make_invite(
+        db_session,
+        seeded_server.id,
+        max_uses=1,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    from models import ServerMember
+
+    db_session.add(ServerMember(
+        server_id=seeded_server.id,
+        user_id="@owner:test.local",
+        role="owner",
+    ))
+    await db_session.commit()
+
+    login_as("@owner:test.local")
+    resp = await client.patch(
+        f"/api/invites/{invite.id}",
+        json={"max_uses": 5, "expires_in_hours": 48, "permanent": False},
+    )
+    logout()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["max_uses"] == 5
+    assert body["permanent"] is False
+    expires_at = datetime.fromisoformat(body["expires_at"])
+    assert expires_at > datetime.now(timezone.utc) + timedelta(hours=47)
+
+
+async def test_update_invite_rejects_max_uses_below_use_count(client, seeded_server, db_session):
+    invite = await _make_invite(
+        db_session,
+        seeded_server.id,
+        max_uses=5,
+        use_count=3,
+    )
+
+    from models import ServerMember
+
+    db_session.add(ServerMember(
+        server_id=seeded_server.id,
+        user_id="@owner:test.local",
+        role="owner",
+    ))
+    await db_session.commit()
+
+    login_as("@owner:test.local")
+    resp = await client.patch(
+        f"/api/invites/{invite.id}",
+        json={"max_uses": 2},
+    )
+    logout()
+
+    assert resp.status_code == 400
+    assert "max_uses" in resp.text

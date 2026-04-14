@@ -55,6 +55,8 @@ export interface ConcordSource {
   addedAt: string;
   /** What kind of network this source represents. Defaults to "concord". */
   platform?: "concord" | "matrix" | "discord-bot" | "discord-account";
+  /** Concord user who owns this persisted source. Null => instance-global primary source. */
+  ownerUserId?: string | null;
 }
 
 export function getSourceHomeserverHost(source: Pick<ConcordSource, "homeserverUrl">): string | null {
@@ -92,6 +94,8 @@ export function sourceMatchesMatrixDomain(
 
 export interface SourcesState {
   sources: ConcordSource[];
+  /** Concord user currently bound to the persisted source set. */
+  boundUserId: string | null;
   /** Add a new source. Returns the generated source ID. */
   addSource: (source: Omit<ConcordSource, "id" | "addedAt">) => string;
   /** Persist a new source tile order. */
@@ -129,6 +133,8 @@ export interface SourcesState {
     api_base: string;
     homeserver_url: string;
   }) => void;
+  /** Scope persisted sources to the currently-authenticated Concord user. */
+  bindToUser: (userId: string | null) => void;
 }
 
 const STORAGE_KEY = "concord_sources";
@@ -137,15 +143,21 @@ function generateSourceId(): string {
   return `src_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function isPrimarySource(source: Pick<ConcordSource, "platform" | "inviteToken">): boolean {
+  return (source.platform ?? "concord") === "concord" && source.inviteToken.trim() === "";
+}
+
 export const useSourcesStore = create<SourcesState>()(
   persist(
     (set, get) => ({
       sources: [],
+      boundUserId: null,
 
       addSource: (source) => {
         const id = generateSourceId();
         const full: ConcordSource = {
           ...source,
+          ownerUserId: source.ownerUserId ?? get().boundUserId ?? null,
           id,
           addedAt: new Date().toISOString(),
         };
@@ -233,6 +245,7 @@ export const useSourcesStore = create<SourcesState>()(
                     apiBase: config.api_base,
                     homeserverUrl: config.homeserver_url,
                     status: "connected",
+                    ownerUserId: null,
                     // Preserve the user's enabled toggle if they
                     // previously hid this source — don't force-enable.
                   }
@@ -252,9 +265,35 @@ export const useSourcesStore = create<SourcesState>()(
           homeserverUrl: config.homeserver_url,
           status: "connected",
           enabled: true,
+          ownerUserId: null,
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, primary] }));
+      },
+
+      bindToUser: (userId) => {
+        set((state) => {
+          const nextSources: ConcordSource[] = [];
+          for (const source of state.sources) {
+            if (isPrimarySource(source)) {
+              nextSources.push({ ...source, ownerUserId: null });
+              continue;
+            }
+
+            const ownerUserId =
+              source.ownerUserId ?? state.boundUserId ?? userId ?? null;
+            if (!userId || ownerUserId !== userId) {
+              continue;
+            }
+
+            nextSources.push({ ...source, ownerUserId });
+          }
+
+          return {
+            sources: nextSources,
+            boundUserId: userId,
+          };
+        });
       },
 
       /**
@@ -286,6 +325,7 @@ export const useSourcesStore = create<SourcesState>()(
           homeserverUrl: config.homeserver_url,
           status: "connected",
           enabled: true,
+          ownerUserId: null,
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, primary] }));
@@ -298,10 +338,13 @@ export const useSourcesStore = create<SourcesState>()(
           ? window.localStorage
           : { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       ),
-      partialize: (state) => ({ sources: state.sources }),
-      version: 3,
+      partialize: (state) => ({
+        sources: state.sources,
+        boundUserId: state.boundUserId,
+      }),
+      version: 4,
       migrate: (persisted: unknown, version: number) => {
-        const state = persisted as { sources?: ConcordSource[] };
+        const state = persisted as { sources?: ConcordSource[]; boundUserId?: string | null };
         if (version === 0 && state.sources) {
           // v0 → v1: ensure every source has `enabled` defaulting to true.
           state.sources = state.sources.map((s) => ({
@@ -324,6 +367,13 @@ export const useSourcesStore = create<SourcesState>()(
             authError: s.authError ?? undefined,
             deviceId: s.deviceId ?? undefined,
           }));
+        }
+        if (version < 4 && state.sources) {
+          state.sources = state.sources.map((s) => ({
+            ...s,
+            ownerUserId: isPrimarySource(s) ? null : s.ownerUserId ?? undefined,
+          }));
+          state.boundUserId = state.boundUserId ?? null;
         }
         return state as SourcesState;
       },

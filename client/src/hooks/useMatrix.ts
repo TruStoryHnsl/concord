@@ -5,6 +5,7 @@ import { ClientEvent, RoomEvent, RoomMemberEvent, EventType, RelationType, type 
 import { useAuthStore } from "../stores/auth";
 import { useToastStore } from "../stores/toast";
 import { mxcToHttp } from "../api/media";
+import { parseWidgetComposerCommand } from "../components/chat/chatWidgets";
 
 const storeStartupByClient = new WeakMap<object, Promise<void>>();
 
@@ -377,6 +378,8 @@ export interface ChatMessage {
   reactions: Reaction[];
   /** Raw chart attachment payload as received from Matrix (untrusted). */
   chartRaw?: unknown;
+  /** Raw pinned-widget payload as received from Matrix (untrusted). */
+  widgetRaw?: unknown;
 }
 
 export interface RoomMessagesResult {
@@ -510,6 +513,9 @@ export function useRoomMessages(roomId: string | null): RoomMessagesResult {
           const chartRaw = redacted
             ? undefined
             : (content as Record<string, unknown>)["com.concord.chart"];
+          const widgetRaw = redacted
+            ? undefined
+            : (content as Record<string, unknown>)["com.concord.widget"];
 
           return {
             id,
@@ -523,6 +529,7 @@ export function useRoomMessages(roomId: string | null): RoomMessagesResult {
             info: redacted ? undefined : (content.info as ChatMessage["info"]),
             reactions,
             chartRaw,
+            widgetRaw,
           };
         });
 
@@ -530,7 +537,7 @@ export function useRoomMessages(roomId: string | null): RoomMessagesResult {
       const idsKey = msgs
         .map(
           (m) =>
-            `${m.id}:${m.redacted}:${m.edited}:${m.body.length}:${m.chartRaw ? "c" : "."}:${m.reactions.map((r) => `${r.emoji}${r.count}`).join("")}`,
+            `${m.id}:${m.redacted}:${m.edited}:${m.body.length}:${m.chartRaw ? "c" : "."}:${m.widgetRaw ? "w" : "."}:${m.reactions.map((r) => `${r.emoji}${r.count}`).join("")}`,
         )
         .join(",");
       if (idsKey !== lastIdsRef.current) {
@@ -649,8 +656,21 @@ export function useSendMessage(roomId: string | null) {
   return async (body: string) => {
     if (!client || !roomId) throw new Error("Not connected to a channel");
 
+    const parsed = parseWidgetComposerCommand(body);
+    const sendCurrentMessage = async () => {
+      if (parsed.widget) {
+        await client.sendMessage(roomId, {
+          msgtype: "m.text",
+          body: parsed.body,
+          "com.concord.widget": parsed.widget,
+        } as RoomMessageEventContent);
+        return;
+      }
+      await client.sendTextMessage(roomId, parsed.body);
+    };
+
     try {
-      await client.sendTextMessage(roomId, body);
+      await sendCurrentMessage();
     } catch (err: unknown) {
       // Auto-rejoin on 403 (membership lost after server restart) and retry once
       const msg = err instanceof Error ? err.message : String(err);
@@ -661,7 +681,7 @@ export function useSendMessage(roomId: string | null) {
         const serverId = useServerStore.getState().activeServerId;
         if (token && serverId) {
           await rejoinServerRooms(serverId, token);
-          await client.sendTextMessage(roomId, body);
+          await sendCurrentMessage();
         } else {
           throw err;
         }

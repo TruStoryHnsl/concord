@@ -227,6 +227,21 @@ export async function revokeInvite(
   await apiFetch(`/invites/${inviteId}`, { method: "DELETE" }, accessToken);
 }
 
+export async function updateInvite(
+  inviteId: number,
+  accessToken: string,
+  options: { permanent?: boolean; expires_in_hours?: number; max_uses?: number },
+): Promise<Invite> {
+  return apiFetch(
+    `/invites/${inviteId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(options),
+    },
+    accessToken,
+  );
+}
+
 export async function deleteServer(
   serverId: string,
   accessToken: string,

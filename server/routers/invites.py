@@ -46,9 +46,15 @@ class InviteOut(BaseModel):
 
 
 class InviteValidation(BaseModel):
-    valid: bool
-    server_name: str | None = None
-    server_id: str | None = None
+  valid: bool
+  server_name: str | None = None
+  server_id: str | None = None
+
+
+class InviteUpdate(BaseModel):
+    max_uses: int | None = Field(default=None, ge=1, le=1000)
+    expires_in_hours: int | None = Field(default=None, ge=1, le=8760)
+    permanent: bool | None = None
 
 
 @router.post("", response_model=InviteOut)
@@ -250,6 +256,53 @@ async def revoke_invite(
     await db.delete(invite)
     await db.commit()
     return {"status": "revoked"}
+
+
+@router.patch("/{invite_id}", response_model=InviteOut)
+async def update_invite(
+    invite_id: int,
+    body: InviteUpdate,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an invite's expiry, permanence, or max-uses budget."""
+    invite = await db.get(InviteToken, invite_id)
+    if not invite:
+        raise HTTPException(404, "Invite not found")
+
+    await require_server_member(invite.server_id, user_id, db)
+
+    if body.max_uses is not None:
+        if body.max_uses < invite.use_count:
+            raise HTTPException(400, "max_uses cannot be below current use count")
+        invite.max_uses = body.max_uses
+
+    if body.permanent is not None:
+        invite.permanent = body.permanent
+
+    if body.expires_in_hours is not None:
+        from datetime import timedelta
+        invite.expires_at = datetime.now(timezone.utc) + timedelta(hours=body.expires_in_hours)
+
+    await db.commit()
+
+    result = await db.execute(
+        select(InviteToken)
+        .options(selectinload(InviteToken.server))
+        .where(InviteToken.id == invite_id)
+    )
+    refreshed = result.scalar_one()
+    return InviteOut(
+        id=refreshed.id,
+        token=refreshed.token,
+        server_id=refreshed.server_id,
+        server_name=refreshed.server.name,
+        max_uses=refreshed.max_uses,
+        use_count=refreshed.use_count,
+        expires_at=refreshed.expires_at,
+        permanent=refreshed.permanent,
+        is_valid=refreshed.is_valid,
+    )
 
 
 class EmailInviteRequest(BaseModel):

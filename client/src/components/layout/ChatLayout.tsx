@@ -755,7 +755,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           <div className="flex h-full min-h-0 flex-shrink-0 bg-surface">
             <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
               <div className="flex min-h-0 flex-1">
-                <div className="w-11 flex-shrink-0">
+                <div className="w-9 flex-shrink-0">
                   <SilentBoundary>
                     <SourcesPanel
                       onAddSource={openAddSource}
@@ -2513,6 +2513,28 @@ function AddSourceModal({
     }
   };
 
+  const handleDiscoverPresetMatrix = async (presetHost: string) => {
+    setMatrixHost(presetHost);
+    const trimmed = presetHost.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!trimmed) return;
+    setScreen("validating");
+    try {
+      const [{ discoverHomeserver }, { fetchLoginFlows }] = await Promise.all([
+        import("../../api/wellKnown"),
+        import("../../api/matrix"),
+      ]);
+      const config = await discoverHomeserver(trimmed);
+      const flows = await fetchLoginFlows(config.homeserver_url);
+      setMatrixDraft(buildMatrixSourceDraft(trimmed, config, flows));
+      setMatrixUsername("");
+      setMatrixPassword("");
+      setScreen("matrix-auth");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't reach that homeserver");
+      setScreen("error");
+    }
+  };
+
   const handleMatrixPasswordLogin = async () => {
     if (!matrixDraft || !matrixUsername.trim() || !matrixPassword) return;
     setScreen("validating");
@@ -2632,9 +2654,8 @@ function AddSourceModal({
         {/* ── Screen: pick ── */}
         {screen === "pick" && (
           <>
-            <Header title="Add Source" />
+            <Header title="Explore Sources" />
             <div className="space-y-3">
-              {/* Concord */}
               <button
                 onClick={() => setScreen("concord")}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
@@ -2644,12 +2665,39 @@ function AddSourceModal({
                 </div>
                 <div>
                   <p className="text-sm font-medium text-on-surface">Concord Instance</p>
-                  <p className="text-xs text-on-surface-variant">Connect via invite token</p>
+                  <p className="text-xs text-on-surface-variant">Connect to another Concord domain with an invite token</p>
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
 
-              {/* Matrix */}
+              <button
+                onClick={() => void handleDiscoverPresetMatrix("matrix.org")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-teal-500/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="matrix" size={24} className="text-on-surface" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">matrix.org</p>
+                  <p className="text-xs text-on-surface-variant">Discover public rooms with Matrix login flows</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                onClick={() => void handleDiscoverPresetMatrix("chat.mozilla.org")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-orange-500/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="mozilla" size={24} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Mozilla</p>
+                  <p className="text-xs text-on-surface-variant">Use Mozilla&apos;s delegated Matrix login</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
               <button
                 onClick={() => setScreen("matrix")}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-teal-500/40 hover:bg-surface-container-high transition-all text-left group"
@@ -2658,13 +2706,12 @@ function AddSourceModal({
                   <SourceBrandIcon brand="matrix" size={24} className="text-on-surface" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-on-surface">Matrix Network</p>
-                  <p className="text-xs text-on-surface-variant">Browse any Matrix homeserver</p>
+                  <p className="text-sm font-medium text-on-surface">Custom Matrix Homeserver</p>
+                  <p className="text-xs text-on-surface-variant">Enter any Matrix domain manually</p>
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
 
-              {/* Discord */}
               <button
                 onClick={() => setScreen("discord")}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-[#5865F2]/40 hover:bg-surface-container-high transition-all text-left group"
@@ -2677,6 +2724,36 @@ function AddSourceModal({
                   <p className="text-xs text-on-surface-variant">Bridge guilds or connect your account</p>
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                type="button"
+                disabled
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/10 bg-surface-container/40 text-left opacity-60 cursor-not-allowed"
+              >
+                <div className="w-10 h-10 rounded-xl bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-on-surface-variant">forum</span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-on-surface">Slack</p>
+                  <p className="text-xs text-on-surface-variant">Preloaded release target</p>
+                </div>
+                <span className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label">Soon</span>
+              </button>
+
+              <button
+                type="button"
+                disabled
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/10 bg-surface-container/40 text-left opacity-60 cursor-not-allowed"
+              >
+                <div className="w-10 h-10 rounded-xl bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-on-surface-variant">sensors</span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-on-surface">Reticulum</p>
+                  <p className="text-xs text-on-surface-variant">Preloaded release target</p>
+                </div>
+                <span className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label">Soon</span>
               </button>
             </div>
           </>

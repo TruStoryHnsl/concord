@@ -24,10 +24,12 @@ import {
   sendDirectInvite,
   createInvite,
   listInvites,
+  revokeInvite,
   getAuthCode,
   getBanSettings,
   updateBanSettings,
   updateMemberPermissions,
+  updateInvite,
   type BanSettings,
   type Invite,
 } from "../../api/concord";
@@ -1256,11 +1258,33 @@ function InviteLinkSection({
 }) {
   const [passphrase, setPassphrase] = useState("");
   const [creating, setCreating] = useState(false);
-  const [created, setCreated] = useState<string | null>(null);
+  const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [expiresInHours, setExpiresInHours] = useState(24);
+  const [maxUses, setMaxUses] = useState(1);
+  const [permanent, setPermanent] = useState(false);
+  const [savingInviteId, setSavingInviteId] = useState<number | null>(null);
+  const [inviteDrafts, setInviteDrafts] = useState<
+    Record<number, { expiresInHours: number; maxUses: number; permanent: boolean }>
+  >({});
   const [authCode, setAuthCode] = useState("");
   const [codeTtl, setCodeTtl] = useState(0);
   const addToast = useToastStore((s) => s.addToast);
+
+  const buildInviteLink = useCallback((token: string) => `${window.location.origin}?invite=${token}`, []);
+  const inviteHoursFromExpiresAt = useCallback((value: string) => {
+    const diffMs = new Date(value).getTime() - Date.now();
+    return Math.max(1, Math.round(diffMs / 3_600_000));
+  }, []);
+
+  const copyToClipboard = useCallback(async (text: string, label = "Invite link copied") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      addToast(label, "success");
+    } catch {
+      addToast("Failed to copy invite link");
+    }
+  }, [addToast]);
 
   // Fetch and auto-refresh the rolling auth code
   useEffect(() => {
@@ -1293,17 +1317,46 @@ function InviteLinkSection({
       .catch(() => {});
   }, [serverId, accessToken]);
 
+  useEffect(() => {
+    setInviteDrafts((current) => {
+      const next = { ...current };
+      for (const invite of invites) {
+        next[invite.id] ??= {
+          expiresInHours: inviteHoursFromExpiresAt(invite.expires_at),
+          maxUses: invite.max_uses,
+          permanent: invite.permanent,
+        };
+      }
+      return next;
+    });
+  }, [invites, inviteHoursFromExpiresAt]);
+
+  const createLinkInvite = async (options?: { passphrase?: string }) => {
+    const invite = await createInvite(serverId, accessToken, {
+      passphrase: options?.passphrase,
+      max_uses: maxUses,
+      permanent,
+      ...(permanent ? {} : { expires_in_hours: expiresInHours }),
+    });
+    setInvites((prev) => [invite, ...prev]);
+    setInviteDrafts((prev) => ({
+      ...prev,
+      [invite.id]: {
+        expiresInHours: inviteHoursFromExpiresAt(invite.expires_at),
+        maxUses: invite.max_uses,
+        permanent: invite.permanent,
+      },
+    }));
+    const link = buildInviteLink(invite.token);
+    setCreatedLink(link);
+    await copyToClipboard(link);
+    return invite;
+  };
+
   const handleGenerate = async () => {
     setCreating(true);
     try {
-      // No passphrase — server generates a random short token
-      const invite = await createInvite(serverId, accessToken, {
-        max_uses: 1,
-        expires_in_hours: 1,
-      });
-      setCreated(invite.token);
-      setInvites((prev) => [invite, ...prev]);
-      addToast("Token generated — share it with your friend", "success");
+      await createLinkInvite();
     } catch (err) {
       addToast(err instanceof Error ? err.message : "Failed to generate token");
     } finally {
@@ -1319,20 +1372,44 @@ function InviteLinkSection({
     }
     setCreating(true);
     try {
-      const invite = await createInvite(serverId, accessToken, {
-        passphrase: phrase,
-        max_uses: 1,
-        expires_in_hours: 1,
-      });
-      setCreated(invite.token);
-      setInvites((prev) => [invite, ...prev]);
+      await createLinkInvite({ passphrase: phrase });
       setPassphrase("");
-      addToast("Invite created — tell your friend the passphrase", "success");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create invite";
       addToast(msg.includes("409") ? "That passphrase is already in use" : msg);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleSaveInvite = async (inviteId: number) => {
+    const draft = inviteDrafts[inviteId];
+    if (!draft) return;
+    setSavingInviteId(inviteId);
+    try {
+      const updated = await updateInvite(inviteId, accessToken, {
+        max_uses: draft.maxUses,
+        permanent: draft.permanent,
+        ...(draft.permanent ? {} : { expires_in_hours: draft.expiresInHours }),
+      });
+      setInvites((current) => current.map((invite) => (
+        invite.id === inviteId ? updated : invite
+      )));
+      addToast("Invite updated", "success");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to update invite");
+    } finally {
+      setSavingInviteId(null);
+    }
+  };
+
+  const handleRevokeInvite = async (inviteId: number) => {
+    try {
+      await revokeInvite(inviteId, accessToken);
+      setInvites((current) => current.filter((invite) => invite.id !== inviteId));
+      addToast("Invite revoked", "success");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to revoke invite");
     }
   };
 
@@ -1362,8 +1439,42 @@ function InviteLinkSection({
       )}
 
       <p className="text-xs text-on-surface-variant mb-3">
-        Generate a token or pick a custom passphrase. Expires in 1 hour, single use.
+        Generate a copyable invite link or custom passphrase, then tune its lifetime and usage budget.
       </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wider text-on-surface-variant font-label">Hours</span>
+          <input
+            type="number"
+            min={1}
+            max={8760}
+            value={expiresInHours}
+            disabled={permanent}
+            onChange={(event) => setExpiresInHours(Math.max(1, Number(event.target.value) || 1))}
+            className="px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20 text-sm text-on-surface disabled:opacity-50"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wider text-on-surface-variant font-label">Max uses</span>
+          <input
+            type="number"
+            min={1}
+            max={1000}
+            value={maxUses}
+            onChange={(event) => setMaxUses(Math.max(1, Number(event.target.value) || 1))}
+            className="px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20 text-sm text-on-surface"
+          />
+        </label>
+        <label className="flex items-center gap-2 rounded-xl bg-surface-container border border-outline-variant/20 px-3 py-2.5 mt-[18px]">
+          <input
+            type="checkbox"
+            checked={permanent}
+            onChange={(event) => setPermanent(event.target.checked)}
+          />
+          <span className="text-sm text-on-surface">Permanent</span>
+        </label>
+      </div>
 
       {/* One-tap generate button */}
       <button
@@ -1371,7 +1482,7 @@ function InviteLinkSection({
         disabled={creating}
         className="w-full py-2.5 rounded-xl primary-glow text-on-primary font-headline font-semibold hover:brightness-110 shadow-lg shadow-primary/20 transition-all disabled:opacity-40 active:scale-[0.98] mb-3"
       >
-        {creating ? "..." : "Generate Token"}
+        {creating ? "..." : "Generate Invite Link"}
       </button>
 
       {/* Or custom passphrase */}
@@ -1380,7 +1491,7 @@ function InviteLinkSection({
         <input
           type="text"
           value={passphrase}
-          onChange={(e) => { setPassphrase(e.target.value); setCreated(null); }}
+          onChange={(e) => { setPassphrase(e.target.value); setCreatedLink(null); }}
           placeholder="e.g. pizza123"
           className="flex-1 px-3 py-2.5 bg-surface-container border border-outline-variant/20 rounded-xl text-on-surface text-sm font-mono placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
           autoCapitalize="off"
@@ -1397,29 +1508,123 @@ function InviteLinkSection({
         </button>
       </div>
 
-      {created && (
+      {createdLink && (
         <div className="mt-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/20">
-          <p className="text-sm text-green-400 font-body">
-            Tell your friend: <strong className="font-mono">{created}</strong>
-            <span className="text-xs text-on-surface-variant ml-2">(expires in 1 hour)</span>
-          </p>
+          <p className="text-xs text-green-300 font-label uppercase tracking-wider">Ready to paste</p>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              readOnly
+              value={createdLink}
+              className="flex-1 min-w-0 bg-transparent text-sm text-green-100 font-mono focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void copyToClipboard(createdLink)}
+              className="px-2 py-1 rounded-md bg-green-500/20 text-green-100 text-xs"
+            >
+              Copy
+            </button>
+          </div>
         </div>
       )}
 
       {activeInvites.length > 0 && (
-        <div className="mt-4 space-y-1">
+        <div className="mt-4 space-y-2">
           <p className="text-xs text-on-surface-variant font-label uppercase tracking-wider mb-1">
             Active invites
           </p>
           {activeInvites.map((inv) => (
             <div
               key={inv.id}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-container text-xs"
+              className="rounded-xl bg-surface-container border border-outline-variant/15 p-3 space-y-3"
             >
-              <code className="flex-1 text-on-surface font-mono truncate">{inv.token}</code>
-              <span className="text-on-surface-variant whitespace-nowrap">
-                {inv.permanent ? "∞" : `${inv.use_count}/${inv.max_uses}`}
-              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={buildInviteLink(inv.token)}
+                  className="flex-1 min-w-0 bg-transparent text-xs text-on-surface font-mono truncate focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(buildInviteLink(inv.token))}
+                  className="px-2 py-1 rounded-md bg-surface-container-high text-on-surface text-xs"
+                >
+                  Copy
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label">Hours</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8760}
+                    value={inviteDrafts[inv.id]?.expiresInHours ?? 1}
+                    disabled={inviteDrafts[inv.id]?.permanent}
+                    onChange={(event) => {
+                      const next = Math.max(1, Number(event.target.value) || 1);
+                      setInviteDrafts((current) => ({
+                        ...current,
+                        [inv.id]: { ...current[inv.id], expiresInHours: next },
+                      }));
+                    }}
+                    className="px-3 py-2 rounded-lg bg-surface-container-high border border-outline-variant/15 text-sm text-on-surface disabled:opacity-50"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label">Max uses</span>
+                  <input
+                    type="number"
+                    min={Math.max(1, inv.use_count)}
+                    max={1000}
+                    value={inviteDrafts[inv.id]?.maxUses ?? inv.max_uses}
+                    onChange={(event) => {
+                      const next = Math.max(inv.use_count || 1, Number(event.target.value) || 1);
+                      setInviteDrafts((current) => ({
+                        ...current,
+                        [inv.id]: { ...current[inv.id], maxUses: next },
+                      }));
+                    }}
+                    className="px-3 py-2 rounded-lg bg-surface-container-high border border-outline-variant/15 text-sm text-on-surface"
+                  />
+                </label>
+                <label className="flex items-center gap-2 rounded-lg bg-surface-container-high border border-outline-variant/15 px-3 py-2 mt-[18px]">
+                  <input
+                    type="checkbox"
+                    checked={inviteDrafts[inv.id]?.permanent ?? inv.permanent}
+                    onChange={(event) => {
+                      setInviteDrafts((current) => ({
+                        ...current,
+                        [inv.id]: { ...current[inv.id], permanent: event.target.checked },
+                      }));
+                    }}
+                  />
+                  <span className="text-sm text-on-surface">Permanent</span>
+                </label>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-xs text-on-surface-variant">
+                <span>
+                  {inv.permanent ? "Never expires" : `Expires ${new Date(inv.expires_at).toLocaleString()}`}
+                </span>
+                <span>{inv.use_count}/{inv.max_uses} used</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveInvite(inv.id)}
+                  disabled={savingInviteId === inv.id}
+                  className="px-3 py-1.5 rounded-lg bg-primary/15 text-primary text-xs font-medium disabled:opacity-50"
+                >
+                  {savingInviteId === inv.id ? "Saving..." : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRevokeInvite(inv.id)}
+                  className="px-3 py-1.5 rounded-lg bg-error/10 text-error text-xs font-medium"
+                >
+                  Revoke
+                </button>
+              </div>
             </div>
           ))}
         </div>

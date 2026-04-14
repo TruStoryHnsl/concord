@@ -291,7 +291,10 @@ def test_public_view_falls_back_on_corrupt_file(fresh_data_dir, caplog):
     assert pub.node_role == "hybrid"
     assert pub.tunnel_anchor_enabled is False
     # Warning must mention the fallback so operators notice.
-    assert any("fallback" in rec.message.lower() for rec in caplog.records)
+    assert any(
+        "fallback" in rec.message.lower() or "falling back" in rec.message.lower()
+        for rec in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

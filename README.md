@@ -129,7 +129,8 @@ Federation settings (`allow_federation`, `forbidden_remote_server_names`, `allow
 |-----------|---------|
 | `SMTP_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_FROM` | Email invitations |
 | `FREESOUND_API_KEY` | Sound effect library for soundboards |
-| `TURN_SECRET` / `TURN_HOST` / `TURN_DOMAIN` | Embedded coturn TURN relay (config in `config/turnserver.conf`) |
+| `TURN_SECRET` / `TURN_HOST` / `TURN_DOMAIN` / `TURN_EXTERNAL_IP` | Embedded coturn TURN relay (config in `config/turnserver.conf`) |
+| `TURN_TLS_ENABLED` / `TURN_TLS_PORT` / `TURN_TLS_CERT_FILE` / `TURN_TLS_KEY_FILE` | Optional TLS TURN listener for locked-down networks |
 | `METERED_APP_NAME` / `METERED_API_KEY` | External metered.ca TURN relay (alternative to embedded coturn) |
 
 ### Switching to HTTPS

@@ -20,6 +20,33 @@ interface StagedFile {
   previewUrl: string | null;
 }
 
+type ComposerSnippet = {
+  label: string;
+  template: string;
+  fallback: string;
+};
+
+const MARKDOWN_SNIPPETS: ComposerSnippet[] = [
+  { label: "H1", template: "# $SELECTION$", fallback: "Heading" },
+  { label: "H2", template: "## $SELECTION$", fallback: "Section" },
+  { label: "Quote", template: "> $SELECTION$", fallback: "Quoted text" },
+  { label: "Table", template: "| Column | Value |\n| --- | --- |\n| $SELECTION$ |  |", fallback: "Row" },
+  { label: "Code", template: "```md\n$SELECTION$\n```", fallback: "code" },
+];
+
+const LAYOUT_SNIPPETS: ComposerSnippet[] = [
+  { label: "Small", template: "[small]$SELECTION$[/small]", fallback: "compact note" },
+  { label: "Large", template: "[large]$SELECTION$[/large]", fallback: "big callout" },
+  { label: "Center", template: "[center]$SELECTION$[/center]", fallback: "centered line" },
+  { label: "Right", template: "[right]$SELECTION$[/right]", fallback: "right-aligned note" },
+];
+
+const WIDGET_SNIPPETS: ComposerSnippet[] = [
+  { label: "Poll", template: "/poll $SELECTION$ | Option A | Option B", fallback: "What should we do next?" },
+  { label: "Checklist", template: "/checklist $SELECTION$ | Item 1 | Item 2", fallback: "Launch tasks" },
+  { label: "Status", template: "/status $SELECTION$ | Everything is stable | success", fallback: "Room status" },
+];
+
 export function MessageInput({
   onSend,
   onSubmitEdit,
@@ -36,6 +63,7 @@ export function MessageInput({
   const [sending, setSending] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [formattingOpen, setFormattingOpen] = useState(false);
   const pendingRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -195,10 +223,29 @@ export function MessageInput({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }, []);
 
+  const insertSnippet = useCallback((snippet: ComposerSnippet) => {
+    const textarea = inputRef.current;
+    const start = textarea?.selectionStart ?? text.length;
+    const end = textarea?.selectionEnd ?? text.length;
+    const selected = text.slice(start, end).trim();
+    const injected = snippet.template.replaceAll("$SELECTION$", selected || snippet.fallback);
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    const needsLeadingBreak = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+    const needsTrailingBreak = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
+    const nextText = `${before}${needsLeadingBreak}${injected}${needsTrailingBreak}${after}`;
+    const cursor = (before + needsLeadingBreak + injected).length;
+    setText(nextText);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(cursor, cursor);
+    });
+  }, [text]);
+
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-surface-container-low flex-shrink-0"
+      className="relative bg-surface-container-low flex-shrink-0"
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -206,6 +253,67 @@ export function MessageInput({
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
     >
+      <div className="absolute right-4 bottom-[78px] z-20 flex flex-col items-end gap-2">
+        {formattingOpen && (
+          <div className="w-[280px] rounded-2xl border border-outline-variant/20 bg-surface/95 backdrop-blur-sm shadow-2xl p-3 space-y-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label mb-2">Markdown</p>
+              <div className="flex flex-wrap gap-2">
+                {MARKDOWN_SNIPPETS.map((snippet) => (
+                  <button
+                    key={snippet.label}
+                    type="button"
+                    onClick={() => insertSnippet(snippet)}
+                    className="px-2.5 py-1.5 rounded-lg bg-surface-container-high text-xs text-on-surface hover:bg-surface-container-highest"
+                  >
+                    {snippet.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label mb-2">Layout</p>
+              <div className="flex flex-wrap gap-2">
+                {LAYOUT_SNIPPETS.map((snippet) => (
+                  <button
+                    key={snippet.label}
+                    type="button"
+                    onClick={() => insertSnippet(snippet)}
+                    className="px-2.5 py-1.5 rounded-lg bg-surface-container-high text-xs text-on-surface hover:bg-surface-container-highest"
+                  >
+                    {snippet.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label mb-2">Pinned Widgets</p>
+              <div className="flex flex-wrap gap-2">
+                {WIDGET_SNIPPETS.map((snippet) => (
+                  <button
+                    key={snippet.label}
+                    type="button"
+                    onClick={() => insertSnippet(snippet)}
+                    className="px-2.5 py-1.5 rounded-lg bg-primary/10 text-xs text-primary hover:bg-primary/15"
+                  >
+                    {snippet.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setFormattingOpen((open) => !open)}
+          className="btn-press flex items-center gap-2 rounded-full border border-outline-variant/20 bg-surface/95 px-3 py-2 text-xs text-on-surface shadow-lg backdrop-blur-sm"
+          title="Formatting tools"
+        >
+          <span className="material-symbols-outlined text-base">stylus_note</span>
+          {formattingOpen ? "Close tools" : "Format"}
+        </button>
+      </div>
+
       {editingMessage && (
         <div className="flex items-center gap-2 px-4 pt-2 text-xs text-on-surface-variant font-label">
           <span>Editing message</span>

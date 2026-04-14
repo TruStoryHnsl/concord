@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { MatrixClient } from "matrix-js-sdk";
 import { createMatrixClient } from "../api/matrix";
+import { useServerStore } from "./server";
+import { useSourcesStore } from "./sources";
 
 interface AuthState {
   client: MatrixClient | null;
@@ -40,6 +42,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   login: (accessToken, userId, deviceId) => {
     const client = createMatrixClient(accessToken, userId, deviceId);
+    useServerStore.getState().resetState();
+    useSourcesStore.getState().bindToUser(userId);
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ accessToken, userId, deviceId }),
@@ -52,6 +56,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (client) {
       client.stopClient();
     }
+    useServerStore.getState().resetState();
+    useSourcesStore.getState().bindToUser(null);
     localStorage.removeItem(STORAGE_KEY);
     set({
       client: null,
@@ -66,6 +72,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   restoreSession: () => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
+      useServerStore.getState().resetState();
       set({ isLoading: false });
       return false;
     }
@@ -73,6 +80,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { accessToken, userId, deviceId }: StoredSession =
         JSON.parse(stored);
       const client = createMatrixClient(accessToken, userId, deviceId);
+      useServerStore.getState().resetState();
+      useSourcesStore.getState().bindToUser(userId);
       set({
         client,
         userId,
@@ -83,6 +92,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return true;
     } catch {
       localStorage.removeItem(STORAGE_KEY);
+      useServerStore.getState().resetState();
+      useSourcesStore.getState().bindToUser(null);
       set({ isLoading: false });
       return false;
     }

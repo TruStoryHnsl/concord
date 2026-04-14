@@ -38,7 +38,9 @@ Concord reads configuration from environment variables, not an `ini` file. Put t
 | `LIVEKIT_URL` | yes (if voice) | `ws://livekit:7880` | Internal Docker-network URL of the LiveKit container. The public URL is synthesised by the server at request time (see `services/wellknown.py`). |
 | `GITHUB_BUG_REPORT_TOKEN` | optional | PAT with `issues:write` | Mirrors user bug reports to a GitHub issue. See `github_bug_report_token.md` for rotation + threat model. Leave unset to keep reports local. |
 | `GITHUB_BUG_REPORT_REPO` | optional | `TruStoryHnsl/concord` | Repo target for the mirror. Defaults to `TruStoryHnsl/concord`. |
-| `TURN_HOST` | optional | `turn.concorrd.com` | Hostname operators can use to surface a STUN hint in the well-known document. Enables pre-auth connectivity checks in the native client picker. |
+| `TURN_HOST` | optional | `turn.concorrd.com` | Hostname clients should use for TURN/STUN. Point this at a direct DNS record, not a CDN-proxied hostname. |
+| `TURN_EXTERNAL_IP` | optional | `162.195.121.21/192.168.1.145` | coturn NAT mapping. Required when the host is behind NAT so relay candidates advertise a routable public address instead of a LAN IP. |
+| `TURN_TLS_ENABLED` / `TURN_TLS_PORT` | optional | `false` / `5349` | Optional TLS TURN listener. Only enable when you also mount a certificate/key for coturn. |
 | `SMTP_*` | optional | — | Email invites. Unset if you don't want to mail invites. |
 
 Put them in `.env`:
@@ -52,6 +54,8 @@ ADMIN_USER_IDS=@alice:concorrd.com
 LIVEKIT_API_KEY=<from livekit-cli>
 LIVEKIT_API_SECRET=<from livekit-cli>
 LIVEKIT_URL=ws://livekit:7880
+TURN_HOST=turn.concorrd.com
+TURN_EXTERNAL_IP=162.195.121.21/192.168.1.145
 ```
 
 `chmod 600 .env` — this file contains the registration token and LiveKit signing secret. Don't let it be world-readable.

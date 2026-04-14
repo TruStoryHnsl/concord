@@ -52,10 +52,70 @@ class VoiceTokenResponse(BaseModel):
     ice_servers: list[IceServer] = []
 
 
-TURN_SECRET = os.getenv("TURN_SECRET", "")
-TURN_DOMAIN = os.getenv("TURN_DOMAIN", "localhost")
 # Credential TTL: how long a TURN credential is valid (seconds)
 TURN_CREDENTIAL_TTL = 86400  # 24 hours
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _turn_secret() -> str:
+    return os.getenv("TURN_SECRET", "").strip()
+
+
+def _turn_domain() -> str:
+    return os.getenv("TURN_DOMAIN", "localhost").strip() or "localhost"
+
+
+def _turn_host() -> str:
+    return os.getenv("TURN_HOST", "").strip() or _turn_domain()
+
+
+def _turn_port() -> int:
+    raw = os.getenv("TURN_PORT", "3478").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 3478
+
+
+def _turn_tls_port() -> int:
+    raw = os.getenv("TURN_TLS_PORT", "5349").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 5349
+
+
+def _turn_tls_enabled() -> bool:
+    return _env_flag("TURN_TLS_ENABLED", default=False)
+
+
+def _turn_external_ip() -> str:
+    return os.getenv("TURN_EXTERNAL_IP", "").strip()
+
+
+def _build_turn_ice_servers(turn_host: str, username: str, credential: str) -> list[IceServer]:
+    port = _turn_port()
+    urls = [
+        f"turn:{turn_host}:{port}?transport=udp",
+        f"turn:{turn_host}:{port}?transport=tcp",
+    ]
+    if _turn_tls_enabled():
+        urls.insert(0, f"turns:{turn_host}:{_turn_tls_port()}?transport=tcp")
+
+    return [
+        IceServer(
+            urls=urls,
+            username=username,
+            credential=credential,
+        ),
+        IceServer(urls="stun:stun.l.google.com:19302"),
+    ]
 
 
 def _generate_turn_credentials(user_id: str) -> list[IceServer]:
@@ -64,7 +124,8 @@ def _generate_turn_credentials(user_id: str) -> list[IceServer]:
     coturn validates these using the same shared secret. The username encodes
     an expiry timestamp so credentials auto-expire without a database.
     """
-    if not TURN_SECRET:
+    turn_secret = _turn_secret()
+    if not turn_secret:
         return []
 
     import hashlib
@@ -74,27 +135,10 @@ def _generate_turn_credentials(user_id: str) -> list[IceServer]:
     expiry = int(_time.time()) + TURN_CREDENTIAL_TTL
     username = f"{expiry}:{user_id}"
     # HMAC-SHA1 of the username with the shared secret
-    mac = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1)
+    mac = hmac.new(turn_secret.encode(), username.encode(), hashlib.sha1)
     credential = base64.b64encode(mac.digest()).decode()
 
-    turn_host = os.getenv("TURN_HOST", TURN_DOMAIN)
-    return [
-        # TURNS (TLS) on port 443 — sslh on the host multiplexes by SNI:
-        #   turn.<domain> → coturn TLS (port 5349)
-        #   everything else → reverse proxy (HTTPS)
-        # This works through any firewall since 443 is always open.
-        IceServer(
-            urls=[
-                f"turns:{turn_host}:443?transport=tcp",
-                f"turn:{turn_host}:3478?transport=udp",
-                f"turn:{turn_host}:3478?transport=tcp",
-            ],
-            username=username,
-            credential=credential,
-        ),
-        # STUN (discovery only, no relay)
-        IceServer(urls="stun:stun.l.google.com:19302"),
-    ]
+    return _build_turn_ice_servers(_turn_host(), username, credential)
 
 
 async def _fetch_turn_credentials(user_id: str = "") -> list[IceServer]:
@@ -205,8 +249,12 @@ async def check_turn_health(
     Requires authentication (any logged-in user) to prevent abuse as a
     network scanning primitive.
     """
-    turn_host = os.getenv("TURN_HOST", TURN_DOMAIN)
-    has_secret = bool(TURN_SECRET)
+    turn_host = _turn_host()
+    turn_port = _turn_port()
+    tls_enabled = _turn_tls_enabled()
+    tls_port = _turn_tls_port()
+    turn_external_ip = _turn_external_ip()
+    has_secret = bool(_turn_secret())
 
     if not has_secret:
         return TurnCheckResponse(
@@ -215,12 +263,12 @@ async def check_turn_health(
                         "Voice will only work on direct connections (no NAT traversal).",
         )
 
-    # Determine advertised TURN ports from the credential generator
     turn_ports = [
-        f"turns:{turn_host}:443/tcp",
-        f"turn:{turn_host}:3478/udp",
-        f"turn:{turn_host}:3478/tcp",
+        f"turn:{turn_host}:{turn_port}/udp",
+        f"turn:{turn_host}:{turn_port}/tcp",
     ]
+    if tls_enabled:
+        turn_ports.insert(0, f"turns:{turn_host}:{tls_port}/tcp")
 
     # Attempt a lightweight STUN binding check to the TURN host
     import socket
@@ -241,7 +289,7 @@ async def check_turn_health(
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(3.0)
         start = _time.monotonic()
-        sock.sendto(stun_header, (turn_host, 3478))
+        sock.sendto(stun_header, (turn_host, turn_port))
         try:
             data, _ = sock.recvfrom(1024)
             elapsed = _time.monotonic() - start
@@ -257,11 +305,18 @@ async def check_turn_health(
             else:
                 diag_parts.append(f"Got {len(data)} bytes (too short for STUN)")
         except socket.timeout:
-            diag_parts.append(f"STUN binding to {turn_host}:3478/udp timed out (3s)")
+            diag_parts.append(f"STUN binding to {turn_host}:{turn_port}/udp timed out (3s)")
         finally:
             sock.close()
     except Exception as e:
         diag_parts.append(f"STUN check failed: {e}")
+
+    if not turn_external_ip:
+        diag_parts.append("TURN_EXTERNAL_IP not set; relay allocations may advertise a private host address")
+    if tls_enabled:
+        diag_parts.append(f"TLS TURN advertised on {turn_host}:{tls_port}/tcp")
+    else:
+        diag_parts.append("TLS TURN disabled; relay uses 3478 udp/tcp only")
 
     # Check LiveKit health
     lk_healthy = False
