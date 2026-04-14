@@ -167,6 +167,9 @@ def test_turn_stack_architecture_is_env_driven() -> None:
     assert "TURN_TLS_ENABLED" in compose
     assert "TURN_TLS_PORT" in compose
     assert "alt-listening-port=5349" not in turn_config
+    assert "TURN_HEALTH_IP" in compose
+    assert "$${TURN_LISTEN_IP:-}" in compose
+    assert "$${TURN_EXTERNAL_IP#*/}" in compose
     assert "--external-ip=${TURN_EXTERNAL_IP}" in turn_entrypoint
     assert "--listening-ip=${TURN_LISTEN_IP_VALUE}" in turn_entrypoint
     assert "--relay-ip=${TURN_RELAY_IP_VALUE}" in turn_entrypoint

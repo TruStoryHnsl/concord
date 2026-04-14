@@ -382,10 +382,14 @@ services:
       TURN_TLS_CERT_FILE: ${TURN_TLS_CERT_FILE:-}
       TURN_TLS_KEY_FILE: ${TURN_TLS_KEY_FILE:-}
     healthcheck:
-      # STUN binding request to localhost:3478 — if coturn is alive it
-      # responds with a binding response. turnutils_stunclient ships
-      # with the coturn image.
-      test: ["CMD-SHELL", "turnutils_stunclient 127.0.0.1 2>/dev/null || exit 1"]
+      # Probe the actual bound listener IP. When TURN_EXTERNAL_IP is a
+      # public/private NAT mapping we clamp coturn to the private host-side
+      # interface, so probing 127.0.0.1 would be a false negative.
+      test:
+        [
+          "CMD-SHELL",
+          "TURN_HEALTH_IP=\"$${TURN_LISTEN_IP:-}\"; if [ -z \"$${TURN_HEALTH_IP}\" ]; then case \"$${TURN_EXTERNAL_IP:-}\" in */*) TURN_HEALTH_IP=\"$${TURN_EXTERNAL_IP#*/}\" ;; *) TURN_HEALTH_IP=127.0.0.1 ;; esac; fi; turnutils_stunclient \"$${TURN_HEALTH_IP}\" 2>/dev/null || exit 1",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
