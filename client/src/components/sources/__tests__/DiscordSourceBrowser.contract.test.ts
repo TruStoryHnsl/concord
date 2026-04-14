@@ -4,9 +4,13 @@ import source from "../DiscordSourceBrowser.tsx?raw";
 describe("DiscordSourceBrowser contracts", () => {
   it("persists voice mappings per user so disconnected bridges still show up in the menu", () => {
     expect(source).toContain("concord_discord_voice_mappings:");
+    expect(source).toContain("concord_discord_voice_channels:");
     expect(source).toContain("readCachedVoiceMappings");
     expect(source).toContain("writeCachedVoiceMappings");
+    expect(source).toContain("readCachedVoiceChannels");
+    expect(source).toContain("writeCachedVoiceChannels");
     expect(source).toContain("useState<DiscordVoiceBridgeRoom[]>(");
+    expect(source).not.toContain("if (!mapping.enabled) continue;");
   });
 
   it("offers a direct bridge reload action from the discord source browser", () => {

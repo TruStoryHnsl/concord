@@ -30,6 +30,7 @@ import { useVoiceParticipants } from "../../hooks/useVoiceParticipants";
 import { NewServerModal } from "../server/NewServerModal";
 import { splitDiscordVoiceBridgeParticipants } from "../voice/discordVoiceBridge";
 import { Avatar } from "../ui/Avatar";
+import { SourceBrandIcon } from "../sources/sourceBrand";
 
 /**
  * INS-002B: Server-list drag reorder.
@@ -522,12 +523,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
                 className="absolute -top-1 -left-1 w-4 h-4 bg-[#5865F2] rounded-full border-2 border-surface-container-low flex items-center justify-center"
                 aria-label="Discord bridge"
               >
-                <span
-                  className="font-headline font-bold text-white"
-                  style={{ fontSize: "8px", lineHeight: 1 }}
-                >
-                  D
-                </span>
+                <SourceBrandIcon brand="discord" size={9} className="text-white" />
               </div>
             )}
             {isFromConcordFederation && !isDiscordBridge && (
@@ -668,7 +664,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
               aria-hidden="true"
             >
               {isDiscordBridge ? (
-                <span className="material-symbols-outlined text-white" style={{ fontSize: "10px" }}>videogame_asset</span>
+                <SourceBrandIcon brand="discord" size={9} className="text-white" />
               ) : (
                 <span className="font-headline font-bold text-on-secondary" style={{ fontSize: "8px", lineHeight: 1 }}>C</span>
               )}

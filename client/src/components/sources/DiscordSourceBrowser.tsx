@@ -130,6 +130,14 @@ interface CachedDiscordTextChannel {
   channelId: string;
 }
 
+interface CachedDiscordVoiceChannel {
+  roomId: string;
+  name: string;
+  guildId: string;
+  guildName: string;
+  channelId: string;
+}
+
 interface LinkStep {
   key: string;
   label: string;
@@ -160,6 +168,10 @@ function voiceMappingsStorageKey(userId: string | null): string {
 
 function textChannelsStorageKey(userId: string | null): string {
   return userId ? `concord_discord_text_channels:${userId}` : "concord_discord_text_channels";
+}
+
+function voiceChannelsStorageKey(userId: string | null): string {
+  return userId ? `concord_discord_voice_channels:${userId}` : "concord_discord_voice_channels";
 }
 
 function readCachedVoiceMappings(userId: string | null): DiscordVoiceBridgeRoom[] {
@@ -223,6 +235,39 @@ function writeCachedTextChannels(
   if (typeof window === "undefined") return;
   window.localStorage.setItem(
     textChannelsStorageKey(userId),
+    JSON.stringify(channels),
+  );
+}
+
+function readCachedVoiceChannels(userId: string | null): CachedDiscordVoiceChannel[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(voiceChannelsStorageKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is CachedDiscordVoiceChannel =>
+        item &&
+        typeof item === "object" &&
+        typeof item.roomId === "string" &&
+        typeof item.name === "string" &&
+        typeof item.guildId === "string" &&
+        typeof item.guildName === "string" &&
+        typeof item.channelId === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedVoiceChannels(
+  userId: string | null,
+  channels: CachedDiscordVoiceChannel[],
+): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    voiceChannelsStorageKey(userId),
     JSON.stringify(channels),
   );
 }
@@ -423,10 +468,15 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const [cachedTextChannels, setCachedTextChannels] = useState<CachedDiscordTextChannel[]>(
     () => readCachedTextChannels(userId),
   );
+  const [cachedVoiceChannels, setCachedVoiceChannels] = useState<CachedDiscordVoiceChannel[]>(
+    () => readCachedVoiceChannels(userId),
+  );
   const [roomsRevision, setRoomsRevision] = useState(0);
 
   useEffect(() => {
+    setVoiceMappings(readCachedVoiceMappings(userId));
     setCachedTextChannels(readCachedTextChannels(userId));
+    setCachedVoiceChannels(readCachedVoiceChannels(userId));
   }, [userId]);
 
   useEffect(() => {
@@ -584,6 +634,50 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     });
   }, [resolvedGroups, userId]);
 
+  useEffect(() => {
+    if (voiceMappings.length === 0) return;
+    setCachedVoiceChannels((previous) => {
+      const previousByRoom = new Map(previous.map((channel) => [channel.roomId, channel] as const));
+      const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
+
+      for (const mapping of voiceMappings) {
+        const localChannel = servers
+          .flatMap((server) => server.channels)
+          .find(
+            (channel) =>
+              channel.matrix_room_id === mapping.matrix_room_id ||
+              channel.id === mapping.channel_id,
+          );
+        const previousEntry =
+          previousByRoom.get(mapping.matrix_room_id) ??
+          previous.find((channel) => channel.channelId === mapping.discord_channel_id);
+        const guildName =
+          resolvedGuildNames.get(mapping.discord_guild_id) ??
+          discordGuilds.find((guild) => guild.id === mapping.discord_guild_id)?.name ??
+          previousEntry?.guildName ??
+          `Guild ${mapping.discord_guild_id}`;
+        const channelName =
+          localChannel?.name ??
+          previousEntry?.name ??
+          `Voice ${mapping.discord_channel_id.slice(-4)}`;
+
+        merged.set(mapping.matrix_room_id, {
+          roomId: mapping.matrix_room_id,
+          name: channelName,
+          guildId: mapping.discord_guild_id,
+          guildName,
+          channelId: mapping.discord_channel_id,
+        });
+      }
+
+      const next = [...merged.values()].sort((a, b) =>
+        `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+      );
+      writeCachedVoiceChannels(userId, next);
+      return next;
+    });
+  }, [discordGuilds, resolvedGuildNames, servers, userId, voiceMappings]);
+
   const browseGroups = useMemo(() => {
     const groups = new Map<string, GuildGroup>();
     for (const group of resolvedGroups) {
@@ -623,23 +717,59 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       }
     }
 
+    for (const channel of cachedVoiceChannels) {
+      if (!groups.has(channel.guildId)) {
+        groups.set(channel.guildId, {
+          guildId: channel.guildId,
+          guildName: channel.guildName,
+          channels: [],
+        });
+      }
+      const group = groups.get(channel.guildId)!;
+      if (
+        group.guildName.startsWith("Guild ") &&
+        !channel.guildName.startsWith("Guild ")
+      ) {
+        group.guildName = channel.guildName;
+      }
+      const existing = group.channels.find((entry) => entry.roomId === channel.roomId);
+      if (existing) {
+        existing.kind = "voice";
+        existing.name = channel.name;
+        continue;
+      }
+      group.channels.push({
+        roomId: channel.roomId,
+        name: channel.name,
+        guildId: channel.guildId,
+        channelId: channel.channelId,
+        kind: "voice",
+      });
+    }
+
     for (const mapping of voiceMappings) {
-      if (!mapping.enabled) continue;
       const localChannel = servers
         .flatMap((server) => server.channels)
         .find(
           (channel) =>
-            channel.id === mapping.channel_id ||
-            channel.matrix_room_id === mapping.matrix_room_id,
+            channel.matrix_room_id === mapping.matrix_room_id ||
+            channel.id === mapping.channel_id,
         );
-      if (!localChannel) continue;
+      const cachedVoiceChannel =
+        cachedVoiceChannels.find((channel) => channel.roomId === mapping.matrix_room_id) ??
+        cachedVoiceChannels.find((channel) => channel.channelId === mapping.discord_channel_id);
 
       const guildId = mapping.discord_guild_id;
       const guildName =
         resolvedGuildNames.get(guildId) ??
         discordGuilds.find((guild) => guild.id === guildId)?.name ??
+        cachedVoiceChannel?.guildName ??
         groups.get(guildId)?.guildName ??
         `Guild ${guildId}`;
+      const channelName =
+        localChannel?.name ??
+        cachedVoiceChannel?.name ??
+        `Voice ${mapping.discord_channel_id.slice(-4)}`;
 
       if (!groups.has(guildId)) {
         groups.set(guildId, {
@@ -654,12 +784,12 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       const existing = group.channels.find((channel) => channel.roomId === mapping.matrix_room_id);
       if (existing) {
         existing.kind = "voice";
-        existing.name = localChannel.name;
+        existing.name = channelName;
         continue;
       }
       group.channels.push({
         roomId: mapping.matrix_room_id,
-        name: localChannel.name,
+        name: channelName,
         guildId,
         channelId: mapping.discord_channel_id,
         kind: "voice",
@@ -669,7 +799,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
     return Array.from(groups.values()).sort((a, b) =>
       a.guildName.localeCompare(b.guildName),
     );
-  }, [cachedTextChannels, discordGuilds, resolvedGroups, resolvedGuildNames, servers, voiceMappings]);
+  }, [cachedTextChannels, cachedVoiceChannels, discordGuilds, resolvedGroups, resolvedGuildNames, servers, voiceMappings]);
 
   useEffect(() => {
     if (cachedTextChannels.length === 0) return;
@@ -1013,6 +1143,21 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
               channelType: "voice",
             },
             preferBridgeServer: true,
+          });
+          setCachedVoiceChannels((previous) => {
+            const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
+            merged.set(voiceChannel.matrix_room_id, {
+              roomId: voiceChannel.matrix_room_id,
+              name: voiceChannel.name,
+              guildId: discordGuildId,
+              guildName: guildName ?? `Guild ${discordGuildId}`,
+              channelId: info.id,
+            });
+            const next = [...merged.values()].sort((a, b) =>
+              `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+            );
+            writeCachedVoiceChannels(userId, next);
+            return next;
           });
           setLinkedKind("voice");
           setLinkedRoom({ roomId: voiceChannel.matrix_room_id, name: voiceChannel.name });

@@ -386,7 +386,7 @@ export default function App() {
     // "we're booting" affordance uniformly across every platform.
     return (
       <>
-        <div className="h-full bg-surface mesh-background" aria-hidden="true" />
+        <div className="h-full w-full bg-surface mesh-background" aria-hidden="true" />
         {launchOverlay}
       </>
     );
@@ -411,7 +411,7 @@ export default function App() {
   }
 
   const shellContent = (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
         <ChatLayout />
       </div>

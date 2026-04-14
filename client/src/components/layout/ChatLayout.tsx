@@ -749,12 +749,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     const showSidebar = !sidebarCollapsed;
 
     return (
-      <div className="h-full flex overflow-hidden bg-surface text-on-surface">
+      <div className="h-full w-full min-h-0 min-w-0 flex overflow-hidden bg-surface text-on-surface">
         {/* LEFT STACK — sidebar columns. Collapses to zero width when hidden. */}
         {showSidebar && (
-          <div className="flex min-h-0 flex-shrink-0 bg-surface">
-            <div className="flex min-h-0 flex-col bg-surface">
-              <div className="flex min-h-0">
+          <div className="flex h-full min-h-0 flex-shrink-0 bg-surface">
+            <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
+              <div className="flex min-h-0 flex-1">
                 <div className="w-11 flex-shrink-0">
                   <SilentBoundary>
                     <SourcesPanel
@@ -869,7 +869,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // MessageInput's internal useLayoutEffect caps the textarea at
   // min(viewport*0.4, 8*22px) and switches to internal scroll above that.
   const renderMobileLayout = () => (
-    <div className="h-full flex flex-col overflow-hidden bg-surface text-on-surface min-h-0">
+    <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
       {/* Top bar — safe-top lives on the OUTER wrapper so the safe-area
           inset adds transparent padding ABOVE the 48px content bar instead
           of stealing from its interior (which was cutting off icons on
@@ -1467,7 +1467,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // and data-focus-group attributes for the DPAD nav hook, plus the TV
   // capability banner for voice channels.
   const renderTVLayout = () => (
-    <div className="h-full flex overflow-hidden bg-surface text-on-surface tv-layout" data-concord-layout="tv">
+    <div className="h-full w-full min-h-0 min-w-0 flex overflow-hidden bg-surface text-on-surface tv-layout" data-concord-layout="tv">
       {/* Server sidebar — TV: icon-only rail with focus targets */}
       <SilentBoundary>
         <div data-focus-group="tv-main">
@@ -1520,17 +1520,17 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         renderTVLayout()
       ) : prefersTabletLayout ? (
         // iPad native — always three-pane, regardless of viewport width.
-        <div className="h-full" data-concord-layout="tablet">
+        <div className="h-full w-full min-h-0 min-w-0" data-concord-layout="tablet">
           {renderDesktopLayout()}
         </div>
       ) : (
         <>
           {/* Desktop */}
-          <div className="hidden md:block h-full" data-concord-layout="desktop">
+          <div className="hidden md:block h-full w-full min-h-0 min-w-0" data-concord-layout="desktop">
             {renderDesktopLayout()}
           </div>
           {/* Mobile */}
-          <div className="md:hidden h-full" data-concord-layout="mobile">
+          <div className="md:hidden h-full w-full min-h-0 min-w-0" data-concord-layout="mobile">
             {renderMobileLayout()}
           </div>
         </>
