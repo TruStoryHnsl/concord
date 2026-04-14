@@ -23,6 +23,7 @@ import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
+import { useVoiceStore } from "../../stores/voice";
 import {
   discordBridgeHttpGetChannel,
   discordBridgeHttpGetInviteUrl,
@@ -35,6 +36,7 @@ import {
   discordVoiceBridgeHttpUpsertRoom,
 } from "../../api/bridges";
 import { SourceBrandIcon } from "./sourceBrand";
+import { joinVoiceSession } from "../voice/joinVoiceSession";
 
 // ── Alias parser ────────────────────────────────────────────────────────────
 
@@ -441,6 +443,8 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const updateServer = useServerStore((s) => s.updateServer);
   const loadServers = useServerStore((s) => s.loadServers);
   const setDMActive = useDMStore((s) => s.setDMActive);
+  const voiceConnected = useVoiceStore((s) => s.connected);
+  const voiceChannelId = useVoiceStore((s) => s.channelId);
 
   const accessToken = useAuthStore((s) => s.accessToken);
 
@@ -462,6 +466,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
   const [discordGuilds, setDiscordGuilds] = useState<{ id: string; name: string; icon: string | null }[]>([]);
   const [guildsLoading, setGuildsLoading] = useState(false);
   const [bridgingGuildId, setBridgingGuildId] = useState<string | null>(null);
+  const [manualGuildId, setManualGuildId] = useState("");
   const [voiceMappings, setVoiceMappings] = useState<DiscordVoiceBridgeRoom[]>(
     () => readCachedVoiceMappings(userId),
   );
@@ -878,6 +883,59 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
         if (cancelled) return;
         setVoiceMappings(rooms);
         writeCachedVoiceMappings(userId, rooms);
+        setDiscordGuilds(guilds);
+        setResolvedGuildNames((previous) => {
+          const next = new Map(previous);
+          for (const guild of guilds) next.set(guild.id, guild.name);
+          return next;
+        });
+
+        const channelMetadata = await Promise.all(
+          rooms.map(async (room) => ({
+            room,
+            info: await discordBridgeHttpGetChannel(accessToken, room.discord_channel_id).catch(() => null),
+          })),
+        );
+        if (cancelled) return;
+        setCachedVoiceChannels((previous) => {
+          const previousByRoom = new Map(previous.map((channel) => [channel.roomId, channel] as const));
+          const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
+          for (const { room, info } of channelMetadata) {
+            const localChannel = useServerStore
+              .getState()
+              .servers
+              .flatMap((server) => server.channels)
+              .find(
+                (channel) =>
+                  channel.matrix_room_id === room.matrix_room_id ||
+                  channel.id === room.channel_id,
+              );
+            const previousEntry =
+              previousByRoom.get(room.matrix_room_id) ??
+              previous.find((channel) => channel.channelId === room.discord_channel_id);
+            const guildName =
+              guilds.find((guild) => guild.id === room.discord_guild_id)?.name ??
+              previousEntry?.guildName ??
+              `Guild ${room.discord_guild_id}`;
+            const channelName =
+              info?.name ??
+              previousEntry?.name ??
+              localChannel?.name ??
+              `Voice ${room.discord_channel_id.slice(-4)}`;
+            merged.set(room.matrix_room_id, {
+              roomId: room.matrix_room_id,
+              name: channelName,
+              guildId: room.discord_guild_id,
+              guildName,
+              channelId: room.discord_channel_id,
+            });
+          }
+          const next = [...merged.values()].sort((a, b) =>
+            `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+          );
+          writeCachedVoiceChannels(userId, next);
+          return next;
+        });
 
         const latestServers = useServerStore.getState().servers;
         for (const room of rooms) {
@@ -898,6 +956,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                 channel.matrix_room_id === room.matrix_room_id,
             );
           if (!localChannel) continue;
+          const info = channelMetadata.find((entry) => entry.room.id === room.id)?.info;
 
           ensureDiscordGuild({
             guildId: room.discord_guild_id,
@@ -912,7 +971,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             channel: {
               id: localChannel.id,
               roomId: room.matrix_room_id,
-              name: localChannel.name,
+              name: info?.name ?? localChannel.name,
               channelType: "voice",
             },
             preferBridgeServer: true,
@@ -964,7 +1023,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           } catch { /* keep fallback */ }
         }
 
-        ensureDiscordGuild({
+        const targetServerId = ensureDiscordGuild({
           guildId: channel.guildId,
           guildName,
           iconUrl: discordGuildIconUrl(
@@ -978,13 +1037,35 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           },
           preferBridgeServer: channel.kind === "voice",
         });
+        if (channel.kind === "voice" && accessToken) {
+          if (voiceConnected && voiceChannelId && voiceChannelId !== channel.roomId) {
+            addToast("Already connected to another voice channel", "info");
+          } else {
+            const targetServer = useServerStore
+              .getState()
+              .servers
+              .find((server) => server.id === targetServerId);
+            try {
+              await joinVoiceSession({
+                roomId: channel.roomId,
+                channelName: channel.name,
+                serverId: targetServerId,
+                accessToken,
+                activeServer: targetServer,
+                activeChannelId: useServerStore.getState().activeChannelId,
+              });
+            } catch (err) {
+              addToast(err instanceof Error ? err.message : "Failed to join voice", "error");
+            }
+          }
+        }
       } else {
         setActiveChannel(roomId);
       }
 
       onClose();
     },
-    [accessToken, browseGroups, client, ensureDiscordGuild, loadServers, onClose, setActiveChannel, setDMActive],
+    [accessToken, addToast, browseGroups, client, discordGuilds, ensureDiscordGuild, loadServers, onClose, setActiveChannel, setDMActive, voiceChannelId, voiceConnected],
   );
 
   // ── Link flow ─────────────────────────────────────────────────────────────
@@ -1144,7 +1225,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             channel: {
               id: voiceChannel.id,
               roomId: voiceChannel.matrix_room_id,
-              name: voiceChannel.name,
+              name: info.name,
               channelType: "voice",
             },
             preferBridgeServer: true,
@@ -1153,7 +1234,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
             merged.set(voiceChannel.matrix_room_id, {
               roomId: voiceChannel.matrix_room_id,
-              name: voiceChannel.name,
+              name: info.name,
               guildId: discordGuildId,
               guildName: guildName ?? `Guild ${discordGuildId}`,
               channelId: info.id,
@@ -1165,7 +1246,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
             return next;
           });
           setLinkedKind("voice");
-          setLinkedRoom({ roomId: voiceChannel.matrix_room_id, name: voiceChannel.name });
+          setLinkedRoom({ roomId: voiceChannel.matrix_room_id, name: info.name });
           setScreen("done");
           return;
         }
@@ -1314,6 +1395,75 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
       addToast(err instanceof Error ? err.message : "Bridge reload failed", "error");
     }
   }, [accessToken, addToast, userId]);
+
+  const bridgeGuildById = useCallback(
+    async (guildId: string, guildNameHint?: string | null) => {
+      if (!client || !userId || !accessToken) return;
+      setBridgingGuildId(guildId);
+      try {
+        try {
+          await discordBridgeHttpLoginRelay(accessToken);
+          await new Promise((resolve) => setTimeout(resolve, 4000));
+        } catch {
+          // Whole-guild bridge must still work in bot-only mode.
+        }
+        const serverDomain = userId.split(":")[1] ?? "";
+        const botUserId = `@discordbot:${serverDomain}`;
+        let mgmtRoom: string | null = null;
+        for (const room of client.getRooms()) {
+          if (room.getMyMembership() !== "join") continue;
+          if (room.getCanonicalAlias()?.includes("_discord_")) continue;
+          const members = room.getJoinedMembers();
+          if (members.length <= 2 && members.some((member) => member.userId === botUserId)) {
+            mgmtRoom = room.roomId;
+            break;
+          }
+        }
+        if (!mgmtRoom) {
+          const created = await client.createRoom({
+            is_direct: true,
+            invite: [botUserId],
+            // @ts-expect-error — matrix-js-sdk accepts string literal
+            preset: "trusted_private_chat",
+          });
+          mgmtRoom = created.room_id;
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+        await client.sendTextMessage(mgmtRoom, `guilds bridge ${guildId}`);
+        const discoveredRooms = await waitForGuildPortals(client, guildId);
+        const guildName =
+          guildNameHint?.trim() ||
+          discordGuilds.find((guild) => guild.id === guildId)?.name ||
+          resolvedGuildNames.get(guildId) ||
+          `Guild ${guildId}`;
+        if (discoveredRooms.length > 0) {
+          setCachedTextChannels((previous) => {
+            const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
+            for (const room of discoveredRooms) {
+              merged.set(room.roomId, {
+                ...room,
+                guildName,
+              });
+            }
+            const next = [...merged.values()].sort((a, b) =>
+              `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
+            );
+            writeCachedTextChannels(userId, next);
+            return next;
+          });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          useServerStore.getState().hydrateFederatedRooms(client as any);
+        }
+        setScreen("browse");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to bridge guild");
+        setScreen("error");
+      } finally {
+        setBridgingGuildId(null);
+      }
+    },
+    [accessToken, client, discordGuilds, resolvedGuildNames, userId],
+  );
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1573,6 +1723,26 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
           <>
             <Header title="Bridge Discord Server" onBack={() => setScreen("browse")} onClose={onClose} />
             <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
+              <div className="mb-4 rounded-xl border border-outline-variant/20 bg-surface-container-high/60 p-4 space-y-3">
+                <div>
+                  <label className="text-xs font-label text-on-surface-variant mb-1.5 block">
+                    Bridge by Discord Server ID
+                  </label>
+                  <input
+                    value={manualGuildId}
+                    onChange={(event) => setManualGuildId(event.target.value.replace(/\D+/g, ""))}
+                    placeholder="Paste Discord server ID"
+                    className="w-full px-3 py-2 rounded-lg bg-surface-container-highest border border-outline-variant/20 text-on-surface placeholder:text-on-surface-variant/60 outline-none focus:border-[#5865F2]/60"
+                  />
+                </div>
+                <button
+                  disabled={bridgingGuildId !== null || manualGuildId.trim().length < 17}
+                  onClick={() => bridgeGuildById(manualGuildId.trim())}
+                  className="w-full px-3 py-2 rounded-lg bg-[#5865F2] hover:bg-[#4752c4] disabled:opacity-50 text-white text-sm font-medium transition-colors"
+                >
+                  {bridgingGuildId === manualGuildId.trim() ? "Bridging..." : "Bridge Server ID"}
+                </button>
+              </div>
               {guildsLoading ? (
                 <div className="flex items-center justify-center py-8 gap-2 text-on-surface-variant">
                   <span className="inline-block w-4 h-4 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
@@ -1607,68 +1777,7 @@ export function DiscordSourceBrowser({ onClose }: { onClose: () => void }) {
                         ) : (
                           <button
                             disabled={isBridging}
-                            onClick={async () => {
-                              if (!client || !userId || !accessToken) return;
-                              setBridgingGuildId(guild.id);
-                              try {
-                                try {
-                                  await discordBridgeHttpLoginRelay(accessToken);
-                                  await new Promise((r) => setTimeout(r, 4000));
-                                } catch {
-                                  // Whole-guild bridge must still work in bot-only mode.
-                                }
-                                // Find or create DM with discordbot for management commands
-                                const serverDomain = userId.split(":")[1] ?? "";
-                                const botUserId = `@discordbot:${serverDomain}`;
-                                let mgmtRoom: string | null = null;
-                                for (const room of client.getRooms()) {
-                                  if (room.getMyMembership() !== "join") continue;
-                                  if (room.getCanonicalAlias()?.includes("_discord_")) continue;
-                                  const members = room.getJoinedMembers();
-                                  if (members.length <= 2 && members.some((m) => m.userId === botUserId)) {
-                                    mgmtRoom = room.roomId;
-                                    break;
-                                  }
-                                }
-                                if (!mgmtRoom) {
-                                  const created = await client.createRoom({
-                                    is_direct: true,
-                                    invite: [botUserId],
-                                    // @ts-expect-error — matrix-js-sdk accepts string literal
-                                    preset: "trusted_private_chat",
-                                  });
-                                  mgmtRoom = created.room_id;
-                                  await new Promise((r) => setTimeout(r, 2000));
-                                }
-                                // Send guilds bridge command
-                                await client.sendTextMessage(mgmtRoom, `guilds bridge ${guild.id}`);
-                                const discoveredRooms = await waitForGuildPortals(client, guild.id);
-                                if (discoveredRooms.length > 0) {
-                                  setCachedTextChannels((previous) => {
-                                    const merged = new Map(previous.map((channel) => [channel.roomId, channel] as const));
-                                    for (const room of discoveredRooms) {
-                                      merged.set(room.roomId, {
-                                        ...room,
-                                        guildName: guild.name,
-                                      });
-                                    }
-                                    const next = [...merged.values()].sort((a, b) =>
-                                      `${a.guildName}:${a.name}`.localeCompare(`${b.guildName}:${b.name}`),
-                                    );
-                                    writeCachedTextChannels(userId, next);
-                                    return next;
-                                  });
-                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                  useServerStore.getState().hydrateFederatedRooms(client as any);
-                                }
-                                setScreen("browse");
-                              } catch (err) {
-                                setError(err instanceof Error ? err.message : "Failed to bridge guild");
-                                setScreen("error");
-                              } finally {
-                                setBridgingGuildId(null);
-                              }
-                            }}
+                            onClick={() => bridgeGuildById(guild.id, guild.name)}
                             className="px-3 py-1.5 bg-[#5865F2] hover:bg-[#4752c4] text-white text-xs rounded-lg transition-colors disabled:opacity-50"
                           >
                             {isBridging ? "Bridging..." : "Bridge"}

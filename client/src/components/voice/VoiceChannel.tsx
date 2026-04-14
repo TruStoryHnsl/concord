@@ -8,9 +8,6 @@ import {
 } from "@livekit/components-react";
 import { Track, ConnectionState } from "livekit-client";
 import "@livekit/components-styles";
-import { getVoiceToken } from "../../api/livekit";
-import { getHomeserverUrl } from "../../api/serverUrl";
-import { useServerConfigStore } from "../../stores/serverConfig";
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
 import { useVoiceStore } from "../../stores/voice";
@@ -28,6 +25,7 @@ import { BanOverlay } from "../moderation/BanOverlay";
 import {
   splitDiscordVoiceBridgeParticipants,
 } from "./discordVoiceBridge";
+import { joinVoiceSession } from "./joinVoiceSession";
 
 interface VoiceChannelProps {
   roomId: string;
@@ -61,13 +59,8 @@ function DiscordVoiceBridgeStatusBadge({
 
 export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProps) {
   const accessToken = useAuthStore((s) => s.accessToken);
-  const echoCancellation = useSettingsStore((s) => s.echoCancellation);
-  const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
-  const autoGainControl = useSettingsStore((s) => s.autoGainControl);
-  const preferredInputDeviceId = useSettingsStore((s) => s.preferredInputDeviceId);
   const voiceConnected = useVoiceStore((s) => s.connected);
   const voiceChannelId = useVoiceStore((s) => s.channelId);
-  const connect = useVoiceStore((s) => s.connect);
   const activeServer = useServerStore((s) => s.servers.find((sv) => sv.id === serverId));
   const activeChannelId = useServerStore((s) => s.activeChannelId);
   const [connecting, setConnecting] = useState(false);
@@ -112,79 +105,13 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
     setConnecting(true);
     setError(null);
     try {
-      // Request mic permission IMMEDIATELY during user gesture (critical for
-      // mobile webviews which gate getUserMedia on a user-initiated tap).
-      let micGranted = false;
-      if (navigator.mediaDevices?.getUserMedia) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation,
-              noiseSuppression,
-              autoGainControl,
-              ...(preferredInputDeviceId && { deviceId: { ideal: preferredInputDeviceId } }),
-            },
-          });
-          stream.getTracks().forEach((t) => t.stop());
-          micGranted = true;
-        } catch {
-          // Continue without mic — permission denied is non-fatal
-        }
-      }
-
-      // Resume AudioContext for mobile playback
-      let ctx: AudioContext | null = null;
-      try {
-        ctx = new AudioContext();
-        if (ctx.state === "suspended") await ctx.resume();
-      } catch {
-        // Non-critical
-      } finally {
-        ctx?.close();
-      }
-
-      const result = await getVoiceToken(roomId, accessToken);
-
-      // Resolve the LiveKit signaling URL. Three sources, in priority:
-      //  1. well-known config (set during server-picker, uses CONDUWUIT_SERVER_NAME — always correct)
-      //  2. voice-token response (derived from the request Host header — can be mangled by proxies)
-      //  3. homeserver origin fallback
-      // IMPORTANT: LiveKit SDK resolves /rtc relative to this URL via the
-      // URL() constructor. Without a trailing slash, "livekit" is treated as
-      // a filename and /rtc resolves as a sibling (wss://host/rtc) instead
-      // of a child (wss://host/livekit/rtc). Always ensure trailing slash.
-      const wkLivekit = useServerConfigStore.getState().config?.livekit_url;
-      const rawUrl = wkLivekit
-        || result.livekit_url
-        || `${getHomeserverUrl().replace(/^http/, "ws")}/livekit/`;
-      const lkUrl = rawUrl.endsWith("/") ? rawUrl : `${rawUrl}/`;
-
-      connect({
-        token: result.token,
-        livekitUrl: lkUrl,
-        iceServers: result.ice_servers?.length ? result.ice_servers : [],
-        serverId,
-        serverName: activeServer?.name ?? null,
-        channelId: roomId,
+      await joinVoiceSession({
+        roomId,
         channelName,
-        roomName: roomId,
-        returnChannelId:
-          activeServer?.channels.find(
-            (channel) =>
-              channel.matrix_room_id === activeChannelId &&
-              channel.channel_type !== "voice",
-          )?.matrix_room_id ??
-          activeServer?.channels.find((channel) => channel.channel_type !== "voice")?.matrix_room_id ??
-          null,
-        returnChannelName:
-          activeServer?.channels.find(
-            (channel) =>
-              channel.matrix_room_id === activeChannelId &&
-              channel.channel_type !== "voice",
-          )?.name ??
-          activeServer?.channels.find((channel) => channel.channel_type !== "voice")?.name ??
-          null,
-        micGranted,
+        serverId,
+        accessToken,
+        activeServer,
+        activeChannelId,
       });
     } catch (err) {
       console.error("Failed to join voice:", err);
@@ -215,13 +142,8 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
   }, [
     roomId,
     accessToken,
-    echoCancellation,
-    noiseSuppression,
-    autoGainControl,
-    preferredInputDeviceId,
     serverId,
     channelName,
-    connect,
     activeServer,
     activeChannelId,
   ]);

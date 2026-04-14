@@ -907,6 +907,9 @@ export const useServerStore = create<ServerState>((set, get) => ({
     );
 
     if (hostServer) {
+      const existingChannel = hostServer.channels.find(
+        (entry) => entry.matrix_room_id === channel.roomId,
+      );
       // Update name if we now have a real guild name and the tile still
       // shows the fallback "Guild <snowflake>" label.
       const betterName =
@@ -914,7 +917,14 @@ export const useServerStore = create<ServerState>((set, get) => ({
         !guildName.startsWith("Guild ") &&
         hostServer.name.startsWith("Guild ");
       const betterIcon = iconUrl && hostServer.icon_url !== iconUrl;
-      if (betterName || betterIcon) {
+      const betterChannelName =
+        existingChannel &&
+        channel.name &&
+        existingChannel.name !== channel.name;
+      const betterChannelType =
+        existingChannel &&
+        existingChannel.channel_type !== channelType;
+      if (betterName || betterIcon || betterChannelName || betterChannelType) {
         set({
           servers: servers.map((s) =>
             s.id === hostServer.id
@@ -922,6 +932,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
                   ...s,
                   ...(betterName ? { name: guildName } : {}),
                   ...(betterIcon ? { icon_url: iconUrl } : {}),
+                  channels: s.channels.map((entry) =>
+                    entry.matrix_room_id === channel.roomId
+                      ? {
+                          ...entry,
+                          ...(betterChannelName ? { name: channel.name } : {}),
+                          ...(betterChannelType ? { channel_type: channelType } : {}),
+                        }
+                      : entry,
+                  ),
                 }
               : s,
           ),
@@ -939,15 +958,23 @@ export const useServerStore = create<ServerState>((set, get) => ({
       servers.find((s) => s.id === serverId);
 
     if (existing) {
-      const hasChannel = existing.channels.some(
+      const existingChannel = existing.channels.find(
         (c) => c.matrix_room_id === channel.roomId,
       );
+      const hasChannel = Boolean(existingChannel);
       const betterName =
         guildName &&
         !guildName.startsWith("Guild ") &&
         existing.name.startsWith("Guild ");
       const betterIcon = iconUrl && existing.icon_url !== iconUrl;
-      if (!hasChannel || betterName || betterIcon) {
+      const betterChannelName =
+        existingChannel &&
+        channel.name &&
+        existingChannel.name !== channel.name;
+      const betterChannelType =
+        existingChannel &&
+        existingChannel.channel_type !== channelType;
+      if (!hasChannel || betterName || betterIcon || betterChannelName || betterChannelType) {
         set({
           servers: servers.map((s) =>
             s.id === existing.id
@@ -957,7 +984,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
                   ...(betterIcon ? { icon_url: iconUrl } : {}),
                   discordGuildId: guildId,
                   channels: hasChannel
-                    ? s.channels
+                    ? s.channels.map((entry) =>
+                        entry.matrix_room_id === channel.roomId
+                          ? {
+                              ...entry,
+                              ...(betterChannelName ? { name: channel.name } : {}),
+                              ...(betterChannelType ? { channel_type: channelType } : {}),
+                            }
+                          : entry,
+                      )
                     : [
                         ...s.channels,
                         {
