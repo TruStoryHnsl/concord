@@ -2,7 +2,7 @@
  * Concord launch animation / boot buffer (INS-023).
  *
  * A full-viewport dark-theme splash that sits above the React tree
- * during the first ~400ms of a cold boot and whenever the app reports
+ * during the first ~1200ms of a cold boot and whenever the app reports
  * `isLoading`. It has three jobs:
  *
  *   1. Cover the first-paint gap between the raw HTML and the
@@ -32,7 +32,7 @@
  *   - No reliance on tailwind's custom color tokens — every color is
  *     inlined as a hex literal so the splash still renders if the
  *     stylesheet is still fetching.
- *   - Animation is CSS-only (keyframe pulse) so it survives the
+ *   - Animation is CSS-only so it survives the
  *     React hydration pass without re-mounting.
  *
  * INS-023 "Launch animation (display buffer on all boot/reload, all
@@ -56,9 +56,9 @@ export interface LaunchAnimationProps {
    */
   onDone?: () => void;
   /**
-   * Minimum visible duration in milliseconds. Default 400ms — long
-   * enough to register as intentional, short enough that fast
-   * hydrations don't feel padded.
+   * Minimum visible duration in milliseconds. Default 1200ms — long
+   * enough to feel intentional and let the boot splash read as a
+   * real transition instead of a flash.
    */
   minimumDurationMs?: number;
   /**
@@ -71,6 +71,9 @@ export interface LaunchAnimationProps {
 
 type Phase = "showing" | "fading" | "done";
 
+const BOOT_SPLASH_HANDOFF_MS = 320;
+const FADE_DURATION_MS = 420;
+
 /**
  * Full-screen launch splash. Self-dismisses once the minimum display
  * time has elapsed AND `isLoading` is false. The component never
@@ -80,7 +83,7 @@ type Phase = "showing" | "fading" | "done";
 export function LaunchAnimation({
   isLoading,
   onDone,
-  minimumDurationMs = 400,
+  minimumDurationMs = 1200,
   setTimeoutFn,
 }: LaunchAnimationProps) {
   const [phase, setPhase] = useState<Phase>("showing");
@@ -91,6 +94,7 @@ export function LaunchAnimation({
   // component mount; we clear them explicitly on unmount only.
   const fadeTimerRef = useRef<number | null>(null);
   const minTimerRef = useRef<number | null>(null);
+  const bootSplashTimerRef = useRef<number | null>(null);
 
   // One-shot cleanup on unmount for any still-pending timers.
   useEffect(() => {
@@ -103,7 +107,22 @@ export function LaunchAnimation({
         window.clearTimeout(fadeTimerRef.current);
         fadeTimerRef.current = null;
       }
+      if (bootSplashTimerRef.current !== null) {
+        window.clearTimeout(bootSplashTimerRef.current);
+        bootSplashTimerRef.current = null;
+      }
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const bootSplash = document.getElementById("boot-splash");
+    if (!bootSplash) return;
+    bootSplash.setAttribute("data-ready", "true");
+    bootSplashTimerRef.current = window.setTimeout(() => {
+      bootSplash.remove();
+      bootSplashTimerRef.current = null;
+    }, BOOT_SPLASH_HANDOFF_MS);
   }, []);
 
   // Fire the minimum-time timer exactly once on mount.
@@ -123,7 +142,7 @@ export function LaunchAnimation({
   }, []);
 
   // Kick off the fade whenever the dismiss conditions are both met.
-  // The fade phase lasts 250ms (a second setTimeout) and then fires
+  // The fade phase lasts FADE_DURATION_MS and then fires
   // `onDone` exactly once, regardless of subsequent isLoading flips.
   // We deliberately do NOT return a cleanup that clears the fade
   // timer — if we did, `setPhase("fading")` below would re-run this
@@ -141,7 +160,7 @@ export function LaunchAnimation({
       fadeTimerRef.current = null;
       setPhase("done");
       onDone?.();
-    }, 250) as unknown as number;
+    }, FADE_DURATION_MS) as unknown as number;
   }, [minElapsed, isLoading, phase, onDone, setTimeoutFn]);
 
   if (phase === "done") return null;
@@ -159,7 +178,7 @@ export function LaunchAnimation({
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: "1.25rem",
+        gap: "1.5rem",
         background: "#0c0e11",
         color: "#f4f4f7",
         // Pointer events off once fading so the app underneath can
@@ -167,24 +186,57 @@ export function LaunchAnimation({
         // opacity transition is still running.
         pointerEvents: phase === "fading" ? "none" : "auto",
         opacity: phase === "fading" ? 0 : 1,
-        transition: "opacity 250ms ease-out",
+        transition: `opacity ${FADE_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
       }}
     >
-        <div
+      <div
         style={{
-          width: "96px",
-          height: "96px",
-          borderRadius: "24px",
-          background:
-            "radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--color-logo-primary, #a4a5ff) 35%, transparent), rgba(12, 14, 17, 0) 70%)",
-          border: "1px solid color-mix(in srgb, var(--color-logo-secondary, #afefdd) 40%, transparent)",
+          position: "relative",
+          width: "168px",
+          height: "168px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          animation: "concord-launch-pulse 1600ms ease-in-out infinite",
+          filter: "drop-shadow(0 20px 42px rgba(0, 0, 0, 0.35))",
         }}
       >
-        <ConcordLogo size={56} title="Concord" />
+        <ConcordLogo
+          size={156}
+          title="Concord"
+          showNodes={false}
+          style={{
+            overflow: "visible",
+            animation: "concord-launch-mark 1600ms cubic-bezier(0.22, 1, 0.36, 1) infinite",
+          }}
+        />
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: "58.5%",
+            top: "31%",
+            width: "18px",
+            height: "18px",
+            borderRadius: "999px",
+            background: "var(--color-logo-primary, #a4a5ff)",
+            boxShadow: "0 0 0 6px color-mix(in srgb, var(--color-logo-primary, #a4a5ff) 16%, transparent)",
+            animation: "concord-launch-node-primary 1650ms cubic-bezier(0.2, 0.84, 0.24, 1) infinite",
+          }}
+        />
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: "43%",
+            top: "64%",
+            width: "18px",
+            height: "18px",
+            borderRadius: "999px",
+            background: "var(--color-logo-secondary, #afefdd)",
+            boxShadow: "0 0 0 6px color-mix(in srgb, var(--color-logo-secondary, #afefdd) 18%, transparent)",
+            animation: "concord-launch-node-secondary 1650ms cubic-bezier(0.2, 0.84, 0.24, 1) infinite 120ms",
+          }}
+        />
       </div>
       <div
         style={{
@@ -204,6 +256,8 @@ export function LaunchAnimation({
             '"Manrope", system-ui, -apple-system, sans-serif',
           fontSize: "0.8125rem",
           color: "#c4c5d0",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
         }}
       >
         {isLoading ? "Loading…" : "Ready"}
@@ -211,10 +265,67 @@ export function LaunchAnimation({
       {/* Inline keyframes so the splash animates even before
           `index.css` has finished loading. */}
       <style>
-        {`@keyframes concord-launch-pulse {
-          0%   { transform: scale(0.96); opacity: 0.85; }
-          50%  { transform: scale(1.04); opacity: 1; }
-          100% { transform: scale(0.96); opacity: 0.85; }
+        {`@keyframes concord-launch-mark {
+          0% {
+            transform: translateY(-8px) scale(0.965);
+            opacity: 0.76;
+          }
+          38% {
+            transform: translateY(0) scale(1);
+            opacity: 1;
+          }
+          56% {
+            transform: translateY(3px) scale(1.012);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(0) scale(1);
+            opacity: 0.98;
+          }
+        }
+        @keyframes concord-launch-node-primary {
+          0% {
+            transform: translate3d(0, -34px, 0) scale(0.72);
+            opacity: 0.2;
+          }
+          42% {
+            transform: translate3d(0, 14px, 0) scale(1.08);
+            opacity: 1;
+          }
+          58% {
+            transform: translate3d(0, -6px, 0) scale(0.96);
+            opacity: 1;
+          }
+          74% {
+            transform: translate3d(0, 2px, 0) scale(1.02);
+            opacity: 1;
+          }
+          100% {
+            transform: translate3d(0, 0, 0) scale(1);
+            opacity: 1;
+          }
+        }
+        @keyframes concord-launch-node-secondary {
+          0% {
+            transform: translate3d(0, -26px, 0) scale(0.7);
+            opacity: 0.15;
+          }
+          45% {
+            transform: translate3d(0, 12px, 0) scale(1.06);
+            opacity: 1;
+          }
+          62% {
+            transform: translate3d(0, -5px, 0) scale(0.97);
+            opacity: 1;
+          }
+          78% {
+            transform: translate3d(0, 2px, 0) scale(1.01);
+            opacity: 1;
+          }
+          100% {
+            transform: translate3d(0, 0, 0) scale(1);
+            opacity: 1;
+          }
         }`}
       </style>
     </div>

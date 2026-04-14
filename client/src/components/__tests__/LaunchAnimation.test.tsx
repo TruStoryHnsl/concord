@@ -5,12 +5,12 @@
  *   1. It renders a visible splash with the Concord wordmark on mount.
  *   2. It sits in the "showing" phase until the minimum-display time
  *      has elapsed AND `isLoading` is false.
- *   3. It transitions to "fading" for 250ms after both conditions
+ *   3. It transitions to "fading" for 420ms after both conditions
  *      are met, fires `onDone` exactly once, then renders null.
  *   4. It never flashes back to "showing" — once dismissed, it
  *      stays dismissed for the lifetime of the mount.
  *
- * Uses vitest's fake timers so the 400ms + 250ms staircase runs in
+ * Uses vitest's fake timers so the 400ms + 420ms staircase runs in
  * near-zero wall time.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -33,6 +33,20 @@ describe("<LaunchAnimation />", () => {
     expect(splash.getAttribute("data-phase")).toBe("showing");
     // Concord wordmark must be visible in the splash body.
     expect(screen.getAllByText(/^Concord$/).length).toBeGreaterThan(0);
+  });
+
+  it("hands off the hard-refresh boot splash after mount", () => {
+    const bootSplash = document.createElement("div");
+    bootSplash.id = "boot-splash";
+    document.body.appendChild(bootSplash);
+
+    render(<LaunchAnimation isLoading={true} />);
+    expect(bootSplash.getAttribute("data-ready")).toBe("true");
+
+    act(() => {
+      vi.advanceTimersByTime(320);
+    });
+    expect(document.getElementById("boot-splash")).toBeNull();
   });
 
   it("stays in 'showing' while isLoading is true, even after min duration", () => {
@@ -88,7 +102,7 @@ describe("<LaunchAnimation />", () => {
 
     // Cross the fade duration — should unmount and fire onDone once.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(420);
     });
     expect(screen.queryByTestId("launch-animation")).not.toBeInTheDocument();
     expect(onDone).toHaveBeenCalledTimes(1);
@@ -135,7 +149,7 @@ describe("<LaunchAnimation />", () => {
     ).toBe("fading");
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(420);
     });
     expect(onDone).toHaveBeenCalledTimes(1);
   });

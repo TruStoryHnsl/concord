@@ -50,6 +50,8 @@ export interface ConcordLogoProps {
   className?: string;
   /** Additional inline styles (merged with size). */
   style?: CSSProperties;
+  /** Render the two solid node dots. Defaults to true. */
+  showNodes?: boolean;
 }
 
 export function ConcordLogo({
@@ -59,6 +61,7 @@ export function ConcordLogo({
   title,
   className,
   style,
+  showNodes = true,
 }: ConcordLogoProps) {
   // CSS custom property fallback chain. When the caller passes an
   // explicit colour we use it; otherwise we resolve through the
@@ -119,8 +122,10 @@ export function ConcordLogo({
           strokeWidth="48"
         />
       </g>
-      {/* Primary inner dot — small solid node offset toward upper-left. */}
-      <circle cx="288" cy="172" r="28" fill={primary} />
+      {showNodes ? (
+        // Primary inner dot — small solid node offset toward upper-left.
+        <circle cx="288" cy="172" r="28" fill={primary} />
+      ) : null}
 
       {/* Secondary (lower-left) ring */}
       <g mask="url(#concord-secondary-mask)">
@@ -133,8 +138,10 @@ export function ConcordLogo({
           strokeWidth="48"
         />
       </g>
-      {/* Secondary inner dot — offset toward lower-right. */}
-      <circle cx="224" cy="340" r="28" fill={secondary} />
+      {showNodes ? (
+        // Secondary inner dot — offset toward lower-right.
+        <circle cx="224" cy="340" r="28" fill={secondary} />
+      ) : null}
     </svg>
   );
 }
