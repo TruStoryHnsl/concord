@@ -289,13 +289,19 @@ async function startBridge(client, roomConfig) {
     discordConnection.on("error", (error) => log("discord voice error", bridgeId, error));
     await entersState(discordConnection, VoiceConnectionStatus.Ready, 30_000);
 
+    // No streamTimeoutMs on the Discord→LiveKit mixer: Discord speakers are
+    // bursty (silence between words). A timeout here causes the mixer to
+    // auto-close after 100ms of silence, which then crashes on the next
+    // speaking event ("Cannot add stream after mixer has been closed").
+    // Stream lifecycle is managed explicitly via pcm "close"/"error" events.
     discordToLiveKitMixer = new AudioMixer(SAMPLE_RATE, CHANNELS, {
       blocksize: SAMPLES_PER_CHANNEL,
-      streamTimeoutMs: 100,
     });
+    // LiveKit→Discord mixer uses a timeout because LiveKit tracks provide
+    // continuous frames; a stale track that stops should be evicted.
     liveKitToDiscordMixer = new AudioMixer(SAMPLE_RATE, CHANNELS, {
       blocksize: SAMPLES_PER_CHANNEL,
-      streamTimeoutMs: 100,
+      streamTimeoutMs: 2000,
     });
 
     source = new AudioSource(SAMPLE_RATE, CHANNELS);
@@ -319,8 +325,12 @@ async function startBridge(client, roomConfig) {
       writeLiveKitMixToDiscord(liveKitToDiscordMixer, discordAudioOut),
     ];
 
-    onDiscordSpeaking = (userId) => {
+    const subscribeDiscordUser = (userId, retryCount = 0) => {
       if (userId === client.user?.id || discordStreams.has(userId) || !discordConnection) return;
+
+      let currentMixer = discordToLiveKitMixer;
+      if (!currentMixer) return;
+
       const opus = discordConnection.receiver.subscribe(userId, {
         end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
       });
@@ -332,16 +342,52 @@ async function startBridge(client, roomConfig) {
       const pcm = opus.pipe(decoder);
       const stream = pcmFrames(pcm);
       discordStreams.set(userId, stream);
-      discordToLiveKitMixer.addStream(stream);
+
+      try {
+        currentMixer.addStream(stream);
+      } catch (_addErr) {
+        // Mixer entered ending state — all prior Discord streams exhausted between
+        // utterances. Spin up a fresh mixer and restart the capture task.
+        log("discordToLiveKit mixer ended, recreating", bridgeId);
+        discordToLiveKitMixer = new AudioMixer(SAMPLE_RATE, CHANNELS, {
+          blocksize: SAMPLES_PER_CHANNEL,
+        });
+        currentMixer = discordToLiveKitMixer;
+        tasks.push(captureDiscordMixToLiveKit(discordToLiveKitMixer, source));
+        try {
+          currentMixer.addStream(stream);
+        } catch (err2) {
+          log("discordToLiveKit mixer still broken after recreate", bridgeId, err2);
+          discordStreams.delete(userId);
+          return;
+        }
+      }
+
       pcm.once("close", () => {
         discordStreams.delete(userId);
         discordToLiveKitMixer?.removeStream(stream);
       });
       pcm.once("error", (error) => {
-        log("discord receive decode error", bridgeId, userId, error);
+        log("discord receive decode error", bridgeId, userId, error, `retry=${retryCount}`);
         discordStreams.delete(userId);
         discordToLiveKitMixer?.removeStream(stream);
+        // Resubscribe — first Opus packets are mid-stream and may corrupt the
+        // decoder. A fresh subscription gives the decoder a clean start.
+        // Retry up to 3× with exponential backoff; give up if still failing
+        // (next speaking event will try again from scratch via onDiscordSpeaking).
+        if (retryCount < 3 && !shuttingDown) {
+          const delay = 50 * Math.pow(2, retryCount); // 50ms, 100ms, 200ms
+          setTimeout(() => {
+            if (discordConnection && discordToLiveKitMixer && !shuttingDown) {
+              subscribeDiscordUser(userId, retryCount + 1);
+            }
+          }, delay);
+        }
       });
+    };
+
+    onDiscordSpeaking = (userId) => {
+      subscribeDiscordUser(userId);
     };
 
     discordConnection.receiver.speaking.on("start", onDiscordSpeaking);
