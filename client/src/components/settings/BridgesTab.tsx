@@ -1246,6 +1246,33 @@ function DiscordVoiceBridgeSection({ accessToken }: { accessToken: string }) {
     }
   }, [accessToken, refresh]);
 
+  const updateVideoSettings = useCallback(async (
+    room: DiscordVoiceBridgeRoom,
+    patch: Partial<Pick<DiscordVoiceBridgeRoom, "video_enabled" | "projection_policy" | "quality_cap" | "audio_only_fallback">>,
+  ) => {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await discordVoiceBridgeHttpUpsertRoom(accessToken, {
+        channel_id: room.channel_id,
+        discord_guild_id: room.discord_guild_id,
+        discord_channel_id: room.discord_channel_id,
+        enabled: room.enabled,
+        video_enabled: room.video_enabled,
+        projection_policy: room.projection_policy,
+        quality_cap: room.quality_cap,
+        audio_only_fallback: room.audio_only_fallback,
+        ...patch,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [accessToken, refresh]);
+
   const restart = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -1341,21 +1368,75 @@ function DiscordVoiceBridgeSection({ accessToken }: { accessToken: string }) {
         {rooms.length > 0 && (
           <div className="space-y-2">
             {rooms.map((room) => (
-              <div key={room.id} className="flex items-center gap-3 px-3 py-2 bg-surface-container-low/50 rounded-md">
-                <div className="flex-1 min-w-0 text-xs text-on-surface-variant">
-                  <p>
-                    Concord channel #{room.channel_id} {"->"} Discord channel {room.discord_channel_id}
-                  </p>
-                  <p className="text-on-surface-variant/60">Guild {room.discord_guild_id}</p>
+              <div key={room.id} className="px-3 py-2 bg-surface-container-low/50 rounded-md space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0 text-xs text-on-surface-variant">
+                    <p>
+                      Concord channel #{room.channel_id} {"->"} Discord channel {room.discord_channel_id}
+                    </p>
+                    <p className="text-on-surface-variant/60">Guild {room.discord_guild_id}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => deleteMapping(room.id)}
+                    disabled={busy}
+                    className="px-3 py-1.5 bg-error/10 hover:bg-error/15 text-error text-xs rounded-md transition-colors disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => deleteMapping(room.id)}
-                  disabled={busy}
-                  className="px-3 py-1.5 bg-error/10 hover:bg-error/15 text-error text-xs rounded-md transition-colors disabled:opacity-40"
-                >
-                  Remove
-                </button>
+                {/* W4: Per-room video controls */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-outline-variant/10 pt-2">
+                  <label className="flex items-center gap-1.5 text-xs text-on-surface-variant cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={room.video_enabled}
+                      disabled={busy}
+                      onChange={(e) => updateVideoSettings(room, { video_enabled: e.target.checked })}
+                      className="accent-primary"
+                    />
+                    Video enabled
+                  </label>
+                  {room.video_enabled && (
+                    <>
+                      <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+                        Projection:
+                        <select
+                          value={room.projection_policy}
+                          disabled={busy}
+                          onChange={(e) => updateVideoSettings(room, { projection_policy: e.target.value as DiscordVoiceBridgeRoom["projection_policy"] })}
+                          className="px-2 py-0.5 bg-surface-container-highest rounded text-xs text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                        >
+                          <option value="screen_share_first">Screen-share first</option>
+                          <option value="active_speaker">Active speaker</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+                        Quality:
+                        <select
+                          value={room.quality_cap}
+                          disabled={busy}
+                          onChange={(e) => updateVideoSettings(room, { quality_cap: e.target.value as DiscordVoiceBridgeRoom["quality_cap"] })}
+                          className="px-2 py-0.5 bg-surface-container-highest rounded text-xs text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="720p">720p</option>
+                          <option value="1080p">1080p</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-on-surface-variant cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={room.audio_only_fallback}
+                          disabled={busy}
+                          onChange={(e) => updateVideoSettings(room, { audio_only_fallback: e.target.checked })}
+                          className="accent-primary"
+                        />
+                        Audio-only fallback
+                      </label>
+                    </>
+                  )}
+                </div>
               </div>
             ))}
           </div>
