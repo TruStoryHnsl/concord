@@ -13,6 +13,9 @@
 //!     `concord_beta` repo, not here.
 //!   * `Tunnel` — HTTP/QUIC tunnel through cooperating relays. Not yet
 //!     implemented.
+//!   * `Reticulum` — feature-gated additive transport for peer discovery,
+//!     encrypted links, and small Concord envelopes in the main build.
+//!     Scaffolded here, runtime wiring deferred.
 //!
 //! The module exposes an enum-dispatched runtime object
 //! ([`TransportRuntime`]) rather than trait objects, so
@@ -32,6 +35,8 @@ use thiserror::Error;
 use crate::servitude::config::{ServitudeConfig, Transport as TransportVariant};
 
 pub mod matrix_federation;
+#[cfg(feature = "reticulum")]
+pub mod reticulum;
 
 /// Errors surfaced by any transport implementation.
 #[derive(Debug, Error)]
@@ -115,6 +120,9 @@ pub enum TransportRuntime {
     /// Placeholder for HTTP/QUIC tunnel — returns `NotImplemented`
     /// until the wire-up lands.
     Tunnel,
+    /// Feature-gated Reticulum transport scaffold.
+    #[cfg(feature = "reticulum")]
+    Reticulum(reticulum::ReticulumTransport),
     /// No-op runtime used only by unit tests that drive the
     /// `ServitudeHandle` state machine without spawning any real
     /// transport. Intentionally `#[doc(hidden)]` — the public
@@ -129,10 +137,7 @@ impl TransportRuntime {
     /// variant, reading any per-transport settings out of the shared
     /// `ServitudeConfig`. This is the single factory seam between the
     /// config and the transport layer.
-    pub fn for_variant(
-        variant: TransportVariant,
-        config: &ServitudeConfig,
-    ) -> Self {
+    pub fn for_variant(variant: TransportVariant, config: &ServitudeConfig) -> Self {
         match variant {
             TransportVariant::MatrixFederation => TransportRuntime::MatrixFederation(
                 matrix_federation::MatrixFederationTransport::from_config(config),
@@ -140,6 +145,10 @@ impl TransportRuntime {
             TransportVariant::WireGuard => TransportRuntime::WireGuard,
             TransportVariant::Mesh => TransportRuntime::Mesh,
             TransportVariant::Tunnel => TransportRuntime::Tunnel,
+            #[cfg(feature = "reticulum")]
+            TransportVariant::Reticulum => {
+                TransportRuntime::Reticulum(reticulum::ReticulumTransport::from_config(config))
+            }
         }
     }
 
@@ -151,6 +160,8 @@ impl TransportRuntime {
             TransportRuntime::WireGuard => "wireguard",
             TransportRuntime::Mesh => "mesh",
             TransportRuntime::Tunnel => "tunnel",
+            #[cfg(feature = "reticulum")]
+            TransportRuntime::Reticulum(_) => "reticulum",
             TransportRuntime::Noop => "noop",
         }
     }
@@ -163,13 +174,11 @@ impl TransportRuntime {
     pub async fn start(&mut self) -> Result<(), TransportError> {
         match self {
             TransportRuntime::MatrixFederation(t) => t.start().await,
-            TransportRuntime::WireGuard => {
-                Err(TransportError::NotImplemented("wireguard"))
-            }
+            TransportRuntime::WireGuard => Err(TransportError::NotImplemented("wireguard")),
             TransportRuntime::Mesh => Err(TransportError::NotImplemented("mesh")),
-            TransportRuntime::Tunnel => {
-                Err(TransportError::NotImplemented("tunnel"))
-            }
+            TransportRuntime::Tunnel => Err(TransportError::NotImplemented("tunnel")),
+            #[cfg(feature = "reticulum")]
+            TransportRuntime::Reticulum(t) => t.start().await,
             TransportRuntime::Noop => Ok(()),
         }
     }
@@ -181,6 +190,8 @@ impl TransportRuntime {
     pub async fn stop(&mut self) -> Result<(), TransportError> {
         match self {
             TransportRuntime::MatrixFederation(t) => t.stop().await,
+            #[cfg(feature = "reticulum")]
+            TransportRuntime::Reticulum(t) => t.stop().await,
             TransportRuntime::WireGuard
             | TransportRuntime::Mesh
             | TransportRuntime::Tunnel
@@ -196,9 +207,11 @@ impl TransportRuntime {
     pub async fn is_healthy(&self) -> bool {
         match self {
             TransportRuntime::MatrixFederation(t) => t.is_healthy().await,
-            TransportRuntime::WireGuard
-            | TransportRuntime::Mesh
-            | TransportRuntime::Tunnel => false,
+            #[cfg(feature = "reticulum")]
+            TransportRuntime::Reticulum(t) => t.is_healthy().await,
+            TransportRuntime::WireGuard | TransportRuntime::Mesh | TransportRuntime::Tunnel => {
+                false
+            }
             TransportRuntime::Noop => true,
         }
     }
@@ -221,10 +234,8 @@ mod tests {
 
     #[test]
     fn test_factory_returns_matrix_federation_for_variant() {
-        let runtime = TransportRuntime::for_variant(
-            TransportVariant::MatrixFederation,
-            &test_config(),
-        );
+        let runtime =
+            TransportRuntime::for_variant(TransportVariant::MatrixFederation, &test_config());
         assert_eq!(runtime.name(), "matrix_federation");
     }
 
@@ -244,8 +255,7 @@ mod tests {
         let err = wg.start().await.expect_err("wireguard must not start");
         assert!(matches!(err, TransportError::NotImplemented("wireguard")));
 
-        let mut tunnel =
-            TransportRuntime::for_variant(TransportVariant::Tunnel, &test_config());
+        let mut tunnel = TransportRuntime::for_variant(TransportVariant::Tunnel, &test_config());
         let err = tunnel.start().await.expect_err("tunnel must not start");
         assert!(matches!(err, TransportError::NotImplemented("tunnel")));
     }
@@ -268,8 +278,7 @@ mod tests {
         wg.stop().await.expect("wg stop must be a noop");
         let mut mesh = TransportRuntime::for_variant(TransportVariant::Mesh, &test_config());
         mesh.stop().await.expect("mesh stop must be a noop");
-        let mut tunnel =
-            TransportRuntime::for_variant(TransportVariant::Tunnel, &test_config());
+        let mut tunnel = TransportRuntime::for_variant(TransportVariant::Tunnel, &test_config());
         tunnel.stop().await.expect("tunnel stop must be a noop");
     }
 }
