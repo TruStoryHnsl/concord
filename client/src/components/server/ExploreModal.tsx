@@ -389,6 +389,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
               state={serversState}
               onRetry={loadServers}
               onBrowseRooms={handleBrowseRooms}
+              sources={sources}
             />
           ) : (
             <RoomsBody
@@ -433,10 +434,12 @@ function ServersBody({
   state,
   onRetry,
   onBrowseRooms,
+  sources,
 }: {
   state: ServersLoadState;
   onRetry: () => void;
   onBrowseRooms: (server: ExploreServerEntry) => void;
+  sources: ConcordSource[];
 }) {
   if (state.status === "loading" || state.status === "idle") {
     return (
@@ -478,33 +481,57 @@ function ServersBody({
 
   return (
     <ul className="max-h-72 overflow-y-auto space-y-1">
-      {state.entries.map((entry) => (
-        <li
-          key={entry.domain}
-          className="flex items-center justify-between gap-3 px-3 py-2 rounded bg-surface-container-low hover:bg-surface-container-high transition-colors"
-        >
-          <div className="min-w-0">
-            <p className="text-sm text-on-surface truncate">{entry.name}</p>
-            {entry.name !== entry.domain && (
-              <p className="text-xs text-on-surface-variant truncate">
-                {entry.domain}
-              </p>
-            )}
-            {entry.description && (
-              <p className="text-xs text-on-surface-variant/80 truncate">
-                {entry.description}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => onBrowseRooms(entry)}
-            className="text-xs px-3 py-1 bg-surface-container-highest text-on-surface-variant hover:text-on-surface rounded transition-colors flex-shrink-0"
+      {state.entries.map((entry) => {
+        // Detect whether this federated peer is a known Concord instance by
+        // cross-referencing the Sources store. A match on platform="concord"
+        // means the user has already added this peer as a Concord source, so
+        // we show a "Concord" badge to distinguish it from vanilla Matrix servers.
+        const matchingSource = sources.find(
+          (s) =>
+            (s.platform === "concord" || s.platform == null) &&
+            sourceMatchesMatrixDomain(s, entry.domain),
+        );
+        const isConcordPeer = !!matchingSource;
+        const instanceLabel = matchingSource?.instanceName;
+
+        return (
+          <li
+            key={entry.domain}
+            className="flex items-center justify-between gap-3 px-3 py-2 rounded bg-surface-container-low hover:bg-surface-container-high transition-colors"
           >
-            Browse public rooms
-          </button>
-        </li>
-      ))}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <p className="text-sm text-on-surface truncate">
+                  {instanceLabel ?? entry.name}
+                </p>
+                {isConcordPeer && (
+                  <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-primary/15 text-primary leading-none">
+                    <span className="material-symbols-outlined text-[10px]" style={{ fontVariationSettings: '"FILL" 1' }}>hub</span>
+                    Concord
+                  </span>
+                )}
+              </div>
+              {entry.name !== entry.domain && (
+                <p className="text-xs text-on-surface-variant truncate">
+                  {entry.domain}
+                </p>
+              )}
+              {entry.description && (
+                <p className="text-xs text-on-surface-variant/80 truncate">
+                  {entry.description}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onBrowseRooms(entry)}
+              className="text-xs px-3 py-1 bg-surface-container-highest text-on-surface-variant hover:text-on-surface rounded transition-colors flex-shrink-0"
+            >
+              {isConcordPeer ? "Browse rooms" : "Browse public rooms"}
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
