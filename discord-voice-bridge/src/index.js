@@ -29,6 +29,43 @@ import {
   dispose,
 } from "@livekit/rtc-node";
 import { AccessToken } from "livekit-server-sdk";
+import {
+  PCM_BYTES_PER_FRAME,
+  CHANNELS,
+  SAMPLE_RATE,
+  SAMPLES_PER_CHANNEL,
+  DISCORD_VOICE_IDENTITY_PREFIX,
+  DISCORD_USER_IDENTITY_PREFIX,
+  DISCORD_VIDEO_IDENTITY_PREFIX,
+  redact,
+  redactDeep,
+  structuredLog,
+  audioFrameToBuffer,
+  bufferToAudioFrame as _bufferToAudioFrame,
+  pcmFrames as _pcmFrames,
+  selectVideoSource as _selectVideoSource,
+} from "./pure.js";
+
+// Bind AudioFrame from @livekit/rtc-node into the pure helpers.
+const bufferToAudioFrame = (buf) => _bufferToAudioFrame(buf, AudioFrame);
+const pcmFrames = (readable) => _pcmFrames(readable, AudioFrame);
+const selectVideoSource = (participants, activeSpeakerId) =>
+  _selectVideoSource(
+    participants,
+    activeSpeakerId,
+    TrackSource.SOURCE_SCREEN_SHARE,
+    TrackSource.SOURCE_CAMERA,
+  );
+
+// =============================================================================
+// Resource budget (per container instance)
+// =============================================================================
+// Memory  : ~40 MB base per active bridge + ~2 MB per concurrent Discord speaker
+// CPU     : ~5% per active speaker on a modern single core (Opus decode + PCM pipe)
+// Network : ~64 kbps per audio stream (Opus); video relay gated behind
+//           VIDEO_INGEST_AVAILABLE=true
+// Recommended: max 5 bridges per container instance (stay within 256 MB / 25% CPU)
+// =============================================================================
 
 const CONFIG_PATH = process.env.DISCORD_VOICE_ROOMS_FILE || "/config/rooms.json";
 const DISCORD_TOKEN_FILE = process.env.DISCORD_BOT_TOKEN_FILE || "";
@@ -40,31 +77,28 @@ const HEALTH_PORT = Number(process.env.DISCORD_VOICE_HEALTH_PORT || "3098");
 const POLL_MS = Number(process.env.DISCORD_VOICE_CONFIG_POLL_MS || "5000");
 const DISCORD_VOICE_IDLE_MS = Number(process.env.DISCORD_VOICE_IDLE_MS || "15000");
 
-// Identity prefix for the main bridge participant (inbound relay: LK→Discord).
-const DISCORD_VOICE_IDENTITY_PREFIX = "discord-voice:";
-// Identity prefix for per-user synthetic audio participants (outbound: Discord→LK).
-const DISCORD_USER_IDENTITY_PREFIX = "discord-user:";
-// Identity prefix for per-user synthetic video participants (outbound: Discord→LK).
-// Separate from audio so camera/screen-share appear as distinct LiveKit participants.
-const DISCORD_VIDEO_IDENTITY_PREFIX = "discord-video:";
+// Identity prefixes and audio constants are imported from ./pure.js above.
 
 // @discordjs/voice 0.19.x does not yet expose video track subscription (Discord DAVE
 // protocol video is not part of the public JS API). Set this flag to true when the
 // library gains that capability and wire up the video path below.
 const VIDEO_INGEST_AVAILABLE = false;
 
-const SAMPLE_RATE = 48000;
-const CHANNELS = 2;
 const FRAME_MS = 20;
-const SAMPLES_PER_CHANNEL = (SAMPLE_RATE / 1000) * FRAME_MS;
-const PCM_BYTES_PER_FRAME = SAMPLES_PER_CHANNEL * CHANNELS * 2;
 
 const active = new Map();
 let lastConfigHash = "";
 let shuttingDown = false;
 
+// Thin log alias used throughout this file.
 function log(...args) {
-  console.log(new Date().toISOString(), ...args);
+  structuredLog(
+    "info",
+    String(args[0]),
+    ...args.slice(1).map((a) =>
+      a instanceof Error ? { error: a.message } : a,
+    ),
+  );
 }
 
 async function requiredEnv() {
@@ -112,30 +146,9 @@ async function liveKitToken(roomName, identity) {
   return await token.toJwt();
 }
 
-function audioFrameToBuffer(frame) {
-  return Buffer.from(
-    new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength),
-  );
-}
-
-function bufferToAudioFrame(buffer) {
-  const usableBytes = buffer.byteLength - (buffer.byteLength % (CHANNELS * 2));
-  const view = new Int16Array(buffer.buffer, buffer.byteOffset, usableBytes / 2);
-  const copy = Int16Array.from(view);
-  return new AudioFrame(copy, SAMPLE_RATE, CHANNELS, copy.length / CHANNELS);
-}
-
-async function* pcmFrames(readable) {
-  let carry = Buffer.alloc(0);
-  for await (const chunk of readable) {
-    carry = carry.length ? Buffer.concat([carry, chunk]) : chunk;
-    while (carry.length >= PCM_BYTES_PER_FRAME) {
-      const frame = carry.subarray(0, PCM_BYTES_PER_FRAME);
-      carry = carry.subarray(PCM_BYTES_PER_FRAME);
-      yield bufferToAudioFrame(frame);
-    }
-  }
-}
+// selectVideoSource, bufferToAudioFrame, audioFrameToBuffer, pcmFrames are
+// imported from ./pure.js (wrapped with livekit-specific bindings above).
+// See pure.js for policy documentation.
 
 function writeLiveKitMixToDiscord(mixer, output) {
   return (async () => {
@@ -429,17 +442,25 @@ async function startBridge(client, roomConfig) {
 
           log("per-user LK track published", bridgeId, userIdentity);
 
-          // W2: Video ingest — publish a video track alongside the audio track.
-          // Gated on roomConfig.video_enabled AND VIDEO_INGEST_AVAILABLE.
-          // When @discordjs/voice gains DAVE video support, implement here:
-          //   1. Subscribe to the Discord video track for userId
-          //   2. Open a per-user video LK room with identity discord-video:<guild>:<userId>
-          //   3. Publish LocalVideoTrack with TrackSource.SOURCE_CAMERA or SOURCE_SCREEN_SHARE
-          //      depending on whether it's a camera or screen-share stream
-          //   4. Track in discordVideoRooms, clean up in finally block
+          // W3: Outbound video projection — select and relay the best LiveKit
+          // video source to Discord. Gated on video_enabled AND VIDEO_INGEST_AVAILABLE.
+          // When @discordjs/voice gains DAVE video subscription support, implement:
+          //   1. Call selectVideoSource(lkRoom.remoteParticipants.values(), activeSpeakerId)
+          //   2. Open a per-user video LK room: discord-video:<guild>:<userId>
+          //   3. Publish LocalVideoTrack with TrackSource matching policy result
+          //   4. Track in discordVideoRooms; clean up in finally block below
           if (roomConfig.video_enabled === true && VIDEO_INGEST_AVAILABLE) {
-            // Future implementation point — DAVE video subscription goes here.
-            log("video ingest: DAVE video path not yet wired", bridgeId, userIdentity);
+            const activeSpeakerId = lkRoom.activeSpeakers?.[0]?.identity ?? null;
+            const videoResult = selectVideoSource(
+              lkRoom.remoteParticipants.values(),
+              activeSpeakerId,
+            );
+            if (videoResult) {
+              log("video projection: selected source", bridgeId, { source: videoResult.source });
+            } else {
+              log("video projection: no source available", bridgeId);
+            }
+            // Future: open discordVideoRooms entry and publish videoResult.track
           }
 
           // Stream PCM until the discord opus stream ends.
@@ -615,7 +636,20 @@ async function reconcile(client) {
 }
 
 function startHealthServer() {
-  const server = http.createServer(async (_req, res) => {
+  const server = http.createServer(async (req, res) => {
+    // /ready — readiness probe (503 while shutting down)
+    if (req.url === "/ready") {
+      if (shuttingDown) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, ready: false }));
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, ready: true }));
+      }
+      return;
+    }
+
+    // /health (default) — detailed status
     try {
       const rooms = await Promise.all(
         [...active.values()].map((bridge) => bridge.getStatus()),
@@ -671,3 +705,5 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+// Unit tests import from ./pure.js directly — no exports needed here.
