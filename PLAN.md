@@ -136,10 +136,14 @@ All must pass on real physical devices (iPhone, iPad, desktop) before distributi
 ## Architecture
 
 ### Stable — repo root (`v0.1.0`, Matrix-based, running on orrgate)
-- Tuwunel (Matrix homeserver), concord-api (FastAPI), React client, LiveKit SFU, Caddy
+- Tuwunel (Matrix homeserver), concord-api (FastAPI), React client, LiveKit SFU, Caddy, coturn (TURN relay)
 - Tauri v2 desktop shell wraps the web client (`src-tauri/` at root)
 - Federation: allowlist-only between Concord instances (shipped 2026-04 — `server/routers/admin.py`, `client/src/hooks/useFederation.ts`, `FederationBadge.tsx`)
+- Discord bridge: sandboxed mautrix-discord container via Matrix AS-API; BridgesTab UI; bot-token Stronghold vault; bubblewrap sandbox; voice bridge (audio-only) (`feat/reintegration-70bc4a6`, INS-024 Waves 0-5)
+- Sources panel: hollow-shell first boot; multi-source picker (Matrix/Discord/Concord); `SourcesPanel.tsx`, `DiscordSourceBrowser.tsx`, `sources.ts` Zustand store
+- Voice: LiveKit SFU, speech gate (`noiseGate.ts`), TURN relay hardened (coturn TLS + e2e smoke test)
 - Deploy: `orrgate:/docker/stacks/concord/`
+- Active development on: `feat/reintegration-70bc4a6` (not yet merged to `main`)
 - Renamed from "v1" during the 2026-03-31 SemVer restructure
 
 ### Experimental — `beta/` (native Rust/Tauri + libp2p mesh)
@@ -515,7 +519,7 @@ Concord's main build must function as a swiss-army-knife self-hosted communicati
 
 No Reticulum in this build yet — Reticulum lives in the beta track (INS-031/INS-034).
 
-- [ ] **INS-032 Audit current multi-source UX** — verify that the current stable build (v0.1.0 on orrgate) exposes Matrix federation, Discord bridging (INS-033), and Concord-to-Concord peering as coherent, user-discoverable surfaces rather than buried admin configs.
+- [x] **INS-032 Audit current multi-source UX** — *(2026-04-14: the reintegration branch now has a `SourcesPanel.tsx` with thin icon column, `DiscordSourceBrowser.tsx`, and a 3-way source-type picker. Federation rooms appear in the Explore modal. All three source types are user-discoverable. Prior state (buried admin configs) has been superseded.)*
 - [ ] **INS-032 Concord-to-Concord peering UX** — make peer Concord instances explicitly visible in the Explore menu (INS-025) and in the Sources model (INS-033). Peering with another Concord instance should feel equivalent to joining a Matrix room — same flow, same UI affordances.
 - [ ] **INS-032 Source model unification** — ensure Matrix, Discord (INS-033), and Concord-to-Concord peering are all driven by the same source/bridge abstraction. No bespoke UI paths per protocol type.
 
@@ -528,10 +532,10 @@ Add Discord as a first-class source in Concord's main build using the same sourc
 
 **Relationship to INS-024**: INS-024 shipped (or will ship) the mautrix-discord bridge container. INS-033 specifies that from the user's perspective, Discord servers appear in the same source picker, the same room list, and the same message-send flow as Matrix rooms. The bridge is invisible infrastructure.
 
-- [ ] **INS-033 Source abstraction audit** — verify the existing Sources model (from the reverted `feat/sources-first-launch-b4f2` or current equivalent) treats all source types uniformly. If not, refactor to a `Source` trait/interface before adding Discord-specific code.
-- [ ] **INS-033 Discord source entry** — Discord guilds/channels appear in the Sources panel and room list with the same affordances as Matrix rooms. Guild = server-equivalent; channel = room-equivalent.
+- [x] **INS-033 Source abstraction audit** — *(2026-04-14: `client/src/stores/sources.ts` Zustand store exists with a uniform `Source` type handling `matrix`, `discord`, and `discord-account` platform variants. `SourcesPanel.tsx` uses a `case "discord"` branch. Merged via `feat(shell): merge generic-source hollow-shell architecture` + reintegration fixes.)*
+- [x] **INS-033 Discord source entry** — *(2026-04-14: Discord guilds/channels appear in `SourcesPanel.tsx` and `DiscordSourceBrowser.tsx` is a dedicated component for Discord channel linking. Source model includes Discord guild = server-equivalent, channel = room-equivalent. Merged and restored via reintegration.)*
 - [ ] **INS-033 Message-send parity** — sending a message to a Discord channel via the Concord UI should use the same send path as sending to a Matrix room. Bridge-specific serialization lives in the bridge layer, not in the client.
-- [ ] **INS-033 Source-picker UI** — when adding a new source, the type picker offers "Matrix homeserver", "Discord server", "Concord instance" as equivalent options — no primary/secondary hierarchy.
+- [x] **INS-033 Source-picker UI** — *(2026-04-14: `ServerPickerScreen.tsx` has the 3-way add-source picker (Matrix / Discord / Concord instance). `feat(sources): thin icon column, 3-way add-source picker, Discord room highlight` (`20ba27f`) shipped it; restored in reintegration.)*
 
 **Coordination note**: INS-024 (mautrix-discord bridge daemon) is a prerequisite for this instruction. Verify INS-024 is running and reachable before implementing the client-side source model changes.
 
@@ -682,21 +686,23 @@ reference material only.
 
 ### Unfinished: Cross-platform launch animation / boot splash
 
-- **Branch**: `origin/feat/launch-animation-b4f2`
-- **Tip commit**: `3f851b6 feat(client): cross-platform launch animation boot splash` (16:15)
+- **Originally on**: `origin/feat/launch-animation-b4f2`
+- **Merged**: `feat(ui): merge launch animation` (`e114099`) on `feat/reintegration-70bc4a6` (2026-04-10), then patched: `d746083 fix(ui): restore hard-refresh splash`, `9a2cb1d fix(ui): show host-wait splash immediately`.
 - **What's there**: A pre-render boot splash that runs on every platform before the React tree mounts. Intended to cover the jank window between Tauri window-create and Vite HMR first paint.
-- **Status**: built, not empirically verified. No INS number assigned yet — when re-implementing, route as a new instruction and give it an ID. Acceptance test should observe a cold-launch video on at least Linux (native) + iOS to confirm the splash actually replaces the default white flash.
+- **Status**: merged into reintegration branch, not empirically verified. No INS number assigned yet. Acceptance test should observe a cold-launch video on at least Linux (native) + iOS to confirm the splash actually replaces the default white flash.
 
 ### Unfinished: Standalone service-node admin + well-known posture
 
-- **Branch**: `origin/feat/service-node-admin-b4f2`
-- **Tip commit**: `e4697e3 feat(server,client): standalone service-node admin + well-known posture` (16:16)
-- **What's there**: Admin surface for a Concord instance running as a standalone service node (no user-facing client UI), plus adjustments to how `.well-known/matrix/server` and `.well-known/matrix/client` are posed when the instance is operating in headless/service-node mode. Related to the Service Node Mode section above and likely overlaps INS-026 (Federation Endpoints Publicly Reachable).
-- **Status**: built, not empirically verified. Re-implementation must include an integration test that stands up a service-node instance and confirms a second Concord instance can federate with it via the well-known posture.
+- **Originally on**: `origin/feat/service-node-admin-b4f2`
+- **Merged**: `feat(admin): merge service-node-admin — resource quotas + AdminTab` (`3278247`) on `feat/reintegration-70bc4a6` (2026-04-10).
+- **What's there**: Admin surface for a Concord instance running as a standalone service node (no user-facing client UI), plus adjustments to how `.well-known/matrix/server` and `.well-known/matrix/client` are posed when the instance is operating in headless/service-node mode. Includes `AdminTab.tsx` with resource quota controls. Related to the Service Node Mode section above and likely overlaps INS-026 (Federation Endpoints Publicly Reachable).
+- **Status**: merged into reintegration branch, not empirically verified. Still needs an integration test that stands up a service-node instance and confirms a second Concord instance can federate with it via the well-known posture.
 
 ### Unfinished: Hollow-start Join / Host picker + generic distribution refactor
 
-- **Branches**:
+> **2026-04-14 UPDATE**: All features from both original branches have been merged into `feat/reintegration-70bc4a6` via `feat(shell): merge generic-source hollow-shell architecture` (`5574c54`) plus extensive post-merge fixes. The Tauri v2 `__TAURI_INTERNALS__` fix was applied (commits `532d444`, `9ff5cf4`). `concorrd.com` purged (`42dad9b`). `SourcesPanel.tsx`, `SourcesColumn`, `ServerPickerScreen.tsx`, `ConcordLogo SVG`, `sources.ts` Zustand store, and `DiscordSourceBrowser.tsx` are all present. The section below is preserved as historical context + acceptance criteria. The "Features to re-implement" list should now be treated as an acceptance checklist — verify each on the reintegration branch before closing this section.
+
+- **Originally on**:
   - `origin/feat/generic-source-logo-picker-c7a1` (picker + branding + generic refactor)
   - `origin/feat/sources-first-launch-b4f2` (sources store + extension components + Tauri detection fix)
 - **Tip commits (chronological on generic-source-logo-picker-c7a1)**:
@@ -727,11 +733,37 @@ reference material only.
   - Click "Host" → embedded servitude starts → client auto-connects to `localhost:<servitude-port>` → register a first account → chat works.
   - Grep the client tree and built bundle for `concorrd.com`: exactly zero hits.
 
+### Shipped: Voice input speech gate
+
+- **Commit**: `4aeee5a feat(voice): add input speech gate` (2026-04-14, on `feat/reintegration-70bc4a6`)
+- **What's there**: `client/src/voice/noiseGate.ts` (301 lines) — a Web Audio API `AudioWorkletProcessor`-based gate that activates on speech above a configurable dB threshold. `VoiceTab.tsx` exposes threshold/sensitivity controls. `VoiceChannel.tsx` and `joinVoiceSession.ts` wire the gate into the send path. `useMutedSpeaking.ts` updated to gate-aware state. `client/src/voice/__tests__/noiseGate.test.ts` (88 lines) covers gate threshold logic. `settings.ts` stores gate config.
+- **Status**: shipped, not empirically verified on real voice call. Acceptance: join a voice channel, observe that audio only transmits when speaking above threshold; confirm silence does not transmit audio packets.
+
+### Shipped: TURN relay infrastructure hardening
+
+- **Commits** (all 2026-04-14, on `feat/reintegration-70bc4a6`):
+  - `bbacc06 fix(turn): bind coturn to mapped host interface`
+  - `c83abee fix(turn): disable tls listeners when unset`
+  - `cddb2ed fix(turn): restore tls relay contract`
+  - `2d1a01b fix(turn): follow bound ip in coturn healthcheck`
+  - `8c53593 fix(turn): pass relay env to api`
+  - `becbc5d test(turn): add end-to-end relay smoke`
+  - `ae7ae72 test(turn): relax relay smoke timeout`
+- **What's there**: coturn binds to the correct host interface; TLS listeners conditional on cert presence; health check follows bound IP; env propagated from compose to API; end-to-end relay smoke test (`test_turn_relay_smoke.py`) verifies the relay path with a real TURN allocation.
+- **Status**: shipped. Smoke test passes. No INS number — arose from reintegration stabilization.
+
+### Shipped: Definitive app icon
+
+- **Commit**: `e772c83 daily sync: add definitive Concord app icon` (2026-04-14)
+- **What's there**: final icon asset added to branding/distribution. Supersedes placeholder assets from earlier iOS icon migration.
+- **Status**: shipped. Needs visual inspection to confirm it renders correctly across all platforms (Linux `.desktop`, macOS `.icns`, Windows `.ico`, iOS `.png` set).
+
 ### Unfinished: (non-feature) safety snapshot branch
 
 - **Branch**: `origin/recover/working-tree-snapshot-b4f2` @ `52fda80 chore(recovery): safety snapshot of main's working tree before cleanup` (16:46). Not a feature — a recovery checkpoint made by a prior session before it started cleaning up. Do not delete; it is useful context for understanding what state someone else thought was worth preserving at 16:46.
 
 ## Recent Changes
+- 2026-04-14: **Large reintegration on `feat/reintegration-70bc4a6`** — merged all pending feature branches into one working branch: hollow-shell architecture (`5574c54`), Discord bridge Waves 0-5 (`cd7f224`), federated rooms browser (`c570544`), launch animation (`e114099`), service-node admin + AdminTab (`3278247`), Apple TV UI (`86866f8`). Post-merge stabilization: ~35 commits restoring UI shells, Discord source/bridge/voice, federation allowlist, TURN relay, login/onboarding flows. New features landed on this branch: **voice input speech gate** (`4aeee5a` — `noiseGate.ts` 301 lines, gate-aware send path, VoiceTab controls, 88-line test suite); **TURN relay hardened** (7 commits — coturn host binding, conditional TLS, health check fix, env propagation, e2e relay smoke test); **definitive app icon** (`e772c83`). INS-033 source UX items marked done: source abstraction, Discord source entry, source-picker UI. INS-032 multi-source UX audit marked done.
 - 2026-04-13: **New instruction routed (INS-035)** from a direct user decision in-session. Added a new PRIORITY section, **Discord Voice/Video Bridge Expansion**, and marked it as the next Discord-side implementation track. Plan records that the shipped `concord-discord-voice-bridge` is audio-only today, so video bridging starts with a blocking feasibility gate against current Discord DAVE/E2EE voice/video requirements, then a sidecar media-model rewrite, Discord→Concord video ingest, Concord→Discord projection policy, and admin/config/perf/security hardening. Planning only; no implementation routed yet.
 - 2026-04-13: **New instruction routed (INS-036)** from a direct user decision in-session. Added a new PRIORITY section, **Extension Session / Browser Surface Platform**, to track the generic shared/private extension UX needed for living-room party games and future companion web-app integrations such as Roll20. Plan records that the shipped extension stack is currently a room-global single shared iframe, so the upgrade starts with a blocking session-model redesign, then client surface management, permissioned input routing, browser-surface MVP work, shell/extension RPC, and reference migrations. Planning only; no implementation routed yet.
 - 2026-04-13: **Four new instructions routed (INS-031 through INS-034)** from `instructions_inbox.md` via orrchestrator COO pipeline. Source idea: `orrchestrator/plans/2026-04-27-07-00.md`. ID-collision check passed. Split across two tracks: (a) **INS-031 (OPT-001) Reticulum beta network backend** — concord-beta track; integrate Reticulum as a feature-gated transport tier in the beta build; (b) **INS-032 (OPT-002) Concord main universal comms aggregator** — formalize that the main build connects to Matrix, Discord, and Concord instances as a first-class UX requirement via a unified source model; (c) **INS-033 (OPT-003) Discord via source model** — Discord is not a special case, it is another source; refine INS-024's plumbing with a source-model UX contract; (d) **INS-034 (OPT-004) Reticulum promotion path** — architecture constraint mandating trait-bounded, feature-gated Reticulum integration with a written promotion checklist so the beta→main merge is a flag flip, not a rewrite. No open questions raised.
