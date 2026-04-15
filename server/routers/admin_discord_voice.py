@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -38,6 +39,11 @@ class DiscordVoiceBridgeRequest(BaseModel):
     discord_guild_id: str = Field(min_length=1, max_length=32)
     discord_channel_id: str = Field(min_length=1, max_length=32)
     enabled: bool = True
+    # W4: video bridge expansion fields
+    video_enabled: bool = False
+    projection_policy: Literal["screen_share_first", "active_speaker"] = "screen_share_first"
+    quality_cap: Literal["720p", "1080p", "auto"] = "auto"
+    audio_only_fallback: bool = True
     model_config = {"extra": "forbid"}
 
 
@@ -49,6 +55,11 @@ class DiscordVoiceBridgeResponse(BaseModel):
     discord_guild_id: str
     discord_channel_id: str
     enabled: bool
+    # W4: video bridge expansion fields
+    video_enabled: bool
+    projection_policy: str
+    quality_cap: str
+    audio_only_fallback: bool
 
 
 class DiscordVoiceMutationResponse(BaseModel):
@@ -66,6 +77,10 @@ def _bridge_response(row: DiscordVoiceBridge) -> DiscordVoiceBridgeResponse:
         discord_guild_id=row.discord_guild_id,
         discord_channel_id=row.discord_channel_id,
         enabled=bool(row.enabled),
+        video_enabled=bool(row.video_enabled),
+        projection_policy=row.projection_policy or "screen_share_first",
+        quality_cap=row.quality_cap or "auto",
+        audio_only_fallback=bool(row.audio_only_fallback),
     )
 
 
@@ -128,6 +143,10 @@ async def discord_voice_bridge_upsert_room(
             discord_guild_id=body.discord_guild_id,
             discord_channel_id=body.discord_channel_id,
             enabled=body.enabled,
+            video_enabled=body.video_enabled,
+            projection_policy=body.projection_policy,
+            quality_cap=body.quality_cap,
+            audio_only_fallback=body.audio_only_fallback,
             created_by=user_id,
         )
         db.add(row)
@@ -138,6 +157,10 @@ async def discord_voice_bridge_upsert_room(
         row.discord_guild_id = body.discord_guild_id
         row.discord_channel_id = body.discord_channel_id
         row.enabled = body.enabled
+        row.video_enabled = body.video_enabled
+        row.projection_policy = body.projection_policy
+        row.quality_cap = body.quality_cap
+        row.audio_only_fallback = body.audio_only_fallback
 
     await db.commit()
     await db.refresh(row)

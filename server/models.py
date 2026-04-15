@@ -200,6 +200,11 @@ class DiscordVoiceBridge(Base):
     discord_guild_id: Mapped[str] = mapped_column(String, nullable=False)
     discord_channel_id: Mapped[str] = mapped_column(String, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # W4: video bridge expansion fields
+    video_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    projection_policy: Mapped[str] = mapped_column(String, default="screen_share_first")
+    quality_cap: Mapped[str] = mapped_column(String, default="auto")
+    audio_only_fallback: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 

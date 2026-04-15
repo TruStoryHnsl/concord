@@ -50,6 +50,11 @@ export interface DiscordVoiceBridgeRoom {
   discord_guild_id: string;
   discord_channel_id: string;
   enabled: boolean;
+  // W4: video bridge expansion fields
+  video_enabled: boolean;
+  projection_policy: "screen_share_first" | "active_speaker";
+  quality_cap: "720p" | "1080p" | "auto";
+  audio_only_fallback: boolean;
 }
 
 export interface DiscordVoiceBridgeMutation {
@@ -225,6 +230,11 @@ export async function discordVoiceBridgeHttpUpsertRoom(
     discord_guild_id: string;
     discord_channel_id: string;
     enabled?: boolean;
+    // W4: video bridge expansion fields
+    video_enabled?: boolean;
+    projection_policy?: "screen_share_first" | "active_speaker";
+    quality_cap?: "720p" | "1080p" | "auto";
+    audio_only_fallback?: boolean;
   },
 ): Promise<DiscordVoiceBridgeRoom> {
   return bridgeApiFetch<DiscordVoiceBridgeRoom>(

@@ -24,6 +24,11 @@ class DiscordVoiceRoom(TypedDict):
     discord_guild_id: str
     discord_channel_id: str
     enabled: bool
+    # W4: video bridge expansion fields
+    video_enabled: bool
+    projection_policy: str
+    quality_cap: str
+    audio_only_fallback: bool
 
 
 def _atomic_write_json(path: Path, payload: object) -> None:
@@ -63,6 +68,10 @@ async def list_voice_bridge_rooms(db: AsyncSession) -> list[DiscordVoiceRoom]:
             "discord_guild_id": row.discord_guild_id,
             "discord_channel_id": row.discord_channel_id,
             "enabled": bool(row.enabled),
+            "video_enabled": bool(row.video_enabled),
+            "projection_policy": row.projection_policy or "screen_share_first",
+            "quality_cap": row.quality_cap or "auto",
+            "audio_only_fallback": bool(row.audio_only_fallback),
         })
     return rooms
 

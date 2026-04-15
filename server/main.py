@@ -116,6 +116,25 @@ async def lifespan(app: FastAPI):
                     )
                 """))
 
+            # Discord voice bridge: W4 video columns
+            voice_bridge_cols = {c["name"] for c in insp.get_columns("discord_voice_bridges")} if insp.has_table("discord_voice_bridges") else set()
+            if "video_enabled" not in voice_bridge_cols:
+                connection.execute(text(
+                    "ALTER TABLE discord_voice_bridges ADD COLUMN video_enabled BOOLEAN DEFAULT 0"
+                ))
+            if "projection_policy" not in voice_bridge_cols:
+                connection.execute(text(
+                    "ALTER TABLE discord_voice_bridges ADD COLUMN projection_policy VARCHAR DEFAULT 'screen_share_first'"
+                ))
+            if "quality_cap" not in voice_bridge_cols:
+                connection.execute(text(
+                    "ALTER TABLE discord_voice_bridges ADD COLUMN quality_cap VARCHAR DEFAULT 'auto'"
+                ))
+            if "audio_only_fallback" not in voice_bridge_cols:
+                connection.execute(text(
+                    "ALTER TABLE discord_voice_bridges ADD COLUMN audio_only_fallback BOOLEAN DEFAULT 1"
+                ))
+
             # Message counts table
             if not insp.has_table("message_counts"):
                 connection.execute(text("""
