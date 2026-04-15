@@ -156,6 +156,17 @@ export default function App() {
     voiceDisconnect();
   }, [voiceDisconnect]);
 
+  const handleVoiceError = useCallback((err: Error) => {
+    console.error("LiveKit connection error:", err);
+    addToast(`Voice failed: ${err.message}`, "error");
+    voiceDisconnect();
+  }, [addToast, voiceDisconnect]);
+
+  const handleMediaDeviceFailure = useCallback(() => {
+    console.warn("LiveKit media device failure — continuing without mic");
+    addToast("Microphone unavailable — you'll join muted", "info");
+  }, [addToast]);
+
   // Warn user before closing/refreshing if voice is active
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -329,6 +340,8 @@ export default function App() {
               },
             }}
             onDisconnected={handleVoiceDisconnect}
+            onError={handleVoiceError}
+            onMediaDeviceFailure={handleMediaDeviceFailure}
             style={{ display: "contents" }}
           >
             <CustomAudioRenderer />
