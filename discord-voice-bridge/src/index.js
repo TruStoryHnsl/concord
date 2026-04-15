@@ -101,9 +101,8 @@ async function liveKitToken(roomName, identity) {
 }
 
 function audioFrameToBuffer(frame) {
-  return Buffer.from(
-    new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength),
-  );
+  // Buffer.from(ArrayBuffer, byteOffset, length) avoids the intermediate Uint8Array wrapper.
+  return Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
 }
 
 function bufferToAudioFrame(buffer) {
@@ -289,13 +288,20 @@ async function startBridge(client, roomConfig) {
     discordConnection.on("error", (error) => log("discord voice error", bridgeId, error));
     await entersState(discordConnection, VoiceConnectionStatus.Ready, 30_000);
 
-    // No streamTimeoutMs on the Discord→LiveKit mixer: Discord speakers are
-    // bursty (silence between words). A timeout here causes the mixer to
-    // auto-close after 100ms of silence, which then crashes on the next
-    // speaking event ("Cannot add stream after mixer has been closed").
-    // Stream lifecycle is managed explicitly via pcm "close"/"error" events.
+    // streamTimeoutMs: 60 on the Discord→LiveKit mixer keeps the mix flowing
+    // when one of several concurrent speakers is momentarily slow (Opus decode
+    // jitter, event-loop pressure). Without a timeout the mixer blocks waiting
+    // for all streams simultaneously — with 3+ users this causes audible
+    // choppiness in the output. 60ms = 3 frames of tolerance before silence
+    // is substituted for the slow stream.
+    //
+    // Note: the timeout does NOT trigger mixer auto-close. Auto-close
+    // (ending=true) is caused by all streams exhausting their async iterators
+    // (AfterSilence), not by timeout. Mixer recreation on addStream() failure
+    // handles that case in subscribeDiscordUser().
     discordToLiveKitMixer = new AudioMixer(SAMPLE_RATE, CHANNELS, {
       blocksize: SAMPLES_PER_CHANNEL,
+      streamTimeoutMs: 60,
     });
     // LiveKit→Discord mixer uses a timeout because LiveKit tracks provide
     // continuous frames; a stale track that stops should be evicted.
@@ -310,7 +316,9 @@ async function startBridge(client, roomConfig) {
     options.source = TrackSource.SOURCE_MICROPHONE;
     await lkRoom.localParticipant.publishTrack(track, options);
 
-    discordAudioOut = new PassThrough({ highWaterMark: PCM_BYTES_PER_FRAME * 10 });
+    // 25-frame (500ms) buffer: more headroom than 10 frames for bursty mixing
+    // with multiple concurrent LiveKit speakers without adding meaningful latency.
+    discordAudioOut = new PassThrough({ highWaterMark: PCM_BYTES_PER_FRAME * 25 });
     discordPlayer = createAudioPlayer();
     const resource = createAudioResource(discordAudioOut, { inputType: StreamType.Raw });
     discordPlayer.on("error", (error) => log("discord audio player error", bridgeId, error));
@@ -332,7 +340,10 @@ async function startBridge(client, roomConfig) {
       if (!currentMixer) return;
 
       const opus = discordConnection.receiver.subscribe(userId, {
-        end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+        // 500ms AfterSilence: shorter than the original 1000ms to reduce the
+        // number of concurrent exhausting streams in the mixer, without cutting
+        // off natural speech pauses.
+        end: { behavior: EndBehaviorType.AfterSilence, duration: 500 },
       });
       const decoder = new prism.opus.Decoder({
         rate: SAMPLE_RATE,
@@ -351,6 +362,7 @@ async function startBridge(client, roomConfig) {
         log("discordToLiveKit mixer ended, recreating", bridgeId);
         discordToLiveKitMixer = new AudioMixer(SAMPLE_RATE, CHANNELS, {
           blocksize: SAMPLES_PER_CHANNEL,
+          streamTimeoutMs: 60,
         });
         currentMixer = discordToLiveKitMixer;
         tasks.push(captureDiscordMixToLiveKit(discordToLiveKitMixer, source));
