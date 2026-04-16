@@ -76,11 +76,20 @@ pub enum ServitudeError {
 /// `config.enabled_transports`. The runtimes are constructed eagerly at
 /// `new()` time but do not touch the network or spawn child processes
 /// until `start()` is called.
+///
+/// As of Wave 3, the handle also tracks a `degraded` map of transport names
+/// to error messages for non-critical transports that failed to start. A
+/// handle in the `Running` state may have degraded transports (e.g.
+/// `DiscordBridge` failed but `MatrixFederation` is healthy).
 #[derive(Debug)]
 pub struct ServitudeHandle {
     config: ServitudeConfig,
     lifecycle: lifecycle::Lifecycle,
     transports: Vec<TransportRuntime>,
+    /// Non-critical transports that failed to start, keyed by transport name.
+    /// Populated by the partial-failure path in [`Self::start`].
+    /// Cleared on [`Self::stop`].
+    degraded: std::collections::HashMap<String, String>,
 }
 
 impl ServitudeHandle {
@@ -102,7 +111,17 @@ impl ServitudeHandle {
             config,
             lifecycle: lifecycle::Lifecycle::new(),
             transports,
+            degraded: std::collections::HashMap::new(),
         })
+    }
+
+    /// Read-only accessor for the degraded transports map.
+    ///
+    /// Returns a map of transport name → error message for every non-critical
+    /// transport that failed to start in the last `start()` call. Empty when
+    /// all transports started successfully, or when the handle is `Stopped`.
+    pub fn degraded_transports(&self) -> &std::collections::HashMap<String, String> {
+        &self.degraded
     }
 
     /// Test-only constructor that lets tests inject a pre-built transport
@@ -120,6 +139,7 @@ impl ServitudeHandle {
             config,
             lifecycle: lifecycle::Lifecycle::new(),
             transports,
+            degraded: std::collections::HashMap::new(),
         })
     }
 
@@ -136,43 +156,65 @@ impl ServitudeHandle {
     /// Drive the state machine `Stopped -> Starting -> Running`, bringing
     /// up each enabled transport in config order.
     ///
-    /// If any transport's `start` fails, every already-started transport
-    /// is torn down in reverse order and the lifecycle is rolled back to
-    /// `Stopped` before the error is returned. This guarantees that a
-    /// failed start never leaves the handle in a half-running state.
+    /// ## Critical vs non-critical failure handling (Wave 3)
+    ///
+    /// * If a **critical** transport fails, every already-started transport is
+    ///   torn down in reverse order and the lifecycle is rolled back to `Stopped`
+    ///   before the error is returned.
+    /// * If a **non-critical** transport fails, the failure is recorded in
+    ///   `self.degraded` (keyed by transport name) and startup continues. The
+    ///   lifecycle still reaches `Running` as long as no critical transport failed.
+    ///
+    /// This means a `Running` handle may have degraded transports — callers can
+    /// check [`Self::degraded_transports`] for details.
     pub async fn start(&mut self) -> Result<(), ServitudeError> {
         if self.lifecycle.state() != LifecycleState::Stopped {
             return Err(ServitudeError::AlreadyRunning);
         }
         self.lifecycle.transition(LifecycleState::Starting)?;
+        self.degraded.clear();
 
         let mut started_count = 0usize;
-        for transport in self.transports.iter_mut() {
-            if let Err(e) = transport.start().await {
-                // Roll back in reverse order. Collect teardown errors
-                // into logs but do not surface them — the original
-                // failure is the root cause and should propagate.
-                for t in self.transports[..started_count].iter_mut().rev() {
-                    if let Err(teardown_err) = t.stop().await {
-                        log::warn!(
-                            target: "concord::servitude",
-                            "rollback stop failed for transport {}: {}",
-                            t.name(),
-                            teardown_err
-                        );
+        for i in 0..self.transports.len() {
+            let is_critical = self.transports[i].is_critical();
+            let name = self.transports[i].name();
+
+            if let Err(e) = self.transports[i].start().await {
+                if is_critical {
+                    // Critical failure — tear down already-started transports
+                    // in reverse order.
+                    for t in self.transports[..started_count].iter_mut().rev() {
+                        if let Err(teardown_err) = t.stop().await {
+                            log::warn!(
+                                target: "concord::servitude",
+                                "rollback stop failed for transport {}: {}",
+                                t.name(),
+                                teardown_err
+                            );
+                        }
                     }
+                    // Drive the state machine back to Stopped.
+                    self.lifecycle
+                        .transition(LifecycleState::Stopping)
+                        .map_err(ServitudeError::Lifecycle)?;
+                    self.lifecycle
+                        .transition(LifecycleState::Stopped)
+                        .map_err(ServitudeError::Lifecycle)?;
+                    self.degraded.clear();
+                    return Err(ServitudeError::Transport(e));
+                } else {
+                    // Non-critical failure — record and continue.
+                    log::warn!(
+                        target: "concord::servitude",
+                        "non-critical transport {} failed to start: {}; continuing without it",
+                        name,
+                        e
+                    );
+                    self.degraded.insert(name.to_string(), e.to_string());
+                    // Do NOT increment started_count — this transport is not
+                    // "started" and rollback must not attempt to stop it.
+                    continue;
                 }
-                // Drive the state machine back to Stopped so the next
-                // start attempt can proceed. These transitions are
-                // infallible on the canonical graph, but we unwrap into
-                // an error rather than panicking just in case.
-                self.lifecycle
-                    .transition(LifecycleState::Stopping)
-                    .map_err(ServitudeError::Lifecycle)?;
-                self.lifecycle
-                    .transition(LifecycleState::Stopped)
-                    .map_err(ServitudeError::Lifecycle)?;
-                return Err(ServitudeError::Transport(e));
             }
             started_count += 1;
         }
@@ -211,6 +253,7 @@ impl ServitudeHandle {
         }
 
         self.lifecycle.transition(LifecycleState::Stopped)?;
+        self.degraded.clear();
 
         match first_err {
             Some(e) => Err(ServitudeError::Transport(e)),
@@ -517,6 +560,123 @@ mod tests {
             handle.status(),
             LifecycleState::Stopped,
             "lifecycle must roll back to Stopped on transport failure"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // INS-024 Wave 3 — partial-failure and degraded transport tests
+    // ---------------------------------------------------------------
+
+    /// A non-critical transport failure must NOT prevent the lifecycle
+    /// from reaching Running. The failing transport is recorded in the
+    /// degraded map.
+    ///
+    /// Modelled after the real scenario: [MatrixFederation (Noop, critical),
+    /// DiscordBridge (Noop, non-critical but we mock its failure by using
+    /// a TransportRuntime::Tunnel stub which is not-implemented and IS
+    /// critical by default).
+    ///
+    /// To simulate a non-critical failure we inject a custom Noop that
+    /// we wrap in a failing non-critical runtime. Since TransportRuntime
+    /// has no "failing Noop" variant, we use the real Tunnel variant
+    /// (returns NotImplemented, is_critical=true) as the critical case
+    /// and rely on the DiscordBridge variant for the non-critical case.
+    ///
+    /// Concrete test: [Noop (critical, succeeds), DiscordBridge-stub
+    /// (non-critical, start will fail with NotImplemented on Linux
+    /// because bwrap is not found in the test env, or NotImplemented
+    /// on non-Linux)].
+    #[tokio::test]
+    async fn test_servitude_handle_continues_when_noncritical_transport_fails() {
+        // We need a non-critical transport that will fail in unit tests.
+        // TransportRuntime::DiscordBridge is non-critical. On non-Linux it
+        // returns NotImplemented immediately. On Linux it returns
+        // BinaryNotFound because neither bwrap nor mautrix-discord exist
+        // in CI / unit-test environments.
+        //
+        // If we're on Linux and both binaries magically exist (won't happen
+        // in CI), the test may pass through the health check wait and then
+        // fail with a HealthCheck error — still a start() error, so the
+        // test still passes.
+        let discord_cfg = ServitudeConfig {
+            display_name: "partial-fail-test".to_string(),
+            max_peers: 8,
+            listen_port: 8765,
+            allow_privileged_port: false,
+            enabled_transports: vec![
+                Transport::MatrixFederation,
+                Transport::DiscordBridge,
+            ],
+        };
+        let discord_bridge_rt =
+            TransportRuntime::for_variant(Transport::DiscordBridge, &discord_cfg);
+        debug_assert!(!discord_bridge_rt.is_critical(), "DiscordBridge must be non-critical");
+
+        let mut handle = ServitudeHandle::new_with_runtimes_for_test(
+            discord_cfg,
+            // Noop = always succeeds, is_critical=false (same as test helper)
+            // DiscordBridge = will fail (no binary in test env), is_critical=false
+            vec![TransportRuntime::Noop, discord_bridge_rt],
+        )
+        .expect("config with MatrixFederation+DiscordBridge must validate");
+
+        // start() must SUCCEED despite the DiscordBridge failing.
+        handle
+            .start()
+            .await
+            .expect("start must succeed when only a non-critical transport fails");
+
+        assert_eq!(
+            handle.status(),
+            LifecycleState::Running,
+            "handle must be Running even with a degraded discord bridge"
+        );
+
+        // The degraded map must contain an entry for discord_bridge.
+        let degraded = handle.degraded_transports();
+        assert!(
+            degraded.contains_key("discord_bridge"),
+            "degraded map must contain 'discord_bridge'; got: {:?}",
+            degraded
+        );
+
+        // stop() must succeed and clear the degraded map.
+        handle.stop().await.expect("stop must succeed");
+        assert_eq!(handle.status(), LifecycleState::Stopped);
+    }
+
+    /// Degraded transports map must be empty after a successful stop().
+    #[tokio::test]
+    async fn test_degraded_transports_cleared_on_stop() {
+        let discord_cfg = ServitudeConfig {
+            display_name: "degraded-clear-test".to_string(),
+            max_peers: 8,
+            listen_port: 8765,
+            allow_privileged_port: false,
+            enabled_transports: vec![
+                Transport::MatrixFederation,
+                Transport::DiscordBridge,
+            ],
+        };
+        let discord_bridge_rt =
+            TransportRuntime::for_variant(Transport::DiscordBridge, &discord_cfg);
+        let mut handle = ServitudeHandle::new_with_runtimes_for_test(
+            discord_cfg,
+            vec![TransportRuntime::Noop, discord_bridge_rt],
+        )
+        .expect("config must validate");
+
+        handle.start().await.expect("start must succeed");
+        // Should have at least one degraded entry from DiscordBridge failing.
+        assert!(
+            !handle.degraded_transports().is_empty(),
+            "after start with failing DiscordBridge, degraded must not be empty"
+        );
+
+        handle.stop().await.expect("stop must succeed");
+        assert!(
+            handle.degraded_transports().is_empty(),
+            "degraded map must be cleared after stop"
         );
     }
 }

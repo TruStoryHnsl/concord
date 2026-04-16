@@ -1,6 +1,7 @@
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
+pub mod bridge_commands;
 pub mod servitude;
 
 use servitude::{LifecycleState, ServitudeConfig, ServitudeHandle};
@@ -133,6 +134,10 @@ pub fn run() {
             servitude_start,
             servitude_stop,
             servitude_status,
+            bridge_commands::discord_bridge_status,
+            bridge_commands::discord_bridge_set_bot_token,
+            bridge_commands::discord_bridge_enable,
+            bridge_commands::discord_bridge_disable,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

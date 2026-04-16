@@ -25,6 +25,16 @@ pub const SETTINGS_STORE_FILE: &str = "settings.json";
 /// The actual runtime wiring lives in a separate task — this enum is the
 /// declarative contract that downstream code can match on. Order matters
 /// only for serialization (it is not a preference list).
+///
+/// ## DiscordBridge ordering constraint
+///
+/// `DiscordBridge` MUST appear after `MatrixFederation` in
+/// `enabled_transports`. The bridge requires a running Matrix homeserver to
+/// register against — the cross-transport pre-pass in `ServitudeHandle::start`
+/// writes the AS registration YAML and passes it to `MatrixFederation` before
+/// either transport starts. If `DiscordBridge` appears without
+/// `MatrixFederation`, or before it, [`ServitudeConfig::validate`] returns
+/// an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Transport {
@@ -36,6 +46,13 @@ pub enum Transport {
     Tunnel,
     /// Matrix federation — the canonical Concord stable transport.
     MatrixFederation,
+    /// Discord bridge — bubblewrap-sandboxed mautrix-discord process.
+    ///
+    /// Requires `MatrixFederation` to appear before it in
+    /// `enabled_transports`. Linux-only; returns `NotImplemented` on other
+    /// platforms. Non-critical: a startup failure is recorded in the
+    /// servitude's `degraded` map without rolling back `MatrixFederation`.
+    DiscordBridge,
 }
 
 /// Validated servitude configuration.
@@ -164,6 +181,35 @@ impl ServitudeConfig {
         if self.enabled_transports.is_empty() {
             return Err(ConfigError::NoTransportsEnabled);
         }
+
+        // DiscordBridge ordering constraints.
+        let has_discord = self
+            .enabled_transports
+            .contains(&Transport::DiscordBridge);
+        let has_matrix = self
+            .enabled_transports
+            .contains(&Transport::MatrixFederation);
+
+        if has_discord && !has_matrix {
+            return Err(ConfigError::DiscordBridgeRequiresMatrix);
+        }
+
+        if has_discord && has_matrix {
+            let discord_pos = self
+                .enabled_transports
+                .iter()
+                .position(|t| *t == Transport::DiscordBridge)
+                .unwrap();
+            let matrix_pos = self
+                .enabled_transports
+                .iter()
+                .position(|t| *t == Transport::MatrixFederation)
+                .unwrap();
+            if discord_pos < matrix_pos {
+                return Err(ConfigError::DiscordBridgeMustFollowMatrix);
+            }
+        }
+
         Ok(())
     }
 }
@@ -191,6 +237,14 @@ pub enum ConfigError {
 
     #[error("at least one transport must be enabled in enabled_transports")]
     NoTransportsEnabled,
+
+    #[error("DiscordBridge requires MatrixFederation to be enabled")]
+    DiscordBridgeRequiresMatrix,
+
+    #[error(
+        "DiscordBridge must appear after MatrixFederation in enabled_transports"
+    )]
+    DiscordBridgeMustFollowMatrix,
 
     #[error("settings store error: {0}")]
     Store(String),
@@ -418,5 +472,63 @@ listen_port = 8765
         let cfg = ServitudeConfig::from_toml_str(raw)
             .expect("huge max_peers passes validation (bug)");
         assert_eq!(cfg.max_peers, i64::MAX);
+    }
+
+    // ---------------------------------------------------------------
+    // INS-024 Wave 3 — DiscordBridge ordering constraint tests
+    // ---------------------------------------------------------------
+
+    /// DiscordBridge without MatrixFederation must fail validation.
+    #[test]
+    fn test_discord_bridge_requires_matrix_validation() {
+        let cfg = ServitudeConfig {
+            display_name: "test".to_string(),
+            max_peers: 8,
+            listen_port: 8765,
+            allow_privileged_port: false,
+            enabled_transports: vec![Transport::DiscordBridge],
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err(ConfigError::DiscordBridgeRequiresMatrix),
+            "DiscordBridge without MatrixFederation must be rejected"
+        );
+    }
+
+    /// DiscordBridge before MatrixFederation must fail validation.
+    #[test]
+    fn test_discord_bridge_must_follow_matrix() {
+        let cfg = ServitudeConfig {
+            display_name: "test".to_string(),
+            max_peers: 8,
+            listen_port: 8765,
+            allow_privileged_port: false,
+            enabled_transports: vec![
+                Transport::DiscordBridge,
+                Transport::MatrixFederation,
+            ],
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err(ConfigError::DiscordBridgeMustFollowMatrix),
+            "DiscordBridge before MatrixFederation must be rejected"
+        );
+    }
+
+    /// [MatrixFederation, DiscordBridge] is the valid ordering.
+    #[test]
+    fn test_discord_bridge_after_matrix_is_valid() {
+        let cfg = ServitudeConfig {
+            display_name: "test".to_string(),
+            max_peers: 8,
+            listen_port: 8765,
+            allow_privileged_port: false,
+            enabled_transports: vec![
+                Transport::MatrixFederation,
+                Transport::DiscordBridge,
+            ],
+        };
+        cfg.validate()
+            .expect("[MatrixFederation, DiscordBridge] is valid ordering");
     }
 }

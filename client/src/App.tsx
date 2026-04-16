@@ -20,6 +20,7 @@ import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { CustomAudioRenderer } from "./components/voice/CustomAudioRenderer";
+import { LaunchAnimation } from "./components/LaunchAnimation";
 
 // Capture invite token immediately at module load — before React mounts,
 // before session restoration, before anything can clear the URL.
@@ -33,6 +34,12 @@ if (initialInviteToken) {
 export { INVITE_STORAGE_KEY };
 
 export default function App() {
+  // Launch animation gate — show the branded intro on every boot/reload
+  // before rendering any app content. The main content loads behind the
+  // overlay (visibility: hidden) so it is ready the moment the animation
+  // completes, with no second render delay.
+  const [launchDone, setLaunchDone] = useState(false);
+
   // Desktop/native mode: require a server picker pass before anything
   // else. INS-027 landed the `serverConfig` store + ServerPickerScreen
   // as the modern first-launch flow; the picker is skipped when the
@@ -301,46 +308,51 @@ export default function App() {
   );
 
   return (
-    <ErrorBoundary>
-      {isLoggedIn ? (
-        voiceConnected && voiceToken && livekitUrl ? (
-          <LiveKitRoom
-            token={voiceToken}
-            serverUrl={livekitUrl}
-            connectOptions={{
-              autoSubscribe: true,
-              ...(iceServers.length > 0 && {
-                rtcConfig: {
-                  iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    ...iceServers,
-                  ],
-                },
-              }),
-            }}
-            audio={micGranted}
-            video={false}
-            options={{
-              audioCaptureDefaults: {
-                echoCancellation,
-                noiseSuppression,
-                autoGainControl,
-                ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
-              },
-            }}
-            onDisconnected={handleVoiceDisconnect}
-            style={{ display: "contents" }}
-          >
-            <CustomAudioRenderer />
-            {authenticatedContent}
-          </LiveKitRoom>
-        ) : (
-          authenticatedContent
-        )
-      ) : (
-        <LoginForm />
-      )}
-      <ToastContainer />
-    </ErrorBoundary>
+    <>
+      {!launchDone && <LaunchAnimation onComplete={() => setLaunchDone(true)} />}
+      <div style={{ visibility: launchDone ? "visible" : "hidden", height: "100%" }}>
+        <ErrorBoundary>
+          {isLoggedIn ? (
+            voiceConnected && voiceToken && livekitUrl ? (
+              <LiveKitRoom
+                token={voiceToken}
+                serverUrl={livekitUrl}
+                connectOptions={{
+                  autoSubscribe: true,
+                  ...(iceServers.length > 0 && {
+                    rtcConfig: {
+                      iceServers: [
+                        { urls: "stun:stun.l.google.com:19302" },
+                        ...iceServers,
+                      ],
+                    },
+                  }),
+                }}
+                audio={micGranted}
+                video={false}
+                options={{
+                  audioCaptureDefaults: {
+                    echoCancellation,
+                    noiseSuppression,
+                    autoGainControl,
+                    ...(preferredInputDeviceId && { deviceId: preferredInputDeviceId }),
+                  },
+                }}
+                onDisconnected={handleVoiceDisconnect}
+                style={{ display: "contents" }}
+              >
+                <CustomAudioRenderer />
+                {authenticatedContent}
+              </LiveKitRoom>
+            ) : (
+              authenticatedContent
+            )
+          ) : (
+            <LoginForm />
+          )}
+          <ToastContainer />
+        </ErrorBoundary>
+      </div>
+    </>
   );
 }
