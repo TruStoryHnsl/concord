@@ -723,6 +723,27 @@ def write_bridge_runtime_config(
     doc["appservice"]["as_token"] = registration.as_token
     doc["appservice"]["hs_token"] = registration.hs_token
 
+    # Inject homeserver.domain from env — never read it from the template
+    # so no personal domain ever needs to appear in committed config files.
+    server_name = os.environ.get("CONDUWUIT_SERVER_NAME", "").strip()
+    if server_name:
+        if "homeserver" not in doc or not isinstance(doc["homeserver"], dict):
+            doc["homeserver"] = {}
+        doc["homeserver"]["domain"] = server_name
+
+        # Build bridge.permissions from the canonical server name + admin
+        # user IDs (ADMIN_USER_IDS env, comma-separated Matrix user IDs).
+        # Every local user gets "user" level; admins get "admin" level.
+        # The template permissions block (which may contain personal IDs)
+        # is completely replaced — never preserved.
+        permissions: dict[str, str] = {server_name: "user"}
+        admin_ids_raw = os.environ.get("ADMIN_USER_IDS", "").strip()
+        for uid in (u.strip() for u in admin_ids_raw.split(",") if u.strip()):
+            permissions[uid] = "admin"
+        if "bridge" not in doc or not isinstance(doc["bridge"], dict):
+            doc["bridge"] = {}
+        doc["bridge"]["permissions"] = permissions
+
     # Inject bot token from the dedicated file (preferred) or leave
     # the config.yaml value in place if the operator set it manually.
     bot_token = read_discord_bot_token()

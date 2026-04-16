@@ -21,8 +21,9 @@ homeserver:
   # Internal Docker compose address — conduwuit service DNS name + port.
   # CONDUWUIT_PORT default is 6167. If you changed it in .env, update here too.
   address: http://conduwuit:6167
-  # Set this to your actual server name (same as CONDUWUIT_SERVER_NAME in .env)
-  domain: concorrd.com
+  # Injected at runtime from CONDUWUIT_SERVER_NAME by bridge_config.py.
+  # Do NOT set this manually — it will be overwritten on every bridge enable/rotate.
+  domain: placeholder.invalid
   verify_ssl: false
   software: standard
 
@@ -70,22 +71,13 @@ bridge:
     enabled: true
     admin_only: false
 
-  # ACL — who on the Matrix side is allowed to use the bridge.
-  # Defaults to "only admins defined in ADMIN_USER_IDS" on the
-  # concord homeserver. The web deployment tightens this further in
-  # `server/routers/admin_bridges.py` — the admin router rejects any
-  # enable/disable/rotate call from a non-admin user long before
-  # mautrix-discord's own ACL runs.
-  # Who on the Matrix side can use the bridge.
-  # Must include at least one entry at "user" level or higher — "relay"
-  # alone is treated as "unconfigured" by the bridge validation when
-  # relay mode is disabled. Replace "concorrd.com" with your actual
-  # CONDUWUIT_SERVER_NAME if you're not running concorrd.com.
+  # ACL — injected at runtime from CONDUWUIT_SERVER_NAME and ADMIN_USER_IDS
+  # by bridge_config.py. Do NOT edit these entries manually — they are
+  # overwritten on every bridge enable/rotate. The runtime value will be:
+  #   "<CONDUWUIT_SERVER_NAME>": user     # all local users
+  #   "<each ADMIN_USER_IDS entry>": admin
   permissions:
-    # Admin users can run bridge management commands like set-relay.
-    # Add your Matrix user ID here to manage the bridge from chat.
-    "@corr:concorrd.com": admin
-    "concorrd.com": user
+    "placeholder.invalid": user
 
 # Discord credentials (CONFIGURE THIS — required to connect the bridge).
 # Paste the bot token from discord.com/developers/applications > Bot > Token.
