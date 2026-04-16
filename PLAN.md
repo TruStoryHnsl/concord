@@ -517,7 +517,7 @@ Concord's main build must function as a swiss-army-knife self-hosted communicati
 - **Any Discord server** — Discord as a source/bridge (see INS-033 for the source-model implementation)
 - **Any other Concord instance** — Concord-to-Concord peering (already partially shipped via federation; ensure the UX exposes this as explicit peering, not just matrix federation)
 
-No Reticulum in this build yet — Reticulum lives in the beta track (INS-031/INS-034).
+~~No Reticulum in this build yet — Reticulum lives in the beta track (INS-031/INS-034).~~ **SUPERSEDED by INS-037**: Reticulum is now a first-class transport in the main build; INS-034 architecture constraints apply.
 
 - [x] **INS-032 Audit current multi-source UX** — *(2026-04-14: the reintegration branch now has a `SourcesPanel.tsx` with thin icon column, `DiscordSourceBrowser.tsx`, and a 3-way source-type picker. Federation rooms appear in the Explore modal. All three source types are user-discoverable. Prior state (buried admin configs) has been superseded.)*
 - [x] **INS-032 Concord-to-Concord peering UX** — *(2026-04-14: `ExploreModal.tsx` now cross-references the Sources store — entries whose domain matches a source with `platform="concord"` receive a primary-tinted "Concord" badge chip and display the discovered `instanceName`. Add-source flow in `ChatLayout.tsx` already calls `discoverHomeserver()` and stores `platform: "concord"` — peering UX is equivalent to Matrix join flow.)*
