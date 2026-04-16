@@ -63,7 +63,7 @@
     handle /.well-known/matrix/client {
         header Content-Type "application/json"
         header Access-Control-Allow-Origin "*"
-        respond `{"m.homeserver":{"base_url":"https://{$CONDUWUIT_SERVER_NAME}"}}` 200
+        respond `{"m.homeserver":{"base_url":"{$MATRIX_BASE_URL}"}}` 200
     }
 
     # Concord-specific well-known (INS-027) — dynamic endpoint, served

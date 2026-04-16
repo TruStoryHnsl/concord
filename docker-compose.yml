@@ -340,6 +340,13 @@ services:
       # becomes literally "https://" — breaking native clients that
       # try to resolve the homeserver from well-known discovery.
       CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
+      # MATRIX_BASE_URL is the URL the Matrix client SDK should use to
+      # reach this homeserver. Computed from PUBLIC_BASE_URL when set
+      # (e.g. https://dev.concorrd.com for a Cloudflare-proxied instance
+      # where the raw server name is a bare LAN IP), otherwise falls back
+      # to https://<CONDUWUIT_SERVER_NAME>. The Caddyfile uses this for
+      # the m.homeserver.base_url in /.well-known/matrix/client.
+      MATRIX_BASE_URL: ${PUBLIC_BASE_URL:-https://${CONDUWUIT_SERVER_NAME}}
     depends_on:
       conduwuit:
         condition: service_started
