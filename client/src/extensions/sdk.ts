@@ -153,11 +153,11 @@ export function buildSurfaceResizeMessage(
  * ```
  */
 export function isConcordShellMessage(data: unknown): data is ConcordShellMessage {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as Record<string, unknown>;
   return (
-    typeof data === "object" &&
-    data !== null &&
-    typeof (data as Record<string, unknown>).type === "string" &&
-    (data as Record<string, unknown>).type.toString().startsWith("concord:") &&
-    (data as Record<string, unknown>).version === CONCORD_SDK_VERSION
+    typeof d.type === "string" &&
+    d.type.startsWith("concord:") &&
+    d.version === CONCORD_SDK_VERSION
   );
 }
