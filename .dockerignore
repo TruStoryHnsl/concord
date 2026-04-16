@@ -9,8 +9,21 @@ client/dist/
 # Python virtualenv
 server/.venv/
 
-# Rust build cache
-target/
+# Rust build cache (anywhere in tree)
+**/target/
+
+# Build cache
+.build-cache/
+
+# Runtime data (mounted as volume in compose)
+data/
+
+# Playwright MCP cache
+.playwright-mcp/
+
+# Python caches
+**/__pycache__/
+**/.pytest_cache/
 
 # Git worktrees created by Claude Code (can be gigabytes)
 .claude/
