@@ -110,8 +110,15 @@ async def register_user(
     # Closed-registration gate: unless OPEN_REGISTRATION is explicitly
     # enabled, every registration attempt must include a valid invite
     # token. Login for existing accounts is unaffected (different endpoint).
+    # Exception: first boot (no first_boot_complete in instance.json) always
+    # allows registration so the operator can create the initial admin account.
+    import json
+    from config import INSTANCE_SETTINGS_FILE
+    _inst = json.loads(INSTANCE_SETTINGS_FILE.read_text()) if INSTANCE_SETTINGS_FILE.exists() else {}
+    is_first_boot = not _inst.get("first_boot_complete", False)
+
     open_reg = os.getenv("OPEN_REGISTRATION", "").lower() in ("true", "1", "yes")
-    if not open_reg and not body.invite_token:
+    if not is_first_boot and not open_reg and not body.invite_token:
         raise HTTPException(403, "Registration requires an invite token")
 
     # Rate limit by real client IP (prefer Cf-Connecting-Ip from Cloudflare)
@@ -238,6 +245,16 @@ async def register_user(
 
         server_id = invite.server_id
         server_name = invite.server.name
+
+    # First-boot completion: record admin user and mark setup done.
+    if is_first_boot:
+        _inst["first_boot_complete"] = True
+        existing_admins = _inst.get("admin_user_ids", [])
+        if user_id not in existing_admins:
+            existing_admins.append(user_id)
+        _inst["admin_user_ids"] = existing_admins
+        INSTANCE_SETTINGS_FILE.write_text(json.dumps(_inst, indent=2))
+        logger.info("First-boot admin created: %s", user_id)
 
     await db.commit()
 

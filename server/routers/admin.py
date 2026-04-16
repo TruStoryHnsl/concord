@@ -34,8 +34,14 @@ router = APIRouter(tags=["admin"])
 # ---------------------------------------------------------------------------
 
 def require_admin(user_id: str) -> None:
-    if user_id not in ADMIN_USER_IDS:
-        raise HTTPException(403, "Admin access required")
+    if user_id in ADMIN_USER_IDS:
+        return
+    # Also check dynamically-assigned admins stored in instance.json
+    # (set during first-boot admin creation when ADMIN_USER_IDS env is empty).
+    settings = _read_instance_settings()
+    if user_id in settings.get("admin_user_ids", []):
+        return
+    raise HTTPException(403, "Admin access required")
 
 
 def _read_instance_settings() -> dict:
@@ -67,9 +73,14 @@ async def get_instance():
 
     settings = _read_instance_settings()
     node_view = _public_node_view()
+    import os
+    open_reg = os.getenv("OPEN_REGISTRATION", "").lower() in ("true", "1", "yes")
+    first_boot = not settings.get("first_boot_complete", False)
     return {
         "name": settings.get("name", INSTANCE_NAME_DEFAULT),
         "require_totp": settings.get("require_totp", False),
+        "open_registration": open_reg,
+        "first_boot": first_boot,
         "node_role": node_view.node_role,
         "tunnel_anchor_enabled": node_view.tunnel_anchor_enabled,
     }
