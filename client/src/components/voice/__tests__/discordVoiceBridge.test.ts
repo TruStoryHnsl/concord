@@ -16,15 +16,15 @@ describe("discord voice bridge participant helpers", () => {
 
   it("filters the sidecar out of interactive participant lists", () => {
     const result = splitDiscordVoiceBridgeParticipants([
-      { identity: "@alice:concorrd.com", name: "alice" },
+      { identity: "@alice:example.concordchat.net", name: "alice" },
       { identity: "discord-voice:123:456", name: "Discord Voice" },
-      { identity: "@bob:concorrd.com", name: "bob" },
+      { identity: "@bob:example.concordchat.net", name: "bob" },
     ]);
 
     expect(result.bridgeConnected).toBe(true);
     expect(result.visibleParticipants).toEqual([
-      { identity: "@alice:concorrd.com", name: "alice" },
-      { identity: "@bob:concorrd.com", name: "bob" },
+      { identity: "@alice:example.concordchat.net", name: "alice" },
+      { identity: "@bob:example.concordchat.net", name: "bob" },
     ]);
   });
 });

@@ -50,7 +50,7 @@ describe("<SettingsPanel /> navigation", () => {
   beforeEach(() => {
     useAuthStore.setState({
       accessToken: "token",
-      userId: "@alice:concorrd.com",
+      userId: "@alice:example.concordchat.net",
     });
     useServerStore.setState({
       servers: [
@@ -58,7 +58,7 @@ describe("<SettingsPanel /> navigation", () => {
           id: "discord-1",
           name: "Discord Guild",
           icon_url: null,
-          owner_id: "@alice:concorrd.com",
+          owner_id: "@alice:example.concordchat.net",
           visibility: "private",
           abbreviation: "DG",
           media_uploads_enabled: true,

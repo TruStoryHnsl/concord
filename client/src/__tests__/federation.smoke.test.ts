@@ -9,7 +9,7 @@
  * absent so CI runs that don't have network access pass cleanly.
  *
  * Usage (run from client/ directory):
- *   CONCORD_SMOKE_ENDPOINT=concorrd.com npx vitest run src/__tests__/federation.smoke.test.ts
+ *   CONCORD_SMOKE_ENDPOINT=example.concordchat.net npx vitest run src/__tests__/federation.smoke.test.ts
  *
  * The env var value is the bare hostname (no scheme, no trailing slash).
  */

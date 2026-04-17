@@ -43,15 +43,15 @@ describe("chat widget validation", () => {
         {
           emoji: "1️⃣",
           count: 2,
-          userIds: ["@alice:concorrd.com", "@bob:concorrd.com"],
+          userIds: ["@alice:example.concordchat.net", "@bob:example.concordchat.net"],
           eventIds: {
-            "@alice:concorrd.com": "$r1",
-            "@bob:concorrd.com": "$r2",
+            "@alice:example.concordchat.net": "$r1",
+            "@bob:example.concordchat.net": "$r2",
           },
         },
       ],
       ["Friday", "Saturday"],
-      "@alice:concorrd.com",
+      "@alice:example.concordchat.net",
     );
 
     expect(votes[0]).toMatchObject({

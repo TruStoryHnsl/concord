@@ -4,7 +4,7 @@ import { MessageContent } from "../MessageContent";
 
 const baseMessage = {
   id: "evt_1",
-  sender: "@alice:concorrd.com",
+  sender: "@alice:example.concordchat.net",
   timestamp: Date.now(),
   redacted: false,
   edited: false,

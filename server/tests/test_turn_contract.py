@@ -220,7 +220,7 @@ def test_turn_entrypoint_derives_bind_ips_from_mapped_external_ip(tmp_path: Path
         "PATH": f"{tmp_path}:{env.get('PATH', '')}",
         "ARGS_FILE": str(args_file),
         "TURN_SECRET": "secret",
-        "TURN_DOMAIN": "concorrd.com",
+        "TURN_DOMAIN": "example.concordchat.net",
         "TURN_EXTERNAL_IP": "162.195.121.21/192.168.1.145",
         "TURN_TLS_ENABLED": "false",
     })
