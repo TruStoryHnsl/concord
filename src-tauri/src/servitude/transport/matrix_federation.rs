@@ -44,7 +44,6 @@ use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout, Instant};
 
-use serde_json;
 
 use crate::servitude::config::ServitudeConfig;
 
@@ -210,7 +209,7 @@ impl MatrixFederationTransport {
     /// federation disabled by default).
     fn env_vars(&self, data_dir: &Path) -> Vec<(String, String)> {
         let db_path = data_dir.join("database");
-        let mut envs = vec![
+        let envs = vec![
             ("CONDUWUIT_SERVER_NAME".to_string(), self.server_name.clone()),
             (
                 "CONDUWUIT_DATABASE_PATH".to_string(),
