@@ -139,6 +139,10 @@ function lastChannelStorageKey(userId: string | null): string {
 export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const syncing = useMatrixSync();
   const voiceConnected = useVoiceStore((s) => s.connected);
+  const voiceConnectionState = useVoiceStore((s) => s.connectionState);
+  // INS-048: Hardware state — set by VoiceChannel when mic/camera change
+  const micActive = useVoiceStore((s) => s.micActive);
+  const cameraActive = useVoiceStore((s) => s.cameraActive);
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -195,6 +199,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [mobileView, setMobileView] = useState<MobileView>(
     isNativeApp ? "sources" : "chat",
   );
+  // INS-045/046: Edge overlay state — left and right edge tap zones
+  const [leftOverlay, setLeftOverlay] = useState<"servers" | "sources" | null>(null);
+  const [rightOverlay, setRightOverlay] = useState<"channel-shortcuts" | "chat-shortcuts" | null>(null);
   // Mobile account sheet (T003)
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [desktopAccountPopoverOpen, setDesktopAccountPopoverOpen] = useState(false);
@@ -902,12 +909,15 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // scroll position so the top bar and pills reflect the visible panel.
   const scrollStripRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // INS-043: When a pill tap directly scrolls via behavior:"instant", suppress
+  // the subsequent useEffect re-trigger so we don't double-animate.
+  const skipNextScrollSyncRef = useRef(false);
 
-  const scrollToPanel = useCallback((panelIndex: number) => {
+  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "smooth") => {
     const strip = scrollStripRef.current;
     if (!strip) return;
     const panelWidth = strip.clientWidth;
-    strip.scrollTo({ left: panelIndex * panelWidth, behavior: "smooth" });
+    strip.scrollTo({ left: panelIndex * panelWidth, behavior });
   }, []);
 
   // Debounced scroll handler — updates mobileView when the user finishes
@@ -931,7 +941,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   }, [mobileView]);
 
   // Sync scroll position when mobileView changes from outside (e.g. pill tap).
+  // INS-043: pill taps set skipNextScrollSyncRef to avoid re-animating.
   useEffect(() => {
+    if (skipNextScrollSyncRef.current) {
+      skipNextScrollSyncRef.current = false;
+      return;
+    }
     const depthIdx = PAGE_DEPTH.indexOf(mobileView);
     if (depthIdx >= 0) scrollToPanel(depthIdx);
   }, [mobileView, scrollToPanel]);
@@ -1011,6 +1026,28 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
         )}
         </div>
+        {/* INS-048: Hardware state indicator — shown when voice is active */}
+        {voiceConnected && (micActive || cameraActive) && (
+          <div
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full flex-shrink-0 ${
+              voiceConnectionState !== "connected" ? "ring-2 ring-blue-400" : ""
+            }`}
+            aria-label="Hardware capture active"
+          >
+            {micActive && (
+              <span
+                className="w-2 h-2 rounded-full bg-orange-400 flex-shrink-0"
+                title="Microphone active"
+              />
+            )}
+            {cameraActive && (
+              <span
+                className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"
+                title="Camera active"
+              />
+            )}
+          </div>
+        )}
         {/* INS-011: Top-bar utility icons (help / stats / bug report).
             On ≥361px viewports we show all three inline plus the account icon.
             On ≤360px we collapse the three into a kebab overflow popover so
@@ -1070,6 +1107,98 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         ) : (
           // Page-depth scroll strip. Native: sources ↔ servers ↔ channels ↔ chat.
           // Web: servers ↔ channels ↔ chat (no sources panel).
+          // INS-045/046: relative wrapper so edge tap zones can be absolute.
+          <div className="relative h-full">
+          {/* INS-045: Left-edge 16px tap zone */}
+          <div
+            className="absolute left-0 top-0 w-4 h-full z-10"
+            style={{ touchAction: "none" }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (mobileView === "channels") setLeftOverlay("servers");
+              else if (mobileView === "servers") setLeftOverlay("sources");
+            }}
+          />
+          {/* INS-046: Right-edge 16px tap zone */}
+          <div
+            className="absolute right-0 top-0 w-4 h-full z-10"
+            style={{ touchAction: "none" }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (mobileView === "channels") setRightOverlay("channel-shortcuts");
+              else if (mobileView === "chat") setRightOverlay("chat-shortcuts");
+            }}
+          />
+          {/* INS-045: Left overlay panel */}
+          {leftOverlay !== null && (
+            <div className="absolute inset-0 z-20 flex">
+              <div className="absolute inset-0 bg-black/30" onClick={() => setLeftOverlay(null)} />
+              <div className="relative w-1/2 h-full bg-surface-container rounded-r-2xl shadow-xl overflow-y-auto py-3">
+                <p className="text-xs font-medium text-on-surface-variant px-4 pb-2 uppercase tracking-wide">
+                  {leftOverlay === "servers" ? "Servers" : "Sources"}
+                </p>
+                {leftOverlay === "servers"
+                  ? servers.filter((s) => !s.federated).map((s) => (
+                      <button
+                        key={s.id}
+                        className="w-full text-left px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container-high transition-colors flex items-center gap-2"
+                        onClick={() => { setLeftOverlay(null); }}
+                      >
+                        <span className="w-6 h-6 rounded bg-primary/20 flex items-center justify-center text-xs font-bold text-primary flex-shrink-0">
+                          {s.abbreviation ?? s.name[0]?.toUpperCase()}
+                        </span>
+                        <span className="truncate">{s.name}</span>
+                      </button>
+                    ))
+                  : sources.map((src) => (
+                      <button
+                        key={src.id}
+                        className="w-full text-left px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container-high transition-colors flex items-center gap-2"
+                        onClick={() => { setLeftOverlay(null); }}
+                      >
+                        <span className="material-symbols-outlined text-base text-on-surface-variant flex-shrink-0">hub</span>
+                        <span className="truncate">{src.instanceName ?? src.host}</span>
+                      </button>
+                    ))
+                }
+              </div>
+            </div>
+          )}
+          {/* INS-046: Right overlay panel */}
+          {rightOverlay !== null && (
+            <div className="absolute inset-0 z-20 flex justify-end">
+              <div className="absolute inset-0 bg-black/30" onClick={() => setRightOverlay(null)} />
+              <div className="relative w-1/2 h-full bg-surface-container rounded-l-2xl shadow-xl overflow-y-auto py-3">
+                <p className="text-xs font-medium text-on-surface-variant px-4 pb-2 uppercase tracking-wide">
+                  {rightOverlay === "channel-shortcuts" ? "Channel" : "Chat"}
+                </p>
+                {(rightOverlay === "channel-shortcuts"
+                  ? [
+                      { icon: "keyboard_double_arrow_down", label: "Jump to Latest" },
+                      { icon: "mic_off", label: "Mute" },
+                      { icon: "push_pin", label: "Pinned" },
+                    ]
+                  : [
+                      { icon: "group", label: "Members" },
+                      { icon: "search", label: "Search" },
+                      { icon: "forum", label: "Threads" },
+                    ]
+                ).map((item) => (
+                  <button
+                    key={item.label}
+                    className="w-full text-left px-4 py-2.5 text-sm text-on-surface hover:bg-surface-container-high transition-colors flex items-center gap-3"
+                    onClick={() => {
+                      setRightOverlay(null);
+                      addToast(`${item.label} — coming soon`);
+                    }}
+                  >
+                    <span className="material-symbols-outlined text-base text-on-surface-variant flex-shrink-0">{item.icon}</span>
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div
             ref={scrollStripRef}
             className="h-full flex overflow-x-auto overflow-y-hidden overscroll-x-auto"
@@ -1118,6 +1247,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               </div>
             )}
           </div>
+          </div>
         )}
       </div>
 
@@ -1142,6 +1272,16 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               return;
             }
             openSettings();
+          }
+          // INS-043: For page-depth views, instantly scroll without animation.
+          // Non-page views (dms, settings, actions) are rendered as full-screen
+          // overlays outside the scroll strip, so no scroll needed.
+          if (PAGE_DEPTH.includes(view as MobileView)) {
+            const depthIdx = PAGE_DEPTH.indexOf(view as MobileView);
+            if (depthIdx >= 0) {
+              skipNextScrollSyncRef.current = true;
+              scrollToPanel(depthIdx, "instant");
+            }
           }
           setMobileView(view);
         }}

@@ -44,6 +44,10 @@ interface VoiceState {
   returnChannelName: string | null;
   micGranted: boolean;
   statsSessionId: number | null;
+  /** INS-048: Whether the local mic is actively capturing (set by VoiceChannel). */
+  micActive: boolean;
+  /** INS-048: Whether the local camera is actively capturing (set by VoiceChannel). */
+  cameraActive: boolean;
 
   connect: (params: {
     token: string;
@@ -62,6 +66,10 @@ interface VoiceState {
   setConnectionState: (state: VoiceConnectionState) => void;
   incrementReconnectAttempt: () => void;
   resetReconnectAttempt: () => void;
+  /** INS-048: Called by VoiceChannel when local mic enabled state changes. */
+  setMicActive: (active: boolean) => void;
+  /** INS-048: Called by VoiceChannel when local camera enabled state changes. */
+  setCameraActive: (active: boolean) => void;
 }
 
 /** Read a pending voice session from sessionStorage (if any). */
@@ -105,10 +113,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   returnChannelName: null,
   micGranted: false,
   statsSessionId: null,
+  micActive: false,
+  cameraActive: false,
 
   setConnectionState: (state) => set({ connectionState: state }),
   incrementReconnectAttempt: () => set({ reconnectAttempt: get().reconnectAttempt + 1 }),
   resetReconnectAttempt: () => set({ reconnectAttempt: 0 }),
+  setMicActive: (active) => set({ micActive: active }),
+  setCameraActive: (active) => set({ cameraActive: active }),
 
   connect: (params) => {
     // Persist session info so we can reconnect after page refresh
@@ -177,6 +189,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       returnChannelName: null,
       micGranted: false,
       statsSessionId: null,
+      micActive: false,
+      cameraActive: false,
     });
   },
 }));
