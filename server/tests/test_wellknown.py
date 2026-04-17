@@ -221,7 +221,7 @@ async def test_default_service_node_posture(client, monkeypatch):
     the Service Node admin tab should still publish a coherent
     posture. No log-spammy warnings, no missing fields.
     """
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "example.concordchat.net")
 
     resp = await client.get("/.well-known/concord/client")
     assert resp.status_code == 200
@@ -255,7 +255,7 @@ async def test_anchor_service_node_posture_surfaced(client, monkeypatch):
         )
     )
 
-    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "concorrd.com")
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "example.concordchat.net")
     resp = await client.get("/.well-known/concord/client")
     assert resp.status_code == 200
     body = resp.json()

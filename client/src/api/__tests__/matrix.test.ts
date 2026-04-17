@@ -18,9 +18,9 @@ describe("createMatrixClient", () => {
   it("disables matrix-js-sdk voip polling because Concord uses LiveKit", () => {
     const client = createMatrixClient(
       "token",
-      "@alice:concorrd.com",
+      "@alice:example.concordchat.net",
       "DEVICE1",
-      "https://concorrd.com",
+      "https://example.concordchat.net",
     ) as { supportsVoip: () => boolean };
 
     expect(createClientMock).toHaveBeenCalled();

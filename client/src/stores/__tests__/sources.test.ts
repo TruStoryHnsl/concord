@@ -8,7 +8,7 @@ import {
 describe("sources store", () => {
   beforeEach(() => {
     useSourcesStore.setState({
-      boundUserId: "@alice:concorrd.com",
+      boundUserId: "@alice:example.concordchat.net",
       sources: [
         {
           id: "src_matrix",
@@ -23,15 +23,15 @@ describe("sources store", () => {
           enabled: true,
           addedAt: new Date().toISOString(),
           platform: "matrix",
-          ownerUserId: "@alice:concorrd.com",
+          ownerUserId: "@alice:example.concordchat.net",
         },
         {
           id: "src_concord",
-          host: "concorrd.com",
+          host: "example.concordchat.net",
           instanceName: "Concorrd",
           inviteToken: "",
-          apiBase: "https://concorrd.com/api",
-          homeserverUrl: "https://concorrd.com",
+          apiBase: "https://example.concordchat.net/api",
+          homeserverUrl: "https://example.concordchat.net",
           status: "connected",
           enabled: true,
           addedAt: new Date().toISOString(),
@@ -71,7 +71,7 @@ describe("sources store", () => {
   });
 
   it("drops user-owned sources when a different Concord user binds to the store", () => {
-    useSourcesStore.getState().bindToUser("@bob:concorrd.com");
+    useSourcesStore.getState().bindToUser("@bob:example.concordchat.net");
     expect(useSourcesStore.getState().sources.map((source) => source.id)).toEqual([
       "src_concord",
     ]);
@@ -98,7 +98,7 @@ describe("sources store", () => {
       ],
     }));
 
-    useSourcesStore.getState().bindToUser("@bo-peep:concorrd.com");
+    useSourcesStore.getState().bindToUser("@bo-peep:example.concordchat.net");
 
     expect(useSourcesStore.getState().sources.map((source) => source.id)).toEqual([
       "src_concord",
@@ -115,10 +115,10 @@ describe("sources store", () => {
       ),
     }));
 
-    useSourcesStore.getState().bindToUser("@alice:concorrd.com");
+    useSourcesStore.getState().bindToUser("@alice:example.concordchat.net");
 
     const matrixSource = useSourcesStore.getState().sources.find((source) => source.id === "src_matrix");
-    expect(matrixSource?.ownerUserId).toBe("@alice:concorrd.com");
+    expect(matrixSource?.ownerUserId).toBe("@alice:example.concordchat.net");
   });
 
   it("preserves instance-global primary sources on logout", () => {

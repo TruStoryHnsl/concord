@@ -12,7 +12,7 @@ describe("useVoiceStore session persistence", () => {
     window.sessionStorage.clear();
     useAuthStore.setState({
       client: null,
-      userId: "@tester:concorrd.com",
+      userId: "@tester:example.concordchat.net",
       accessToken: "token",
       isLoggedIn: true,
       isLoading: false,
@@ -40,14 +40,14 @@ describe("useVoiceStore session persistence", () => {
   it("persists the full reconnect context for the current user", () => {
     useVoiceStore.getState().connect({
       token: "lk-token",
-      livekitUrl: "wss://livekit.concorrd.com/livekit/",
+      livekitUrl: "wss://livekit.example.concordchat.net/livekit/",
       iceServers: [],
       serverId: "federated:discord_689673845279293457",
       serverName: "Concord Testers",
-      channelId: "!0HioYNQoSymZ0kG1pO:concorrd.com",
+      channelId: "!0HioYNQoSymZ0kG1pO:example.concordchat.net",
       channelName: "voice-ops",
-      roomName: "!0HioYNQoSymZ0kG1pO:concorrd.com",
-      returnChannelId: "!general:concorrd.com",
+      roomName: "!0HioYNQoSymZ0kG1pO:example.concordchat.net",
+      returnChannelId: "!general:example.concordchat.net",
       returnChannelName: "general",
       micGranted: true,
     });
@@ -55,10 +55,10 @@ describe("useVoiceStore session persistence", () => {
     expect(getPendingVoiceSession()).toEqual({
       serverId: "federated:discord_689673845279293457",
       serverName: "Concord Testers",
-      channelId: "!0HioYNQoSymZ0kG1pO:concorrd.com",
+      channelId: "!0HioYNQoSymZ0kG1pO:example.concordchat.net",
       channelName: "voice-ops",
-      roomName: "!0HioYNQoSymZ0kG1pO:concorrd.com",
-      returnChannelId: "!general:concorrd.com",
+      roomName: "!0HioYNQoSymZ0kG1pO:example.concordchat.net",
+      returnChannelId: "!general:example.concordchat.net",
       returnChannelName: "general",
     });
   });
@@ -66,14 +66,14 @@ describe("useVoiceStore session persistence", () => {
   it("clears the persisted reconnect context on explicit disconnect", () => {
     useVoiceStore.getState().connect({
       token: "lk-token",
-      livekitUrl: "wss://livekit.concorrd.com/livekit/",
+      livekitUrl: "wss://livekit.example.concordchat.net/livekit/",
       iceServers: [],
       serverId: "srv_1",
       serverName: "Concord",
-      channelId: "!voice:concorrd.com",
+      channelId: "!voice:example.concordchat.net",
       channelName: "voice",
-      roomName: "!voice:concorrd.com",
-      returnChannelId: "!general:concorrd.com",
+      roomName: "!voice:example.concordchat.net",
+      returnChannelId: "!general:example.concordchat.net",
       returnChannelName: "general",
       micGranted: true,
     });
@@ -85,12 +85,12 @@ describe("useVoiceStore session persistence", () => {
 
   it("can clear a stale session payload directly", () => {
     window.localStorage.setItem(
-      "concord_voice_session:@tester:concorrd.com",
+      "concord_voice_session:@tester:example.concordchat.net",
       JSON.stringify({
         serverId: "srv_1",
-        channelId: "!voice:concorrd.com",
+        channelId: "!voice:example.concordchat.net",
         channelName: "voice",
-        roomName: "!voice:concorrd.com",
+        roomName: "!voice:example.concordchat.net",
       }),
     );
 

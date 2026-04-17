@@ -7,7 +7,7 @@ import {
 
 describe("bootSplash helpers", () => {
   it("formats the waiting label with the provided host", () => {
-    expect(getBootSplashWaitingLabel("concorrd.com")).toBe("Waiting for concorrd.com");
+    expect(getBootSplashWaitingLabel("example.concordchat.net")).toBe("Waiting for example.concordchat.net");
   });
 
   it("shows the dormant boot splash immediately with host status", () => {
@@ -17,10 +17,10 @@ describe("bootSplash helpers", () => {
       </div>
     `;
 
-    showBootSplash("Waiting for concorrd.com");
+    showBootSplash("Waiting for example.concordchat.net");
 
     expect(document.getElementById("boot-splash")?.getAttribute("data-state")).toBe("visible");
-    expect(document.getElementById("boot-splash-status")?.textContent).toBe("Waiting for concorrd.com");
+    expect(document.getElementById("boot-splash-status")?.textContent).toBe("Waiting for example.concordchat.net");
   });
 
   it("marks the bootstrap splash as handed off after React mounts", () => {

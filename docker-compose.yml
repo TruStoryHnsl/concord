@@ -342,7 +342,7 @@ services:
       CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
       # MATRIX_BASE_URL is the URL the Matrix client SDK should use to
       # reach this homeserver. Computed from PUBLIC_BASE_URL when set
-      # (e.g. https://dev.concorrd.com for a Cloudflare-proxied instance
+      # (e.g. https://dev.concordchat.net for a Cloudflare-proxied instance
       # where the raw server name is a bare LAN IP), otherwise falls back
       # to https://<CONDUWUIT_SERVER_NAME>. The Caddyfile uses this for
       # the m.homeserver.base_url in /.well-known/matrix/client.

@@ -87,7 +87,7 @@ describe("<BridgesTab />", () => {
     localStorage.clear();
     useAuthStore.setState({
       client: null,
-      userId: "@tester:concorrd.com",
+      userId: "@tester:example.concordchat.net",
       accessToken: "token123",
       isLoggedIn: true,
       isLoading: false,

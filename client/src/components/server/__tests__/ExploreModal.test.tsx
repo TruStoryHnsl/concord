@@ -257,7 +257,7 @@ describe("<ExploreModal /> rooms drill-down", () => {
   it("uses the local room directory path for the current homeserver", async () => {
     mockedListExploreServers.mockResolvedValueOnce([
       {
-        domain: "concorrd.com",
+        domain: "example.concordchat.net",
         name: "Concorrd",
         description: null,
       },
@@ -265,9 +265,9 @@ describe("<ExploreModal /> rooms drill-down", () => {
     const publicRooms = vi.fn().mockResolvedValue({
       chunk: [
         {
-          room_id: "!general:concorrd.com",
+          room_id: "!general:example.concordchat.net",
           name: "General",
-          canonical_alias: "#general:concorrd.com",
+          canonical_alias: "#general:example.concordchat.net",
           num_joined_members: 12,
           world_readable: true,
           guest_can_join: false,
@@ -275,7 +275,7 @@ describe("<ExploreModal /> rooms drill-down", () => {
       ],
     });
     seedAuth(makeFakeMatrixClient({ publicRooms }));
-    useAuthStore.setState({ userId: "@tester:concorrd.com" });
+    useAuthStore.setState({ userId: "@tester:example.concordchat.net" });
 
     render(<ExploreModal isOpen={true} onClose={() => {}} />);
 
@@ -336,7 +336,7 @@ describe("<ExploreModal /> rooms drill-down", () => {
   it("joins local public rooms without federation viaServers hints", async () => {
     mockedListExploreServers.mockResolvedValueOnce([
       {
-        domain: "concorrd.com",
+        domain: "example.concordchat.net",
         name: "Concorrd",
         description: null,
       },
@@ -344,9 +344,9 @@ describe("<ExploreModal /> rooms drill-down", () => {
     const publicRooms = vi.fn().mockResolvedValue({
       chunk: [
         {
-          room_id: "!general:concorrd.com",
+          room_id: "!general:example.concordchat.net",
           name: "General",
-          canonical_alias: "#general:concorrd.com",
+          canonical_alias: "#general:example.concordchat.net",
           num_joined_members: 12,
           world_readable: true,
           guest_can_join: false,
@@ -355,7 +355,7 @@ describe("<ExploreModal /> rooms drill-down", () => {
     });
     const joinRoom = vi.fn().mockResolvedValue({});
     seedAuth(makeFakeMatrixClient({ publicRooms, joinRoom }));
-    useAuthStore.setState({ userId: "@tester:concorrd.com" });
+    useAuthStore.setState({ userId: "@tester:example.concordchat.net" });
 
     render(<ExploreModal isOpen={true} onClose={() => {}} />);
 
@@ -371,7 +371,7 @@ describe("<ExploreModal /> rooms drill-down", () => {
     fireEvent.click(screen.getByRole("button", { name: /^join$/i }));
 
     await waitFor(() => {
-      expect(joinRoom).toHaveBeenCalledWith("#general:concorrd.com", {});
+      expect(joinRoom).toHaveBeenCalledWith("#general:example.concordchat.net", {});
     });
   });
 

@@ -45,7 +45,7 @@ describe("<SettingsPanel /> bridge server navigation", () => {
   beforeEach(() => {
     useAuthStore.setState({
       accessToken: "token",
-      userId: "@alice:concorrd.com",
+      userId: "@alice:example.concordchat.net",
     });
     useServerStore.setState({
       servers: [
@@ -53,7 +53,7 @@ describe("<SettingsPanel /> bridge server navigation", () => {
           id: "discord-guild-1",
           name: "CTP Playtime",
           icon_url: null,
-          owner_id: "@alice:concorrd.com",
+          owner_id: "@alice:example.concordchat.net",
           visibility: "private",
           abbreviation: "CTP",
           media_uploads_enabled: true,
@@ -64,14 +64,14 @@ describe("<SettingsPanel /> bridge server navigation", () => {
               id: 1,
               name: "General",
               channel_type: "text",
-              matrix_room_id: "!general:concorrd.com",
+              matrix_room_id: "!general:example.concordchat.net",
               position: 0,
             },
             {
               id: 2,
               name: "Voice",
               channel_type: "voice",
-              matrix_room_id: "!voice:concorrd.com",
+              matrix_room_id: "!voice:example.concordchat.net",
               position: 1,
             },
           ],

@@ -21,7 +21,7 @@ def test_load_env_file_strips_quotes(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
         "# comment\n"
-        "TURN_HOST=turn.concorrd.com\n"
+        "TURN_HOST=turn.example.concordchat.net\n"
         "TURN_SECRET=\"abc123\"\n"
         "TURN_TLS_ENABLED='true'\n",
         encoding="utf-8",
@@ -30,7 +30,7 @@ def test_load_env_file_strips_quotes(tmp_path: Path) -> None:
     env = smoke.load_env_file(env_file)
 
     assert env == {
-        "TURN_HOST": "turn.concorrd.com",
+        "TURN_HOST": "turn.example.concordchat.net",
         "TURN_SECRET": "abc123",
         "TURN_TLS_ENABLED": "true",
     }
@@ -53,7 +53,7 @@ def test_build_authenticated_allocate_request_includes_integrity() -> None:
     request = smoke.build_authenticated_allocate_request(
         txid=b"0123456789ab",
         username="1776150129:probe",
-        realm="turn.concorrd.com",
+        realm="turn.example.concordchat.net",
         nonce="nonce123",
         password="password123",
     )
