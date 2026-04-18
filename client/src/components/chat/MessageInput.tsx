@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import type { ChatMessage } from "../../hooks/useMatrix";
 import { useToastStore } from "../../stores/toast";
 import { useFormatStore } from "../../stores/format";
+import { ChatToolsPanel, type ChatTool } from "./ChatToolsPanel";
 
 interface MessageInputProps {
   onSend: (message: string) => Promise<void>;
@@ -39,6 +40,7 @@ export function MessageInput({
   const [dragOver, setDragOver] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
+  const [activeTool, setActiveTool] = useState<ChatTool | null>(null);
   const clearDraftFormat = useFormatStore((s) => s.clearDraftFormat);
   const pendingRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -200,6 +202,14 @@ export function MessageInput({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }, []);
 
+  const handleToolSelect = (tool: ChatTool) => {
+    if (tool.composer) {
+      setActiveTool(tool);
+      setToolsPanelOpen(false);
+    }
+    // Tools without a composer (null) are no-ops for now
+  };
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -211,6 +221,27 @@ export function MessageInput({
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
     >
+      {toolsPanelOpen && (
+        <div className="absolute bottom-full left-4 mb-2 z-50">
+          <ChatToolsPanel
+            onSelectTool={handleToolSelect}
+            onClose={() => setToolsPanelOpen(false)}
+          />
+        </div>
+      )}
+
+      {activeTool?.composer && (
+        <div className="absolute bottom-full left-0 right-0 z-50 px-4 pb-2">
+          <activeTool.composer
+            onSend={async (text) => {
+              await onSend(text);
+              setActiveTool(null);
+            }}
+            onClose={() => setActiveTool(null)}
+          />
+        </div>
+      )}
+
       {editingMessage && (
         <div className="flex items-center gap-2 px-4 pt-2 text-xs text-on-surface-variant font-label">
           <span>Editing message</span>
