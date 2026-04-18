@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuthStore } from "../../stores/auth";
-import { getServiceNodeConfig } from "../../api/concord";
+import { getServerUrl } from "../../api/serverUrl";
 import { servitudeStatus, isTauri, type ServitudeState } from "../../api/servitude";
-import { ServiceNodeSection } from "./AdminTab";
+import { AdminTab } from "./AdminTab";
 
 export type HostingStatus = "loading" | "running" | "stopped" | "error";
 
@@ -11,15 +11,15 @@ function statusColor(status: HostingStatus): string {
     case "running": return "bg-green-500";
     case "stopped": return "bg-orange-400";
     case "error": return "bg-red-500";
-    default: return "bg-outline-variant/40";
+    default: return "bg-outline-variant/40 animate-pulse";
   }
 }
 
 function statusLabel(status: HostingStatus): string {
   switch (status) {
-    case "running": return "Hosting active";
-    case "stopped": return "Not hosting";
-    case "error": return "Hosting error";
+    case "running": return "Server online";
+    case "stopped": return "Server offline";
+    case "error": return "Server error";
     default: return "Checking…";
   }
 }
@@ -34,22 +34,25 @@ export function useHostingStatus(): HostingStatus {
     async function check() {
       try {
         if (isTauri()) {
+          // Native: query embedded servitude lifecycle state.
           const res = await servitudeStatus();
           if (cancelled) return;
           const state: ServitudeState = res.state;
-          if (state === "running") setStatus("running");
-          else if (state === "starting" || state === "stopping") setStatus("stopped");
-          else setStatus("stopped");
-          if (Object.keys(res.degraded_transports).length > 0) setStatus("error");
+          if (Object.keys(res.degraded_transports).length > 0) {
+            setStatus("error");
+          } else if (state === "running") {
+            setStatus("running");
+          } else {
+            setStatus("stopped");
+          }
         } else {
-          // Web: check if service node is configured and responding.
-          if (!accessToken) { setStatus("stopped"); return; }
-          const cfg = await getServiceNodeConfig(accessToken);
+          // Web/Docker: if /api/health responds, the server is running.
+          // We're already talking to it (the page loaded), so this should
+          // always be green unless the API goes down mid-session.
+          const base = getServerUrl().replace(/\/$/, "");
+          const res = await fetch(`${base}/api/health`, { cache: "no-store" });
           if (cancelled) return;
-          // Running if any transport is enabled.
-          const anyTransport = cfg.transports &&
-            Object.values(cfg.transports).some(Boolean);
-          setStatus(anyTransport ? "running" : "stopped");
+          setStatus(res.ok ? "running" : "error");
         }
       } catch {
         if (!cancelled) setStatus("error");
@@ -65,25 +68,19 @@ export function useHostingStatus(): HostingStatus {
 }
 
 export function HostingTab() {
-  const accessToken = useAuthStore((s) => s.accessToken);
   const hostingStatus = useHostingStatus();
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       {/* Status banner */}
-      <div className="flex items-center gap-3 p-4 rounded-xl bg-surface-container">
-        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${statusColor(hostingStatus)}`} />
-        <div>
-          <div className="text-sm font-headline font-semibold text-on-surface">
-            {statusLabel(hostingStatus)}
-          </div>
-          <div className="text-xs text-on-surface-variant font-body">
-            Servitude manages your Concord hosting configuration
-          </div>
-        </div>
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-container">
+        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusColor(hostingStatus)}`} />
+        <span className="text-sm font-headline font-semibold text-on-surface">
+          {statusLabel(hostingStatus)}
+        </span>
       </div>
 
-      <ServiceNodeSection token={accessToken} />
+      <AdminTab />
     </div>
   );
 }
