@@ -17,6 +17,7 @@ import {
   servitudeStatus,
   type ServitudeState,
 } from "../../api/servitude";
+import { GuestPairingScanner } from "../pairing/GuestPairingScanner";
 
 /**
  * First-launch server picker for native Concord builds (INS-027).
@@ -175,6 +176,8 @@ export function ServerPickerScreen({ onConnected, onSkip }: Props) {
   );
   const [pasteBlob, setPasteBlob] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // INS-022: toggles the GuestPairingScanner modal.
+  const [scannerOpen, setScannerOpen] = useState(false);
   const setHomeserver = useServerConfigStore((s) => s.setHomeserver);
   const ensurePrimarySource = useSourcesStore((s) => s.ensurePrimarySource);
 
@@ -309,6 +312,25 @@ export function ServerPickerScreen({ onConnected, onSkip }: Props) {
     setHost("");
     setState({ phase: "input", origin: "join" });
   }, []);
+
+  // INS-022: QR pairing success — the scanner decoded a well-known-
+  // shaped payload. Commit it to the store via `setHomeserver` and go
+  // straight to the hollow shell through `onConnected`, mirroring the
+  // typed-hostname success path.
+  const handlePairingSuccess = useCallback(
+    (discovered: HomeserverConfig) => {
+      setScannerOpen(false);
+      setHomeserver(discovered);
+      ensurePrimarySource({
+        host: discovered.host,
+        instance_name: discovered.instance_name ?? undefined,
+        api_base: discovered.api_base,
+        homeserver_url: discovered.homeserver_url,
+      });
+      onConnected();
+    },
+    [setHomeserver, ensurePrimarySource, onConnected],
+  );
 
   // "Join a Matrix instance" — same hostname-input UX as Concord join,
   // but `handleConnect` will skip the Concord well-known probe for the
@@ -728,6 +750,30 @@ export function ServerPickerScreen({ onConnected, onSkip }: Props) {
               </button>
             )}
 
+            {/* INS-022: scan a pairing QR generated on another phone's
+                Node tab to join the same instance without typing. */}
+            <button
+              type="button"
+              onClick={() => setScannerOpen(true)}
+              data-testid="server-picker-pair-from-device"
+              className="w-full p-5 bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 rounded-xl text-left transition-colors"
+            >
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-primary text-2xl shrink-0 mt-0.5">
+                  qr_code_scanner
+                </span>
+                <div>
+                  <div className="text-base font-medium text-on-surface mb-0.5">
+                    Pair from another device
+                  </div>
+                  <div className="text-xs text-on-surface-variant">
+                    Scan a QR code shown on another phone's Concord app to
+                    join the same instance.
+                  </div>
+                </div>
+              </div>
+            </button>
+
             <details className="pt-1">
               <summary className="cursor-pointer text-xs text-on-surface-variant hover:text-on-surface px-2">
                 Advanced
@@ -1055,6 +1101,16 @@ export function ServerPickerScreen({ onConnected, onSkip }: Props) {
           </div>
         )}
       </div>
+
+      {/* INS-022: Pairing scanner modal — mounted at the screen root so
+          it overlays every phase. Unmounted entirely when closed so the
+          camera permission prompt only fires when the user opts in. */}
+      {scannerOpen && (
+        <GuestPairingScanner
+          onSuccess={handlePairingSuccess}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
     </div>
   );
 }

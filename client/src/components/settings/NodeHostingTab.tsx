@@ -6,6 +6,8 @@ import {
   servitudeStop,
   type ServitudeState,
 } from "../../api/servitude";
+import { usePlatform } from "../../hooks/usePlatform";
+import { HostPairingQR } from "../pairing/HostPairingQR";
 
 /**
  * Settings tab exposing the embedded servitude (service node hosting) toggle.
@@ -49,6 +51,8 @@ export function NodeHostingTab() {
   const [busy, setBusy] = useState(false);
   const mountedRef = useRef(true);
   const native = isTauri();
+  const { isMobile } = usePlatform();
+  const isRunning = status.kind === "ready" && status.state === "running";
 
   const refresh = useCallback(async () => {
     try {
@@ -180,9 +184,22 @@ export function NodeHostingTab() {
             Status
           </span>
           <span
-            className={`text-base font-medium ${statusColor}`}
+            className={`text-base font-medium ${statusColor} flex items-center gap-2`}
             data-testid="node-hosting-status"
           >
+            {/* INS-022: pulsing indicator dot when hosting is live so the
+                user has a persistent at-a-glance signal that their phone
+                is acting as a relay (and draining battery). */}
+            {isRunning && (
+              <span
+                aria-hidden="true"
+                data-testid="node-hosting-running-pulse"
+                className="relative inline-flex w-2.5 h-2.5"
+              >
+                <span className="absolute inset-0 rounded-full bg-primary animate-ping opacity-60" />
+                <span className="relative inline-flex rounded-full w-2.5 h-2.5 bg-primary" />
+              </span>
+            )}
             {statusLabel}
           </span>
         </div>
@@ -207,6 +224,41 @@ export function NodeHostingTab() {
           </button>
         </div>
       </div>
+
+      {/* INS-022: Battery / impact disclosure. Shown while hosting is
+          active, louder on mobile (where the trade-off is most acute)
+          and more subdued on desktop. This is the user's "yes, I know
+          my phone is working" notice. */}
+      {isRunning && (
+        <div
+          data-testid="node-hosting-battery-disclosure"
+          className={
+            isMobile
+              ? "rounded-md border border-warning/40 bg-warning/10 px-4 py-3 space-y-1"
+              : "rounded-md border border-outline-variant/30 bg-surface-container-high/40 px-4 py-3 space-y-1"
+          }
+        >
+          <p className={`text-sm font-medium ${isMobile ? "text-warning" : "text-on-surface"}`}>
+            {isMobile ? "Battery impact active" : "Hosting is drawing resources"}
+          </p>
+          <p className="text-xs text-on-surface-variant">
+            {isMobile
+              ? "Your phone is acting as a Concord relay. Expect meaningful battery drain and warmth while hosting is on, especially on cellular data. Disable hosting before long trips off a charger."
+              : "This device is contributing CPU, memory, and bandwidth to the Concord mesh while hosting is on. Desktop impact is modest but non-zero."}
+          </p>
+          <p className="text-xs text-on-surface-variant/70">
+            Backgrounding the Concord app on mobile will automatically
+            pause hosting; it resumes when you bring Concord back to the
+            foreground.
+          </p>
+        </div>
+      )}
+
+      {/* INS-022: Host-side QR pairing code — lets another phone point
+          its camera at this one to join the same upstream instance. The
+          QR payload is a wellKnown-compatible snapshot of the current
+          server config; see `pairing/pairingSchema.ts`. */}
+      {isRunning && <HostPairingQR />}
 
       {/* Degraded transports (INS-024 Wave 4) */}
       {status.kind === "ready" &&
