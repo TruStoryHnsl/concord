@@ -125,9 +125,17 @@ export function SettingsPanel() {
       { key: "profile", label: "Profile", icon: "person", group: "user" },
       { key: "appearance", label: "Appearance", icon: "palette", group: "user" },
     ];
-    if (isTauri && !isMobile) {
+    if (isTauri) {
+      // INS-022: Node tab is visible on mobile Tauri too — the embedded
+      // servitude module runs on mobile (foreground-active; backgrounded
+      // pauses are handled by the app-level lifecycle hook). Desktop
+      // Tauri keeps Bridges beside it; mobile hides Bridges to reduce
+      // clutter on small screens (Bridges is a desktop-oriented power
+      // feature).
       tabs.push({ key: "node", label: "Node", icon: "dns", group: "user" });
-      tabs.push({ key: "bridges", label: "Bridges", icon: "hub", group: "user" });
+      if (!isMobile) {
+        tabs.push({ key: "bridges", label: "Bridges", icon: "hub", group: "user" });
+      }
     }
     if (!isTauri && isAdmin) {
       tabs.push({ key: "bridges", label: "Bridges", icon: "hub", group: "user" });
