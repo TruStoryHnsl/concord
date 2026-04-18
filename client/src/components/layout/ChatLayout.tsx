@@ -118,13 +118,15 @@ class SilentBoundary extends Component<{ children: ReactNode; fallback?: ReactNo
 
 type MobileView = "sources" | "servers" | "channels" | "chat" | "dms" | "settings";
 
-/** A parallel browse tab — each tab has its own independent page-depth position. */
+/** A parallel browse tab — each tab has its own independent navigation state. */
 interface BrowseTab {
-  /** Unique identifier for this tab. */
   id: string;
-  /** Current page-depth view for this tab. Only page-depth views are stored here;
-   *  overlay views (dms, settings, actions) are shared and live outside the tab. */
   pageView: "sources" | "servers" | "channels" | "chat";
+  /** Saved server/channel selection for this tab (persisted while tab is inactive). */
+  serverId: string | null;
+  channelId: string | null;
+  dmActive: boolean;
+  dmRoomId: string | null;
 }
 
 /** Generate a short unique tab ID. */
@@ -214,7 +216,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [tabState, setTabState] = useState<{ tabs: BrowseTab[]; activeId: string }>(() => {
     const firstId = newTabId();
     return {
-      tabs: [{ id: firstId, pageView: "sources" }],
+      tabs: [{ id: firstId, pageView: "sources", serverId: null, channelId: null, dmActive: false, dmRoomId: null }],
       activeId: firstId,
     };
   });
@@ -254,21 +256,49 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     }
   }, []);
 
-  // Add a new browse tab, starting at welcome page (servers for web, sources for native).
   const addBrowseTab = useCallback(() => {
+    const outServerId = useServerStore.getState().activeServerId;
+    const outChannelId = useServerStore.getState().activeChannelId;
+    const outDmActive = useDMStore.getState().dmActive;
+    const outDmRoomId = useDMStore.getState().activeDMRoomId;
     const id = newTabId();
     setTabState((prev) => ({
-      tabs: [...prev.tabs, { id, pageView: "sources" }],
+      tabs: [
+        ...prev.tabs.map((t) =>
+          t.id === prev.activeId
+            ? { ...t, serverId: outServerId, channelId: outChannelId, dmActive: outDmActive, dmRoomId: outDmRoomId }
+            : t,
+        ),
+        { id, pageView: "sources", serverId: null, channelId: null, dmActive: false, dmRoomId: null },
+      ],
       activeId: id,
     }));
+    // New tab starts fresh — no server or channel selected
+    useServerStore.setState({ activeServerId: null, activeChannelId: null });
+    useDMStore.setState({ dmActive: false, activeDMRoomId: null });
     setOverlayView(null);
   }, []);
 
-  // Switch to an existing browse tab, clearing any overlay.
-  const switchToTab = useCallback((id: string) => {
-    setTabState((prev) =>
-      prev.tabs.find((t) => t.id === id) ? { ...prev, activeId: id } : prev,
-    );
+  const switchToTab = useCallback((targetId: string) => {
+    const outServerId = useServerStore.getState().activeServerId;
+    const outChannelId = useServerStore.getState().activeChannelId;
+    const outDmActive = useDMStore.getState().dmActive;
+    const outDmRoomId = useDMStore.getState().activeDMRoomId;
+    setTabState((prev) => {
+      if (!prev.tabs.find((t) => t.id === targetId)) return prev;
+      const targetTab = prev.tabs.find((t) => t.id === targetId)!;
+      // Restore incoming tab's saved navigation state
+      useServerStore.setState({ activeServerId: targetTab.serverId, activeChannelId: targetTab.channelId });
+      useDMStore.setState({ dmActive: targetTab.dmActive, activeDMRoomId: targetTab.dmRoomId });
+      return {
+        tabs: prev.tabs.map((t) =>
+          t.id === prev.activeId
+            ? { ...t, serverId: outServerId, channelId: outChannelId, dmActive: outDmActive, dmRoomId: outDmRoomId }
+            : t,
+        ),
+        activeId: targetId,
+      };
+    });
     setOverlayView(null);
   }, []);
   // Mobile account sheet (T003)
@@ -902,27 +932,8 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const renderDesktopLayout = () => {
     const showSidebar = !sidebarCollapsed;
 
-    if (settingsOpen) {
-      return (
-        <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
-          <div className="h-12 flex items-center px-3 gap-2 bg-surface-container-low flex-shrink-0">
-            <button
-              onClick={() => { closeServerSettings(); closeSettings(); }}
-              className="btn-press flex items-center justify-center w-9 h-9 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
-              aria-label="Back"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
-            <h2 className="font-headline font-semibold">Settings</h2>
-          </div>
-          <SettingsPanel />
-          <ExploreModal isOpen={exploreOpen} onClose={closeExplore} />
-        </div>
-      );
-    }
-
     return (
-      <div className="h-full w-full min-h-0 min-w-0 flex overflow-hidden bg-surface text-on-surface">
+      <div className="h-full w-full min-h-0 min-w-0 relative flex overflow-hidden bg-surface text-on-surface">
         {/* LEFT STACK — sidebar columns. Collapses to zero width when hidden. */}
         {showSidebar && (
           <div className="flex h-full min-h-0 flex-shrink-0 bg-surface">
@@ -972,10 +983,25 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           {renderMainContent()}
         </div>
 
-        {/* Explore modal — opened from the Sources column's bottom
-            tile (was previously opened from ServerSidebar; the state
-            now lives at the ChatLayout level so SourcesPanel can
-            trigger it). */}
+        {/* Settings full-screen overlay — always mounts the normal layout underneath
+            so returning from settings resumes exactly where you left off. */}
+        {settingsOpen && (
+          <div className="absolute inset-0 z-20 flex flex-col bg-surface">
+            <div className="h-12 flex items-center px-3 gap-2 bg-surface-container-low flex-shrink-0">
+              <button
+                onClick={() => { closeServerSettings(); closeSettings(); }}
+                className="btn-press flex items-center justify-center w-9 h-9 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+                aria-label="Back"
+              >
+                <span className="material-symbols-outlined text-xl">arrow_back</span>
+              </button>
+              <h2 className="font-headline font-semibold">Settings</h2>
+            </div>
+            <SettingsPanel />
+          </div>
+        )}
+
+        {/* Explore modal — opened from the Sources column's bottom tile. */}
         <ExploreModal isOpen={exploreOpen} onClose={closeExplore} />
       </div>
     );
@@ -1213,71 +1239,62 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         </div>
       )}
 
-      {/* Main content area */}
+      {/* Main content area — scroll strip is ALWAYS mounted; settings/DMs are absolute overlays */}
       <div className="flex-1 min-h-0 overflow-hidden relative">
-        {/* Page-depth views: horizontal scroll-snap strip.
-            All three panels are always mounted (servers, channels, chat).
-            CSS scroll-snap handles the swipe physics + snap-to-nearest.
-            DMs and Settings are full-screen overlays ABOVE the strip. */}
-        {(mobileView === "dms" || mobileView === "settings") ? (
-          // Non-page views: full-screen, no scroll strip
-          mobileView === "dms" ? (
+        {/* Page-depth scroll strip — always mounted so scroll position is preserved across settings/DMs */}
+        <div
+          ref={scrollStripRef}
+          className="h-full flex overflow-x-auto overflow-y-hidden overscroll-x-auto"
+          style={{
+            scrollSnapType: "x mandatory",
+            scrollBehavior: "smooth",
+            WebkitOverflowScrolling: "touch",
+          }}
+          onScroll={handleScrollSnap}
+        >
+          {/* Panel: Sources */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <SourcesPanel
+              mobile
+              onAddSource={openAddSource}
+              onSourceSelect={() => scrollToPanel(1)}
+              onExplore={openExplore}
+              onSourceOpen={openSourceBrowser}
+            />
+          </div>
+          {/* Panel: Servers */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <SilentBoundary>
+              <ServerSidebar mobile onServerSelect={() => setMobileView("channels")} />
+            </SilentBoundary>
+          </div>
+          {/* Panel: Channels */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <SilentBoundary>
+              <ChannelSidebar mobile onChannelSelect={(chId) => { handleMobileChannelSelect(chId); setMobileView("chat"); }} />
+            </SilentBoundary>
+          </div>
+          {/* Panel: Chat */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <div className="h-full flex flex-col min-h-0">
+              {renderChatContent()}
+            </div>
+          </div>
+        </div>
+
+        {/* DMs overlay — absolute so the strip keeps its scroll position */}
+        {mobileView === "dms" && (
+          <div className="absolute inset-0 z-10 bg-surface">
             <SilentBoundary>
               <DMSidebar mobile onDMSelect={handleMobileDMSelect} />
             </SilentBoundary>
-          ) : (
-            <div className="h-full flex flex-col min-h-0">
-              <SettingsPanel />
-            </div>
-          )
-        ) : (
-          // Page-depth scroll strip. Native: sources ↔ servers ↔ channels ↔ chat.
-          // Web: servers ↔ channels ↔ chat (no sources panel).
-          <div
-            ref={scrollStripRef}
-            className="h-full flex overflow-x-auto overflow-y-hidden overscroll-x-auto"
-            style={{
-              scrollSnapType: "x mandatory",
-              scrollBehavior: "smooth",
-              WebkitOverflowScrolling: "touch",
-            }}
-            onScroll={handleScrollSnap}
-          >
-            {/* Panel: Sources */}
-            <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
-              <SourcesPanel
-                mobile
-                onAddSource={openAddSource}
-                onSourceSelect={() => scrollToPanel(1)}
-                onExplore={openExplore}
-                onSourceOpen={openSourceBrowser}
-              />
-            </div>
-            {/* Panels: Servers, Channels, Chat */}
-            {(
-              <>
-                {/* Panel: Servers */}
-                <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
-                  <SilentBoundary>
-                    <ServerSidebar mobile onServerSelect={() => setMobileView("channels")} />
-                  </SilentBoundary>
-                </div>
-                {/* Panel: Channels */}
-                <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
-                  <SilentBoundary>
-                    <ChannelSidebar mobile onChannelSelect={(chId) => { handleMobileChannelSelect(chId); setMobileView("chat"); }} />
-                  </SilentBoundary>
-                </div>
-              </>
-            )}
-            {/* Panel: Chat */}
-            {(
-              <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
-                <div className="h-full flex flex-col min-h-0">
-                  {renderChatContent()}
-                </div>
-              </div>
-            )}
+          </div>
+        )}
+
+        {/* Settings overlay — absolute so the strip keeps its scroll position */}
+        {mobileView === "settings" && (
+          <div className="absolute inset-0 z-10 bg-surface flex flex-col min-h-0">
+            <SettingsPanel />
           </div>
         )}
 
