@@ -1,4 +1,6 @@
 import { memo, useState, useMemo, type ReactNode } from "react";
+import { useExtensionStore } from "../../stores/extension";
+import { updateAppChannelAccess, type AppAccess } from "../../api/concord";
 import {
   DndContext,
   closestCenter,
@@ -110,9 +112,13 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
   );
   const voiceParticipants = useVoiceParticipants(voiceRoomIds);
 
+  const extensionCatalog = useExtensionStore((s) => s.catalog);
+
   const [showNewChannel, setShowNewChannel] = useState(false);
   const [channelName, setChannelName] = useState("");
-  const [channelType, setChannelType] = useState<"text" | "voice">("text");
+  const [channelType, setChannelType] = useState<"text" | "voice" | "app" | "place">("text");
+  const [selectedExtensionId, setSelectedExtensionId] = useState<string>("");
+  const [appAccess, setAppAccess] = useState<AppAccess>("all");
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState<number | null>(null);
   const [renamingChannelId, setRenamingChannelId] = useState<number | null>(null);
@@ -162,17 +168,34 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
   const canOpenSettings = true;
   const textChannels = server.channels.filter((c) => c.channel_type === "text");
   const voiceChannels = server.channels.filter((c) => c.channel_type === "voice");
+  const appChannels = server.channels.filter((c) => c.channel_type === "app");
+  const placeChannels = server.channels.filter((c) => c.channel_type === "place");
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!channelName.trim() || !accessToken) return;
+    if (channelType === "app" && !selectedExtensionId) return;
     try {
-      await createChannelFn(server.id, channelName.trim(), channelType, accessToken);
+      const extras = channelType === "app"
+        ? { extension_id: selectedExtensionId, app_access: appAccess }
+        : undefined;
+      await createChannelFn(server.id, channelName.trim(), channelType, accessToken, extras);
       setChannelName("");
       setChannelType("text");
+      setSelectedExtensionId("");
+      setAppAccess("all");
       setShowNewChannel(false);
     } catch (err) {
       addToast(err instanceof Error ? err.message : "Failed to create channel");
+    }
+  };
+
+  const handleUpdateAppAccess = async (channelId: number, access: AppAccess) => {
+    if (!accessToken) return;
+    try {
+      await updateAppChannelAccess(server.id, channelId, access, accessToken);
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to update app access");
     }
   };
 
@@ -367,9 +390,9 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
           <button
             onClick={() => setShowInviteModal(true)}
             title="Create Invite Link"
-            className="text-on-surface-variant hover:text-primary text-xs transition-colors font-label font-medium"
+            className="text-on-surface-variant hover:text-primary transition-colors"
           >
-            Invite
+            <span className="material-symbols-outlined text-lg">person_add</span>
           </button>
         </div>
       </div>
@@ -456,6 +479,94 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
           </div>
         )}
 
+        {/* Places section */}
+        {placeChannels.length > 0 && (
+          <div className="mb-3">
+            <div className="flex items-center justify-between px-2 mb-1">
+              <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
+                Places
+              </h3>
+            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(e) => handleDragEnd(e, placeChannels)}
+            >
+              <SortableContext
+                items={placeChannels.map((c) => c.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {placeChannels.map((ch) => renderChannelItem(ch, false))}
+              </SortableContext>
+            </DndContext>
+          </div>
+        )}
+
+        {/* Apps section — app channels installed by the server admin */}
+        {(appChannels.length > 0 || (isOwner && showAdminControls)) && (
+          <div className="mb-3">
+            <div className="flex items-center justify-between px-2 mb-1">
+              <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
+                Apps
+              </h3>
+            </div>
+            {appChannels.map((ch) => {
+              const ext = extensionCatalog.find((e) => e.id === ch.extension_id);
+              const isActive = activeChannelId === ch.matrix_room_id;
+              return (
+                <div key={ch.id} className="group flex items-center gap-0.5">
+                  <button
+                    onClick={() => handleChannelClick(ch.matrix_room_id)}
+                    className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
+                      isActive
+                        ? "bg-surface-container-highest text-on-surface"
+                        : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-base flex-shrink-0">
+                      {ext?.icon ?? "extension"}
+                    </span>
+                    <span className="min-w-0 truncate flex-1">{ch.name}</span>
+                    {ch.app_access === "admin_only" && (
+                      <span className="material-symbols-outlined text-xs text-on-surface-variant/60 flex-shrink-0" title="Admin only">lock</span>
+                    )}
+                  </button>
+                  {isOwner && showAdminControls && (
+                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                      <button
+                        onClick={() => handleUpdateAppAccess(ch.id, ch.app_access === "admin_only" ? "all" : "admin_only")}
+                        className="text-xs px-0.5 text-outline opacity-0 group-hover:opacity-100 transition-all hover:text-primary"
+                        title={ch.app_access === "admin_only" ? "Access: Admin only (click to allow all)" : "Access: All members (click to restrict)"}
+                      >
+                        <span className="material-symbols-outlined text-sm">
+                          {ch.app_access === "admin_only" ? "lock" : "lock_open"}
+                        </span>
+                      </button>
+                      {confirmDeleteChannelId === ch.id ? (
+                        <button
+                          onClick={() => handleDeleteChannel(ch.id)}
+                          onMouseLeave={() => setConfirmDeleteChannelId(null)}
+                          className="text-error text-xs px-1 animate-pulse font-label"
+                        >
+                          ✕
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDeleteChannelId(ch.id)}
+                          className="text-xs px-0.5 text-outline opacity-0 group-hover:opacity-100 transition-all hover:text-error"
+                          title="Remove app"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* New channel (owner/admin, or any member if flag is on) behind admin toggle */}
         {(isOwner || allowUserChannelCreation) && showAdminControls && (
           showNewChannel ? (
@@ -483,16 +594,100 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
                 >
                   Voice
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setChannelType("place")}
+                  className={`flex-1 py-1 rounded-lg text-xs font-label font-medium transition-colors ${
+                    channelType === "place"
+                      ? "bg-surface-container-highest text-on-surface"
+                      : "text-on-surface-variant hover:text-on-surface"
+                  }`}
+                >
+                  ◈ Place
+                </button>
+                {/* App type only visible to server owners */}
+                {isOwner && (
+                  <button
+                    type="button"
+                    onClick={() => setChannelType("app")}
+                    className={`flex-1 py-1 rounded-lg text-xs font-label font-medium transition-colors ${
+                      channelType === "app"
+                        ? "bg-surface-container-highest text-on-surface"
+                        : "text-on-surface-variant hover:text-on-surface"
+                    }`}
+                  >
+                    App
+                  </button>
+                )}
               </div>
-              <input
-                type="text"
-                value={channelName}
-                onChange={(e) => setChannelName(e.target.value)}
-                placeholder="channel-name"
-                autoFocus
-                onBlur={() => { if (!channelName.trim()) setShowNewChannel(false); }}
-                className="w-full px-3 py-1.5 bg-surface-container rounded-xl text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
-              />
+              {channelType === "app" ? (
+                <>
+                  <select
+                    value={selectedExtensionId}
+                    onChange={(e) => {
+                      setSelectedExtensionId(e.target.value);
+                      if (!channelName.trim() && e.target.value) {
+                        const ext = extensionCatalog.find((x) => x.id === e.target.value);
+                        if (ext) setChannelName(ext.name);
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 bg-surface-container rounded-xl text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30 font-body"
+                  >
+                    <option value="">Select extension…</option>
+                    {extensionCatalog.map((ext) => (
+                      <option key={ext.id} value={ext.id}>{ext.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={channelName}
+                    onChange={(e) => setChannelName(e.target.value)}
+                    placeholder="App channel name"
+                    className="w-full px-3 py-1.5 bg-surface-container rounded-xl text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setAppAccess("all")}
+                      className={`flex-1 py-1 rounded-lg text-xs font-label font-medium transition-colors ${
+                        appAccess === "all"
+                          ? "bg-surface-container-highest text-on-surface"
+                          : "text-on-surface-variant hover:text-on-surface"
+                      }`}
+                    >
+                      All members
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAppAccess("admin_only")}
+                      className={`flex-1 py-1 rounded-lg text-xs font-label font-medium transition-colors ${
+                        appAccess === "admin_only"
+                          ? "bg-surface-container-highest text-on-surface"
+                          : "text-on-surface-variant hover:text-on-surface"
+                      }`}
+                    >
+                      Admin only
+                    </button>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!selectedExtensionId || !channelName.trim()}
+                    className="w-full py-1.5 rounded-xl text-xs font-label font-medium bg-primary text-on-primary disabled:opacity-40 transition-colors"
+                  >
+                    Install App
+                  </button>
+                </>
+              ) : (
+                <input
+                  type="text"
+                  value={channelName}
+                  onChange={(e) => setChannelName(e.target.value)}
+                  placeholder="channel-name"
+                  autoFocus
+                  onBlur={() => { if (!channelName.trim()) setShowNewChannel(false); }}
+                  className="w-full px-3 py-1.5 bg-surface-container rounded-xl text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
+                />
+              )}
             </form>
           ) : (
             <button
