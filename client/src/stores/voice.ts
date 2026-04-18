@@ -44,6 +44,7 @@ interface VoiceState {
   returnChannelName: string | null;
   micGranted: boolean;
   statsSessionId: number | null;
+  channelType: "place" | "voice" | null;
 
   connect: (params: {
     token: string;
@@ -57,6 +58,7 @@ interface VoiceState {
     returnChannelId?: string | null;
     returnChannelName?: string | null;
     micGranted: boolean;
+    channelType?: "place" | "voice";
   }) => void;
   disconnect: () => void;
   setConnectionState: (state: VoiceConnectionState) => void;
@@ -105,6 +107,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   returnChannelName: null,
   micGranted: false,
   statsSessionId: null,
+  channelType: null,
 
   setConnectionState: (state) => set({ connectionState: state }),
   incrementReconnectAttempt: () => set({ reconnectAttempt: get().reconnectAttempt + 1 }),
@@ -132,6 +135,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       connected: true,
       connectionState: "connected",
       reconnectAttempt: 0,
+      channelType: params.channelType ?? "voice",
       ...params,
     });
 
@@ -177,6 +181,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       returnChannelName: null,
       micGranted: false,
       statsSessionId: null,
+      channelType: null,
     });
   },
 }));

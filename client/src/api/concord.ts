@@ -2,12 +2,18 @@ import { getApiBase } from "./serverUrl";
 
 function getBase() { return getApiBase(); }
 
+export type AppAccess = "all" | "admin_only";
+
 export interface Channel {
   id: number;
   name: string;
-  channel_type: string;
+  channel_type: "text" | "voice" | "app" | "place";
   matrix_room_id: string;
   position: number;
+  /** Set when channel_type === "app". Links this channel to a ServerExtension. */
+  extension_id?: string | null;
+  /** Access control for app channels. "all" = all members, "admin_only" = owners/admins. */
+  app_access?: AppAccess;
 }
 
 export interface Server {
@@ -179,10 +185,24 @@ export async function createChannel(
   name: string,
   channelType: string,
   accessToken: string,
+  extras?: { extension_id?: string; app_access?: AppAccess },
 ): Promise<Channel> {
   return apiFetch(
     `/servers/${serverId}/channels`,
-    { method: "POST", body: JSON.stringify({ name, channel_type: channelType }) },
+    { method: "POST", body: JSON.stringify({ name, channel_type: channelType, ...extras }) },
+    accessToken,
+  );
+}
+
+export async function updateAppChannelAccess(
+  serverId: string,
+  channelId: number,
+  appAccess: AppAccess,
+  accessToken: string,
+): Promise<void> {
+  await apiFetch(
+    `/servers/${serverId}/channels/${channelId}`,
+    { method: "PATCH", body: JSON.stringify({ app_access: appAccess }) },
     accessToken,
   );
 }
