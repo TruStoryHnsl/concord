@@ -1,4 +1,8 @@
 import { useRef, useEffect } from "react";
+import { PollComposer } from "./tools/PollComposer";
+import { HeatmapComposer } from "./tools/HeatmapComposer";
+import { TimedComposer } from "./tools/TimedComposer";
+import { ScheduledComposer } from "./tools/ScheduledComposer";
 
 export interface ComposerProps {
   onSend: (text: string) => Promise<void>;
@@ -12,13 +16,12 @@ export interface ChatTool {
   composer: React.ComponentType<ComposerProps> | null; // null = send immediately
 }
 
-// Composers are registered in Task 7. Placeholders for now.
 export const CHAT_TOOLS: ChatTool[] = [
-  { id: "poll", label: "Poll", icon: "📊", composer: null },
-  { id: "heatmap", label: "Heatmap", icon: "🔥", composer: null },
+  { id: "poll", label: "Poll", icon: "📊", composer: PollComposer },
+  { id: "heatmap", label: "Heatmap", icon: "🔥", composer: HeatmapComposer },
   { id: "gallery", label: "Gallery", icon: "🖼️", composer: null },
-  { id: "timed", label: "Timed", icon: "⏱️", composer: null },
-  { id: "scheduled", label: "Scheduled", icon: "📨", composer: null },
+  { id: "timed", label: "Timed", icon: "⏱️", composer: TimedComposer },
+  { id: "scheduled", label: "Scheduled", icon: "📨", composer: ScheduledComposer },
   { id: "gif", label: "GIF", icon: "🎞️", composer: null },
   { id: "more", label: "More", icon: "➕", composer: null },
 ];
