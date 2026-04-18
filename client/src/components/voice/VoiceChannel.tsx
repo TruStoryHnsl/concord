@@ -398,6 +398,14 @@ function VoiceRoomUI({
   const isMicEnabled = localParticipant.isMicrophoneEnabled;
   const isCameraEnabled = localParticipant.isCameraEnabled;
   const isScreenShareEnabled = localParticipant.isScreenShareEnabled;
+
+  // INS-048: Propagate mic/camera state to the voice store so ChatLayout
+  // top bar can show the hardware state indicator without needing LiveKit
+  // context (which is only available inside VoiceRoomUI).
+  const setMicActive = useVoiceStore((s) => s.setMicActive);
+  const setCameraActive = useVoiceStore((s) => s.setCameraActive);
+  useEffect(() => { setMicActive(isMicEnabled); }, [isMicEnabled, setMicActive]);
+  useEffect(() => { setCameraActive(isCameraEnabled); }, [isCameraEnabled, setCameraActive]);
   const preferredInputDeviceId = useSettingsStore((s) => s.preferredInputDeviceId);
   const voiceInputSettings = {
     masterInputVolume,

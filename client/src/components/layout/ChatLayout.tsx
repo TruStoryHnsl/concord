@@ -161,6 +161,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const voiceConnected = useVoiceStore((s) => s.connected);
   const voiceMicGranted = useVoiceStore((s) => s.micGranted);
   const voiceChannelType = useVoiceStore((s) => s.channelType);
+  const voiceConnectionState = useVoiceStore((s) => s.connectionState);
+  // INS-048: Hardware state — set by VoiceChannel when mic/camera change
+  const micActive = useVoiceStore((s) => s.micActive);
+  const cameraActive = useVoiceStore((s) => s.cameraActive);
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -1004,13 +1008,15 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // INS-046: right-edge tap zone overlay
   const [rightEdgeOverlay, setRightEdgeOverlay] = useState(false);
 
+  // INS-043: When a pill tap directly scrolls via behavior:"instant", suppress
+  // the subsequent useEffect re-trigger so we don't double-animate.
   const skipNextScrollSyncRef = useRef(false);
 
-  const scrollToPanel = useCallback((panelIndex: number) => {
+  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "smooth") => {
     const strip = scrollStripRef.current;
     if (!strip) return;
     const panelWidth = strip.clientWidth;
-    strip.scrollTo({ left: panelIndex * panelWidth, behavior: "smooth" });
+    strip.scrollTo({ left: panelIndex * panelWidth, behavior });
   }, []);
 
   const handleScrollLive = useCallback(() => {
@@ -1045,7 +1051,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   }, [mobileView]);
 
   // Sync scroll position when mobileView changes from outside (e.g. pill tap).
+  // INS-043: pill taps set skipNextScrollSyncRef to avoid re-animating.
   useEffect(() => {
+    if (skipNextScrollSyncRef.current) {
+      skipNextScrollSyncRef.current = false;
+      return;
+    }
     const depthIdx = PAGE_DEPTH.indexOf(mobileView);
     if (depthIdx >= 0) scrollToPanel(depthIdx);
   }, [mobileView, scrollToPanel]);
@@ -1185,6 +1196,28 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
         )}
         </div>
+        {/* INS-048: Hardware state indicator — shown when voice is active */}
+        {voiceConnected && (micActive || cameraActive) && (
+          <div
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full flex-shrink-0 ${
+              voiceConnectionState !== "connected" ? "ring-2 ring-blue-400" : ""
+            }`}
+            aria-label="Hardware capture active"
+          >
+            {micActive && (
+              <span
+                className="w-2 h-2 rounded-full bg-orange-400 flex-shrink-0"
+                title="Microphone active"
+              />
+            )}
+            {cameraActive && (
+              <span
+                className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"
+                title="Camera active"
+              />
+            )}
+          </div>
+        )}
         {/* Top-bar right cluster: hosting status + wrench menu + account */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
           {showFormatButton && (
@@ -1407,6 +1440,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               )}
             </div>
           </div>
+          </div>
         )}
       </div>
 
@@ -1452,8 +1486,15 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
             if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
             openSettings();
           }
-          if (view === "servers" || view === "channels" || view === "chat" || view === "sources") {
-            skipNextScrollSyncRef.current = true;
+          // INS-043: For page-depth views, instantly scroll without animation.
+          // Non-page views (dms, settings, actions) are rendered as full-screen
+          // overlays outside the scroll strip, so no scroll needed.
+          if (PAGE_DEPTH.includes(view as MobileView)) {
+            const depthIdx = PAGE_DEPTH.indexOf(view as MobileView);
+            if (depthIdx >= 0) {
+              skipNextScrollSyncRef.current = true;
+              scrollToPanel(depthIdx, "instant");
+            }
           }
           setMobileView(view);
         }}
