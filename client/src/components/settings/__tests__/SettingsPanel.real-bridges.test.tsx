@@ -151,7 +151,9 @@ describe("<SettingsPanel /> real bridges navigation", () => {
     await waitFor(() => {
       expect(screen.getByTestId("docker-bridge-section")).toBeInTheDocument();
     });
-    expect(useSettingsStore.getState().serverSettingsId).toBeNull();
+    // serverSettingsId is intentionally kept when navigating between tabs so the
+    // admin server section stays highlighted in the sidebar; it only clears on close.
+    expect(useSettingsStore.getState().serverSettingsId).toBe("discord-guild-1");
 
     await user.click(screen.getByRole("button", { name: /Profile/i }));
 

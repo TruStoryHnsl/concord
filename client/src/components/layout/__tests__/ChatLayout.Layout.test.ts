@@ -4,7 +4,7 @@ import chatLayoutSource from "../ChatLayout.tsx?raw";
 describe("ChatLayout shell sizing contracts", () => {
   it("keeps the desktop shell pinned to the full viewport", () => {
     expect(chatLayoutSource).toContain(
-      'className="h-full w-full min-h-0 min-w-0 flex overflow-hidden bg-surface text-on-surface"',
+      'className="h-full w-full min-h-0 min-w-0 relative flex overflow-hidden bg-surface text-on-surface"',
     );
     expect(chatLayoutSource).toContain(
       'className="flex h-full min-h-0 flex-shrink-0 bg-surface"',

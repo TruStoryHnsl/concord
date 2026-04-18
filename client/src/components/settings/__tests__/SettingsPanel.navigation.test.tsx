@@ -87,7 +87,9 @@ describe("<SettingsPanel /> navigation", () => {
 
     expect(screen.getByText("Profile Tab")).toBeInTheDocument();
     expect(useSettingsStore.getState().settingsTab).toBe("profile");
-    expect(useSettingsStore.getState().serverSettingsId).toBeNull();
+    // serverSettingsId is intentionally kept when navigating between tabs so the
+    // admin server section stays highlighted in the sidebar; it only clears on close.
+    expect(useSettingsStore.getState().serverSettingsId).toBe("discord-1");
   });
 
   it("clears server context when settings are closed", () => {

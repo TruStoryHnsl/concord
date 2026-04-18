@@ -100,7 +100,9 @@ describe("<SettingsPanel /> bridge server navigation", () => {
     await user.click(screen.getByRole("button", { name: /Profile/i }));
 
     expect(screen.getByText("Profile Tab")).toBeInTheDocument();
-    expect(useSettingsStore.getState().serverSettingsId).toBeNull();
+    // serverSettingsId is intentionally kept when navigating between tabs so the
+    // admin server section stays highlighted in the sidebar; it only clears on close.
+    expect(useSettingsStore.getState().serverSettingsId).toBe("discord-guild-1");
     expect(useSettingsStore.getState().settingsTab).toBe("profile");
   });
 });
