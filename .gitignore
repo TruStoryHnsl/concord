@@ -94,3 +94,8 @@ PROVENANCE_REPORT.md
 mempalace.yaml
 .mempalace-aliases
 entities.json
+
+# tuwunel.toml is generated at runtime from tuwunel.toml.template. It is
+# rewritten every time the admin UI updates federation settings or bridges.
+# The committed template contains federation defaults only — never tokens.
+config/tuwunel.toml
