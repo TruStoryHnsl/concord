@@ -22,6 +22,9 @@ from routers import servers, invites, registration, voice, soundboard, webhooks,
 from services.discord_voice_config import write_voice_bridge_rooms
 
 
+logger = logging.getLogger("concord.main")
+
+
 def _bootstrap_tuwunel_config() -> None:
     """Ensure /etc/concord-config/tuwunel.toml exists at runtime.
 
@@ -56,6 +59,20 @@ def _bootstrap_tuwunel_config() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _bootstrap_tuwunel_config()
+
+    # Ensure the Discord bridge appservice is registered with conduwuit
+    # before the first user request arrives. In the user-scoped model
+    # (see docs/bridges/user-scoped-bridge-redesign.md) there is no
+    # admin Enable button — bridge infrastructure is invisible and
+    # always-on. Best-effort: bootstrap never blocks startup.
+    try:
+        from services.bridge_bootstrap import bootstrap_bridge_registration
+        summary = await bootstrap_bridge_registration()
+        if summary.get("action") != "noop":
+            logger.info("bridge bootstrap: %s", summary)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("bridge bootstrap raised unexpectedly: %s", exc)
+
     await init_db()
 
     # Migrate existing tables: add new columns if missing
