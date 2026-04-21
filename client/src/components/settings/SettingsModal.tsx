@@ -11,6 +11,7 @@ import { ProfileTab } from "./ProfileTab";
 import { AppearanceTab } from "./AppearanceTab";
 import { NodeHostingTab } from "./NodeHostingTab";
 import { BridgesTab } from "./BridgesTab";
+import { UserConnectionsTab } from "./UserConnectionsTab";
 import { AboutTab } from "./AboutTab";
 import { HostingTab } from "./HostingTab";
 import { AdminTab } from "./AdminTab";
@@ -123,6 +124,7 @@ export function SettingsPanel() {
       { key: "voice", label: "Voice", icon: "graphic_eq", group: "user" },
       { key: "notifications", label: "Notifications", icon: "notifications", group: "user" },
       { key: "profile", label: "Profile", icon: "person", group: "user" },
+      { key: "connections", label: "Connections", icon: "link", group: "user" },
       { key: "appearance", label: "Appearance", icon: "palette", group: "user" },
     ];
     if (isTauri) {
@@ -296,6 +298,7 @@ export function SettingsPanel() {
         {activeTab === "voice" && <VoiceTab />}
         {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "profile" && <ProfileTab />}
+        {activeTab === "connections" && <UserConnectionsTab />}
         {activeTab === "appearance" && <AppearanceTab />}
         {activeTab === "node" && <NodeHostingTab />}
         {activeTab === "bridges" && <BridgesTab />}
