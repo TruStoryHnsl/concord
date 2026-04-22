@@ -10,10 +10,43 @@
          booting. The React-side <LaunchAnimation/> takes over and
          fades this bootstrap layer out after mount. -->
     <style>
+      /*
+       * Boot-splash theme colour fallbacks.
+       *
+       * The real `--color-logo-primary` / `--color-logo-secondary`
+       * variables are defined in `src/index.css`. If that stylesheet
+       * has already been fetched by the browser cache these override
+       * the literals below; if it's still in flight we fall back to
+       * the Kinetic Node (default) brand colours so the splash never
+       * paints invisible.
+       *
+       * Defined on :root so both the inline SVG strokes (via a CSS
+       * custom property on the stroke attribute) and the node dots
+       * (background / box-shadow) pick them up through the cascade
+       * with no re-paint when index.css finally resolves.
+       */
+      :root {
+        --splash-logo-primary: var(--color-logo-primary, #a4a5ff);
+        --splash-logo-secondary: var(--color-logo-secondary, #afefdd);
+      }
       html, body { background: #0c0e11; color: #f4f4f7; margin: 0; }
       html { color-scheme: dark; }
       body { min-height: 100vh; }
       #boot-splash {
+        /*
+         * Transparent overlay. The dark app surface is painted by
+         * html/body above, so the splash itself does NOT own a
+         * backdrop — that's what was crowding the logo and forcing
+         * surrounding UI to reflow. The splash overlays whatever is
+         * underneath (body background during cold boot, the hydrated
+         * React tree during handoff) without introducing its own
+         * opaque rectangle.
+         *
+         * pointer-events:none on the container lets any stray click
+         * the user makes during the splash window reach the app
+         * underneath, rather than being swallowed by a full-viewport
+         * absorbing layer.
+         */
         position: fixed;
         inset: 0;
         z-index: 9998;
@@ -22,31 +55,60 @@
         align-items: center;
         justify-content: center;
         gap: 1.5rem;
-        background: #0c0e11;
+        background: transparent;
         color: #f4f4f7;
+        pointer-events: none;
       }
       #boot-splash[data-state="visible"] {
         opacity: 1;
-        pointer-events: auto;
         transition: none;
       }
+      /*
+       * Handoff: fade out AND (after the fade completes) remove the
+       * boot-splash layer from the paint entirely so there's no
+       * window where both the pre-React boot mark and the React
+       * LaunchAnimation mark render at the same pixel. The React
+       * layer mounts with its own opacity=1 during the same tick the
+       * boot layer starts its 320ms opacity transition — without
+       * display:none afterwards, a second mark would linger in the
+       * compositor as an invisible but still-rendered element and
+       * re-appear during any layer re-composition. See
+       * bootSplash.ts for the JS side that applies the
+       * `.boot-splash-retired` class once the transition ends.
+       */
       #boot-splash[data-state="handoff"] {
         opacity: 0;
-        pointer-events: none;
         transition: opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #boot-splash[data-state="handoff"].boot-splash-retired {
+        display: none;
       }
       #boot-splash-logo {
         position: relative;
-        width: 168px;
-        height: 168px;
+        /*
+         * Opaque-footprint sizing.
+         *
+         * The inline SVG below uses `viewBox="0 0 512 512"` but the
+         * visible marks only occupy the central 416×416 region (two
+         * rings of stroke-width=48 centred so their outer bounds
+         * reach x/y 48..464). Sizing the SVG element to `192px`
+         * therefore renders the opaque marks at roughly
+         * 192 × 416/512 ≈ 156px — which is the intended visual
+         * weight for a launch splash. The container adds a small
+         * margin for the drop-shadow so nothing clips. This treats
+         * the transparent padding around the mark as part of the
+         * footprint per the design brief.
+         */
+        width: 204px;
+        height: 204px;
         display: flex;
         align-items: center;
         justify-content: center;
         filter: drop-shadow(0 20px 42px rgba(0, 0, 0, 0.35));
       }
       #boot-splash-anim {
-        width: 156px;
-        height: 156px;
+        width: 192px;
+        height: 192px;
         display: block;
         image-rendering: auto;
       }
