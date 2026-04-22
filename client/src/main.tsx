@@ -3,11 +3,22 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 
-// Register service worker for PWA install support (enables "Add to Home Screen"
-// and standalone display mode which hides the browser URL bar).
+// Service worker self-heal path. We used to register a pass-through SW
+// here to qualify for Chrome's PWA install prompt. It caused enough
+// stale-shell support issues (browsers served old bundles even after
+// vite re-bundled) that we pulled it out. For users who had the old SW
+// registered, `/sw.js` is now a self-unregistering stub — we still
+// register it here ONCE so the install → activate cycle runs, which
+// drops caches and calls `registration.unregister()`. After that the
+// browser never touches it again unless we add one back.
 if ("serviceWorker" in navigator && !("__TAURI_INTERNALS__" in window)) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
+    // Also unregister anything currently registered so the cleanup
+    // happens immediately, not on the next navigation.
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      for (const r of regs) r.unregister().catch(() => {});
+    }).catch(() => {});
   });
 }
 import { initServerUrl } from "./api/serverUrl";
