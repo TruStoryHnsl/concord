@@ -39,7 +39,7 @@
  * platforms)" item under the Shared section of PLAN.md is satisfied
  * by this component + the `index.html` inline `<style>`.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getBootSplashWaitingLabel, handoffBootSplash } from "../bootSplash";
 import { ConcordLogo } from "./brand/ConcordLogo";
 
@@ -109,7 +109,15 @@ export function LaunchAnimation({
     };
   }, []);
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the pre-React boot splash is
+  // removed from the render tree BEFORE the browser paints this
+  // component's first frame. If we used useEffect, React would paint
+  // the LaunchAnimation layer while #boot-splash was still visible
+  // for at least one frame — a double-mark window that Playwright
+  // measured at ~300ms in the previous implementation. The layout
+  // effect fires synchronously after DOM mutations and before paint,
+  // so there is no frame where both layers are visible.
+  useLayoutEffect(() => {
     handoffBootSplash();
   }, []);
 
@@ -159,6 +167,21 @@ export function LaunchAnimation({
       data-phase={phase}
       aria-hidden="true"
       style={{
+        // Transparent, non-reflowing overlay.
+        //
+        // Previously this rendered with `background: "#0c0e11"` — a
+        // solid surface rectangle the full size of the viewport. That
+        // (a) pushed surrounding UI out of the way while the splash
+        // was up and (b) visually cropped the animation to whatever
+        // the dark rectangle's bounds were. The app's dark theme is
+        // already painted on html/body (see index.html) and any page
+        // rendered underneath is a valid backdrop, so the splash
+        // itself owns NO backdrop — it overlays transparently and
+        // fades out without affecting layout.
+        //
+        // `pointerEvents` is disabled for the whole phase (not just
+        // the fade) so the overlay never swallows clicks from the
+        // hydrated app beneath it.
         position: "fixed",
         inset: 0,
         zIndex: 9999,
@@ -167,21 +190,24 @@ export function LaunchAnimation({
         alignItems: "center",
         justifyContent: "center",
         gap: "1.5rem",
-        background: "#0c0e11",
+        background: "transparent",
         color: "#f4f4f7",
-        // Pointer events off once fading so the app underneath can
-        // receive clicks as soon as it's ready, even while the
-        // opacity transition is still running.
-        pointerEvents: phase === "fading" ? "none" : "auto",
+        pointerEvents: "none",
         opacity: phase === "fading" ? 0 : 1,
         transition: `opacity ${FADE_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
       }}
     >
       <div
         style={{
+          // Opaque-footprint sizing. ConcordLogo's 512x512 viewBox has
+          // the two rings confined to a central 416x416 region, so
+          // rendering the SVG at 192px lands the opaque marks at
+          // ~156px — the intended visual weight for the splash. The
+          // wrapper is 204px to give the drop-shadow and node dots
+          // breathing room. See the matching comment in index.html.
           position: "relative",
-          width: "168px",
-          height: "168px",
+          width: "204px",
+          height: "204px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -189,7 +215,7 @@ export function LaunchAnimation({
         }}
       >
         <ConcordLogo
-          size={156}
+          size={192}
           title="Concord"
           showNodes={false}
           style={{
@@ -203,11 +229,11 @@ export function LaunchAnimation({
             position: "absolute",
             left: "58.5%",
             top: "31%",
-            width: "18px",
-            height: "18px",
+            width: "22px",
+            height: "22px",
             borderRadius: "999px",
             background: "var(--color-logo-primary, #a4a5ff)",
-            boxShadow: "0 0 0 6px color-mix(in srgb, var(--color-logo-primary, #a4a5ff) 16%, transparent)",
+            boxShadow: "0 0 0 7px color-mix(in srgb, var(--color-logo-primary, #a4a5ff) 16%, transparent)",
             animation: "concord-launch-node-primary 1650ms cubic-bezier(0.2, 0.84, 0.24, 1) infinite",
           }}
         />
@@ -217,11 +243,11 @@ export function LaunchAnimation({
             position: "absolute",
             left: "43%",
             top: "64%",
-            width: "18px",
-            height: "18px",
+            width: "22px",
+            height: "22px",
             borderRadius: "999px",
             background: "var(--color-logo-secondary, #afefdd)",
-            boxShadow: "0 0 0 6px color-mix(in srgb, var(--color-logo-secondary, #afefdd) 18%, transparent)",
+            boxShadow: "0 0 0 7px color-mix(in srgb, var(--color-logo-secondary, #afefdd) 18%, transparent)",
             animation: "concord-launch-node-secondary 1650ms cubic-bezier(0.2, 0.84, 0.24, 1) infinite 120ms",
           }}
         />
