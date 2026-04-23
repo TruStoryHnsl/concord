@@ -20,6 +20,7 @@ import { SubmitPage } from "./components/public/SubmitPage";
 import { ChatLayout } from "./components/layout/ChatLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LaunchAnimation } from "./components/LaunchAnimation";
+import { MarkReady } from "./components/MarkReady";
 import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
@@ -392,6 +393,7 @@ export default function App() {
     return (
       <>
         <SubmitPage webhookId={webhookId} />
+        <MarkReady />
         {launchOverlay}
       </>
     );
@@ -400,6 +402,7 @@ export default function App() {
   // INS-050: Docker first-boot Host/Join picker.
   // Show while we're still checking, or when the picker is actively displayed.
   if (dockerBootState === "checking") {
+    // NOT a terminal screen — splash must stay up. No <MarkReady />.
     return (
       <>
         <div className="h-full w-full bg-surface mesh-background" aria-hidden="true" />
@@ -416,6 +419,7 @@ export default function App() {
           onHost={() => setDockerBootState("done")}
           onJoin={() => setDockerBootState("join")}
         />
+        <MarkReady />
         {launchOverlay}
       </>
     );
@@ -430,14 +434,15 @@ export default function App() {
             setServerConnected(true);
           }}
         />
+        <MarkReady />
         {launchOverlay}
       </>
     );
   }
 
   if (isLoading) {
-    // No inline spinner — the LaunchAnimation below handles the
-    // "we're booting" affordance uniformly across every platform.
+    // NOT a terminal screen — auth restore is still in flight.
+    // Splash must stay up. No <MarkReady />.
     return (
       <>
         <div className="h-full w-full bg-surface mesh-background" aria-hidden="true" />
@@ -450,6 +455,7 @@ export default function App() {
     return (
       <>
         <ServerPickerScreen onConnected={() => setServerConnected(true)} />
+        <MarkReady />
         {launchOverlay}
       </>
     );
@@ -459,6 +465,7 @@ export default function App() {
     return (
       <>
         <LoginForm />
+        <MarkReady />
         {launchOverlay}
       </>
     );
