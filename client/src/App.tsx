@@ -371,10 +371,12 @@ export default function App() {
     attemptReconnect(0);
   }, [isLoggedIn, accessToken, voiceConnected, voiceConnect, addToast]);
 
-  // Compose the launch splash overlay once so every early return
-  // path below can reuse it. Must be emitted as a Fragment sibling
-  // of the actual screen so it stays layered on top via its own
-  // position:fixed styling.
+  // The launch splash is a curtain: the app mounts and does its work
+  // underneath while the splash covers it. The splash is isolated into
+  // its own GPU compositor layer via CSS in index.html so app-side
+  // render activity (auth restore, store subscriptions, StrictMode
+  // double-mount) can't invalidate the splash's paint and interrupt
+  // the animated WebP.
   const launchOverlay = !launchDone ? (
     <LaunchAnimation
       isLoading={isLoading}

@@ -34,13 +34,18 @@
       body { min-height: 100vh; }
       #boot-splash {
         /*
-         * Opaque backdrop — the splash owns its own dark rectangle
-         * so on refresh, the browser paints the splash's backdrop
-         * in the same pass as the logo animation. A transparent
-         * splash let the old page's pixels show through during
-         * paint-holding, so the user saw the logo floating over
-         * whatever was on screen before the reload until the body
-         * background caught up.
+         * Opaque backdrop — splash owns its own dark rectangle so
+         * on refresh the browser paints splash bg + animation in
+         * one paint pass.
+         *
+         * Isolated into its own GPU compositor layer (will-change +
+         * contain + transform:translateZ) so work happening in the
+         * React tree below — auth restore, store subscriptions,
+         * StrictMode double-mount, document.documentElement
+         * attribute sets — cannot invalidate the splash's paint
+         * layer and interrupt the animated WebP mid-loop. The
+         * splash decodes once at mount and loops untouched until
+         * display:none retires it.
          */
         position: fixed;
         inset: 0;
@@ -53,6 +58,16 @@
         background: #0c0e11;
         color: #f4f4f7;
         pointer-events: none;
+        will-change: opacity;
+        contain: strict;
+        transform: translateZ(0);
+      }
+      #boot-splash-anim {
+        /* Also promoted so the decoded WebP frames live on the GPU
+         * and survive any paint invalidation in the parent chain. */
+        will-change: transform;
+        transform: translateZ(0);
+        backface-visibility: hidden;
       }
       #boot-splash[data-state="visible"] {
         opacity: 1;
