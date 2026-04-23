@@ -29,15 +29,11 @@ self.addEventListener("activate", (event) => {
       // Unregister ourselves. Subsequent requests go straight to the
       // network without SW mediation.
       await self.registration.unregister();
-      // Reload every controlled client so they pick up the fresh
-      // network responses instead of whatever the old SW was serving.
-      const clients = await self.clients.matchAll({ type: "window" });
-      for (const client of clients) {
-        // navigate() is a controlled reload; it preserves history.
-        if ("navigate" in client) {
-          try { await client.navigate(client.url); } catch { /* best-effort */ }
-        }
-      }
+      // Deliberately DO NOT reload clients. Reloading here caused a
+      // visible splash flash on every page load that still had this
+      // SW registered: HTML paints → activate fires → reload → HTML
+      // paints again. Caches are already cleared above and we've
+      // unregistered, so the next navigation hits the network cleanly.
     })(),
   );
 });

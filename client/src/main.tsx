@@ -4,18 +4,19 @@ import "./index.css";
 import App from "./App";
 
 // Service worker self-heal path. We used to register a pass-through SW
-// here to qualify for Chrome's PWA install prompt. It caused enough
-// stale-shell support issues (browsers served old bundles even after
-// vite re-bundled) that we pulled it out. For users who had the old SW
-// registered, unregister anything currently live so the shell isn't
-// served from cache next load.
+// to qualify for Chrome's PWA install prompt; it caused stale-shell
+// support pain so we pulled it out. Any browser that still has the old
+// SW registered needs it replaced by the current sw.js stub (which no
+// longer reloads clients on activate — see public/sw.js), so:
 //
-// DO NOT re-register `/sw.js` here. The stub SW's activate handler
-// reloads every controlled client to flush its cache, so re-registering
-// on every page load creates a flash loop (load → new SW installs →
-// activates → reloads page → repeat).
+//   1. Register /sw.js to push the update-check. If the browser has an
+//      older copy it installs the new one, skipWaiting → activate →
+//      unregister, all without reloading the page.
+//   2. Also kick off a direct unregister on any registrations already
+//      present in case the browser didn't pick the new one up.
 if ("serviceWorker" in navigator && !("__TAURI_INTERNALS__" in window)) {
   window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
     navigator.serviceWorker.getRegistrations().then((regs) => {
       for (const r of regs) r.unregister().catch(() => {});
     }).catch(() => {});
