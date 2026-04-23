@@ -94,3 +94,30 @@ PROVENANCE_REPORT.md
 mempalace.yaml
 .mempalace-aliases
 entities.json
+
+# Splash render pipeline outputs (Blender exports + comparison frames)
+splash/
+splash_*.webp
+splash_*.avif
+splash_compare.*
+splash_compare_*.webp
+concord-splash.webm
+concord-splash.mkv
+concord-splash.mp4
+concord-splashscreen.fbx
+0001-*.webm
+0001-*.mkv
+0001-*.mp4
+
+# Screenshots and ad-hoc captures (root-level)
+/*.png
+
+# Backup env / config files
+.env.backup-*
+config/**/*.bak
+
+# Worktree directories
+.worktrees/
+
+# YAML scratch
+format-panel-open.yml
