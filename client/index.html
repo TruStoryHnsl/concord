@@ -2,8 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="preload" as="image" href="/logo-upper.png" type="image/png" />
-    <link rel="preload" as="image" href="/logo-lower.png" type="image/png" />
+    <!--
+      The mask halves (`/logo-upper.png`, `/logo-lower.png`) used to be
+      preloaded here because the splash painted them inline before
+      React mounted. They're no longer on the first-paint path — the
+      splash is now the boot-splash.mp4 video — so the browser was
+      flagging them as "preloaded but not used within a few seconds."
+      They're still consumed by `<ConcordLogo />` (sidebar, source
+      tiles) but on demand at React mount time. Each half is ~6KB, so
+      lazy-loading is cheap.
+    -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, minimum-scale=0.1" />
     <meta name="theme-color" content="#0c0e11" />
     <!-- Concord launch buffer (INS-023): paint the dark theme and a
