@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="preload" as="video" href="/boot-splash.mp4" type="video/mp4" />
+    <link rel="preload" as="image" href="/logo-upper.png" type="image/png" />
+    <link rel="preload" as="image" href="/logo-lower.png" type="image/png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, minimum-scale=0.1" />
     <meta name="theme-color" content="#0c0e11" />
     <!-- Concord launch buffer (INS-023): paint the dark theme and a
@@ -63,24 +64,27 @@
         contain: strict;
         transform: translateZ(0);
       }
-      .boot-splash-anim {
-        /* Also promoted so the decoded video frames live on the GPU
-         * and survive any paint invalidation in the parent chain. */
+      /* The two halves of the brand mark — each rendered as a div
+       * with the matching PNG used as a CSS mask and the colour
+       * supplied by a theme-driven custom property. This is the same
+       * mechanism the React `<ConcordLogo />` component uses, just
+       * inlined here so the splash paints at first byte before any
+       * JS or stylesheet from `src/` has loaded. */
+      .boot-splash-half {
+        position: absolute;
+        inset: 0;
+        -webkit-mask-image: var(--mask);
+        mask-image: var(--mask);
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        background-color: var(--tint);
         will-change: transform;
         transform: translateZ(0);
         backface-visibility: hidden;
-      }
-      /* Ping-pong loop: only one of the two stacked videos is visible
-       * at a time. The hidden one keeps its decoder warm at t=0 so the
-       * handover on `ended` is a single-frame class swap. `visibility`
-       * (not `display:none`) keeps the decode pipeline alive. */
-      .boot-splash-anim-hidden {
-        visibility: hidden;
-      }
-      #boot-splash-logo > .boot-splash-anim {
-        position: absolute;
-        inset: 0;
-        margin: auto;
       }
       #boot-splash[data-state="visible"] {
         opacity: 1;
@@ -109,31 +113,18 @@
       #boot-splash-logo {
         position: relative;
         /*
-         * Opaque-footprint sizing.
-         *
-         * The inline SVG below uses `viewBox="0 0 512 512"` but the
-         * visible marks only occupy the central 416×416 region (two
-         * rings of stroke-width=48 centred so their outer bounds
-         * reach x/y 48..464). Sizing the SVG element to `192px`
-         * therefore renders the opaque marks at roughly
-         * 192 × 416/512 ≈ 156px — which is the intended visual
-         * weight for a launch splash. The container adds a small
-         * margin for the drop-shadow so nothing clips. This treats
-         * the transparent padding around the mark as part of the
-         * footprint per the design brief.
+         * Mask sizing — the PNG halves are 1024×1024 with the brand
+         * mark occupying roughly the central ~70% of the canvas. The
+         * outer container is 204px to leave breathing room for the
+         * drop-shadow, and `mask-size: contain` on the half divs
+         * scales the mark to fit. Resulting visible footprint is
+         * roughly 145px square — close to the previous splash and
+         * within the design brief.
          */
         width: 204px;
         height: 204px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        filter: drop-shadow(0 20px 42px rgba(0, 0, 0, 0.35));
-      }
-      .boot-splash-anim {
-        width: 192px;
-        height: 192px;
         display: block;
-        image-rendering: auto;
+        filter: drop-shadow(0 20px 42px rgba(0, 0, 0, 0.35));
       }
       /*
        * System fonts only for splash text. When brand/status
@@ -229,33 +220,24 @@
     <div id="boot-splash" data-state="visible" aria-hidden="true">
       <div id="boot-splash-logo">
         <!--
-          The native HTML5 `loop` attribute pauses for one frame on every
-          loop iteration while the demuxer rewinds — a 6.25s clip read as
-          a visible "interrupt and restart" once every 6 seconds. Two
-          stacked `<video>` elements in ping-pong (A plays while B is
-          buffered to t=0; on A's end, hide A, show B and play, swap
-          roles) gives a genuinely seamless loop. `loop` is omitted —
-          the JS below drives the cycle.
+          Mask-tinted brand mark — the same mechanism React's
+          `<ConcordLogo />` uses, inlined so the splash paints
+          before any application JS or CSS has loaded. Each half
+          is a `<div>` with `mask-image` set to the matching PNG
+          and `background-color` set to the theme's primary or
+          secondary CSS variable. Theme switches retint the splash
+          without re-fetching the asset.
         -->
-        <video
-          id="boot-splash-anim-a"
-          class="boot-splash-anim"
-          src="/boot-splash.mp4"
-          autoplay
-          muted
-          playsinline
-          preload="auto"
+        <div
+          class="boot-splash-half boot-ring-secondary"
+          style="--mask: url('/logo-lower.png'); --tint: var(--splash-logo-secondary);"
           aria-hidden="true"
-        ></video>
-        <video
-          id="boot-splash-anim-b"
-          class="boot-splash-anim boot-splash-anim-hidden"
-          src="/boot-splash.mp4"
-          muted
-          playsinline
-          preload="auto"
+        ></div>
+        <div
+          class="boot-splash-half boot-ring-primary"
+          style="--mask: url('/logo-upper.png'); --tint: var(--splash-logo-primary);"
           aria-hidden="true"
-        ></video>
+        ></div>
       </div>
       <div id="boot-splash-brand">Concord</div>
       <div id="boot-splash-status">Waiting for host</div>
@@ -266,29 +248,6 @@
         if (status) {
           status.textContent = `Waiting for ${window.location.host || "host"}`;
         }
-        // Ping-pong loop: when the active clip ends, swap to the
-        // pre-buffered standby clip immediately. The standby has been
-        // sitting at t=0 since DOM parse, so the swap is a single
-        // class-toggle frame — no demux rewind, no visible stutter.
-        const a = document.getElementById("boot-splash-anim-a");
-        const b = document.getElementById("boot-splash-anim-b");
-        if (!a || !b) return;
-        let active = a, standby = b;
-        const swap = () => {
-          standby.currentTime = 0;
-          standby.classList.remove("boot-splash-anim-hidden");
-          active.classList.add("boot-splash-anim-hidden");
-          standby.play().catch(() => {});
-          // Pre-seek the now-hidden one back to 0 so it's ready for next swap.
-          active.pause();
-          active.currentTime = 0;
-          // Swap roles.
-          const tmp = active;
-          active = standby;
-          standby = tmp;
-        };
-        a.addEventListener("ended", swap);
-        b.addEventListener("ended", swap);
       })();
     </script>
     <div id="root"></div>
