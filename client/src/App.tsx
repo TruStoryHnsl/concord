@@ -475,6 +475,14 @@ export default function App() {
     );
   }
 
+  // NOTE: <MarkReady /> intentionally NOT here. ChatLayout is the
+  // logged-in path; data loads cascade in (servers → channels →
+  // messages) AFTER the shell mounts. Dropping MarkReady at mount
+  // dismisses the splash while the user can still see channel tiles
+  // and messages popping into place. ChatLayout owns its own
+  // MarkReady call gated on its initial-data loaded signal — see
+  // the useEffect near the bottom of ChatLayout that watches
+  // `serversLoaded`.
   const shellContent = (
     <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0">
@@ -482,7 +490,6 @@ export default function App() {
       </div>
       <VoiceConnectionBar />
       <DirectInviteBanner />
-      <MarkReady />
     </div>
   );
 

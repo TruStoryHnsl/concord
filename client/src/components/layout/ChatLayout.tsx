@@ -73,6 +73,7 @@ import {
   type MatrixSourceDraft,
 } from "../sources/matrixSourceAuth";
 import { useFormatStore } from "../../stores/format";
+import { useBootReadyStore } from "../../stores/bootReady";
 import { FormatPopover } from "../chat/FormatPopover";
 
 /** RulesGate — full-panel screen shown to members who haven't accepted the server rules yet. */
@@ -679,6 +680,22 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   const loadMembers = useServerStore((s) => s.loadMembers);
   const [serversLoaded, setServersLoaded] = useState(false);
+
+  // Tell the launch splash that the logged-in shell is ready to be
+  // shown to the user. Fires AFTER the initial server/conversation/
+  // catalog data has resolved, so the splash doesn't dismiss into
+  // a half-loaded ChatLayout where channel tiles and messages are
+  // still popping in. requestAnimationFrame defers the flag to
+  // after-paint so the next frame the user sees is the real UI,
+  // not an empty shell.
+  const markAppReady = useBootReadyStore((s) => s.markAppReady);
+  useEffect(() => {
+    if (!serversLoaded) return;
+    const id = requestAnimationFrame(() => markAppReady());
+    return () => cancelAnimationFrame(id);
+  }, [serversLoaded, markAppReady]);
+
+
   const discordVoiceProjectionHandled = useRef<string | null>(null);
   const startupRestoreHandled = useRef<string | null>(null);
   const origSetActiveChannel = useServerStore((s) => s.setActiveChannel);
