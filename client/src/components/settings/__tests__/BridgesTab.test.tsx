@@ -106,6 +106,8 @@ describe("<BridgesTab />", () => {
       user_namespace_regex: null,
       alias_namespace_regex: null,
       registration_file_path: null,
+      desync: null,
+      stale_appservice_ids: [],
     });
     mockedBotProfile.mockResolvedValue({
       id: "bot-1",
@@ -133,6 +135,8 @@ describe("<BridgesTab />", () => {
       user_namespace_regex: "@_discord_.*",
       alias_namespace_regex: "#_discord_.*",
       registration_file_path: "/tmp/registration.yaml",
+      desync: null,
+      stale_appservice_ids: [],
     });
     mockedBotProfile.mockResolvedValue({
       id: "bot-1",
