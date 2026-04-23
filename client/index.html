@@ -70,22 +70,6 @@
         will-change: transform;
         transform: translateZ(0);
         backface-visibility: hidden;
-      }
-      /* Ping-pong loop: only one of the two stacked videos is visible
-       * at a time. The hidden one keeps its decoder warm at t=0 so the
-       * handover on `ended` is a single-frame class swap. `visibility`
-       * (not `display:none`) keeps the decode pipeline alive. The
-       * native HTML5 `loop` attribute pauses for one frame on every
-       * loop iteration while the demuxer rewinds — visible as an
-       * "interrupt and restart" once per clip. The JS at the bottom
-       * of <body> drives the swap; `loop` is intentionally omitted. */
-      .boot-splash-anim-hidden {
-        visibility: hidden;
-      }
-      #boot-splash-logo > .boot-splash-anim {
-        position: absolute;
-        inset: 0;
-        margin: auto;
         width: 192px;
         height: 192px;
         display: block;
@@ -218,28 +202,21 @@
     <div id="boot-splash" data-state="visible" aria-hidden="true">
       <div id="boot-splash-logo">
         <!--
-          Hand-crafted Blender animation. Two stacked <video> elements
-          ping-pong so the loop is seamless: A plays while B sits
-          buffered at t=0; on A's `ended` event, B is shown and
-          played, A is hidden and rewound. Native `loop` is omitted
-          because it pauses one frame to rewind the demuxer (visible
-          as a stutter every clip length). Bronze/teal colors are
-          baked into the render and match the default theme.
+          Hand-crafted Blender animation. Plays exactly ONCE, then
+          freezes on the last frame. No `loop` attribute, no JS swap.
+          The previous ping-pong dual-video setup was cycling 4-5
+          times during slow boots and the loop boundary read as a
+          visible "reset" because the first and last frames differ
+          by ~4% in the lower mark area. Holding the last frame
+          (which is the logo at rest, ball seated in the lower ring)
+          is the rest pose the user expects to see while waiting for
+          the app to finish hydrating.
         -->
         <video
-          id="boot-splash-anim-a"
+          id="boot-splash-anim"
           class="boot-splash-anim"
           src="/boot-splash.mp4"
           autoplay
-          muted
-          playsinline
-          preload="auto"
-          aria-hidden="true"
-        ></video>
-        <video
-          id="boot-splash-anim-b"
-          class="boot-splash-anim boot-splash-anim-hidden"
-          src="/boot-splash.mp4"
           muted
           playsinline
           preload="auto"
@@ -255,23 +232,6 @@
         if (status) {
           status.textContent = `Waiting for ${window.location.host || "host"}`;
         }
-        const a = document.getElementById("boot-splash-anim-a");
-        const b = document.getElementById("boot-splash-anim-b");
-        if (!a || !b) return;
-        let active = a, standby = b;
-        const swap = () => {
-          standby.currentTime = 0;
-          standby.classList.remove("boot-splash-anim-hidden");
-          active.classList.add("boot-splash-anim-hidden");
-          standby.play().catch(() => {});
-          active.pause();
-          active.currentTime = 0;
-          const tmp = active;
-          active = standby;
-          standby = tmp;
-        };
-        a.addEventListener("ended", swap);
-        b.addEventListener("ended", swap);
       })();
     </script>
     <div id="root"></div>
