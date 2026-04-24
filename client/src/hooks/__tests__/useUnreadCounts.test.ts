@@ -6,7 +6,12 @@ import { useAuthStore } from "../../stores/auth";
 
 function createFakeClient() {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
-  const lastEvent = { getId: () => "$event-1" };
+  // markRoomRead walks back to the last unread-contributing event type
+  // (m.room.message / encrypted / sticker / call.invite) before anchoring
+  // the marker — state / reaction / redaction events don't advance the
+  // server's unread run. The fixture therefore has to expose getType()
+  // for the walk-back to land on this event.
+  const lastEvent = { getId: () => "$event-1", getType: () => "m.room.message" };
   const room = {
     getLiveTimeline: () => ({
       getEvents: () => [lastEvent],

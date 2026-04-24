@@ -196,24 +196,95 @@ export function SettingsPanel() {
 
   const filledIcon = { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' };
 
-  const renderServerSection = (server: (typeof servers)[0], tabs: TabDef[]) => {
-    if (tabs.length === 0) return null;
+  // Render the single "Server settings" row: a server picker that
+  // determines which server's tab strip expands below. Collapses N
+  // Server-scoped sections down to one row, reducing the Settings tab
+  // bar's vertical footprint regardless of how many servers the user
+  // administers. Non-admin servers opened via "context menu → Server
+  // settings" appear in the picker too, so the current-server context
+  // isn't lost when the user lands in SettingsPanel from a gear click.
+  const serverPickerOptions = useMemo(() => {
+    const opts: { server: (typeof servers)[0]; tabs: TabDef[] }[] = [];
+    for (const server of adminServers) {
+      const tabs = adminServerTabs.get(server.id);
+      if (tabs && tabs.length > 0) opts.push({ server, tabs });
+    }
+    if (
+      contextServer &&
+      contextServerTabs.length > 0 &&
+      !opts.some((o) => o.server.id === contextServer.id)
+    ) {
+      opts.push({ server: contextServer, tabs: contextServerTabs });
+    }
+    return opts;
+  }, [adminServers, adminServerTabs, contextServer, contextServerTabs]);
+
+  const selectedServerOption =
+    serverPickerOptions.find((o) => o.server.id === serverSettingsId) ?? null;
+
+  const renderServerRow = () => {
+    if (serverPickerOptions.length === 0) return null;
     return (
-      <div key={server.id}>
+      <div>
         <div className="border-t border-outline-variant/10 mx-4" />
-        <div className="px-4 pt-2 pb-1 flex items-center gap-2">
+        <div className="px-4 pt-2 pb-1">
           <span className="text-xs font-label font-medium text-on-surface-variant/60 uppercase tracking-wider">
-            Server
+            Server Settings
           </span>
-          <span className="text-xs font-label text-on-surface-variant/40">{server.name}</span>
         </div>
         <div className="flex items-center gap-1 px-4 pb-2 overflow-x-auto">
-          {tabs.map((tab) => {
-            const active = activeTab === tab.key && serverSettingsId === server.id;
+          {/* Server picker — a native <select> so we get the OS dropdown
+             for free (including mobile pickers and TV focus handling)
+             without rebuilding a combobox. */}
+          <label className="flex-shrink-0">
+            <span className="sr-only">Select server</span>
+            <select
+              value={serverSettingsId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) {
+                  setServerSettingsId(null);
+                  return;
+                }
+                const opt = serverPickerOptions.find((o) => o.server.id === id);
+                if (!opt) return;
+                const firstServerTab = opt.tabs[0];
+                const stayingOnSameKey = opt.tabs.some(
+                  (t) => t.key === activeTab,
+                );
+                handleSelectServerTab(
+                  id,
+                  (stayingOnSameKey
+                    ? activeTab
+                    : firstServerTab.key) as typeof activeTab,
+                );
+              }}
+              {...tvFocusProps}
+              className="btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap bg-surface-container-high text-on-surface border border-outline-variant/20 focus:outline-none focus:border-primary/40"
+            >
+              <option value="">Select server…</option>
+              {serverPickerOptions.map(({ server }) => (
+                <option key={server.id} value={server.id}>
+                  {server.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* Tabs for the selected server (if any). Collapsing N rows
+             into one means the user only sees tabs relevant to their
+             current selection, not every server they admin. */}
+          {selectedServerOption?.tabs.map((tab) => {
+            const active =
+              activeTab === tab.key && serverSettingsId === selectedServerOption.server.id;
             return (
               <button
                 key={tab.key}
-                onClick={() => handleSelectServerTab(server.id, tab.key as typeof activeTab)}
+                onClick={() =>
+                  handleSelectServerTab(
+                    selectedServerOption.server.id,
+                    tab.key as typeof activeTab,
+                  )
+                }
                 {...tvFocusProps}
                 className={tabBtnClass(active)}
               >
@@ -279,11 +350,11 @@ export function SettingsPanel() {
           )}
         </div>
 
-        {/* Admin server sections — always visible when user admins servers */}
-        {adminServers.map((server) => renderServerSection(server, adminServerTabs.get(server.id) ?? []))}
-
-        {/* Contextual non-admin server section (opened via context menu) */}
-        {contextServer && renderServerSection(contextServer, contextServerTabs)}
+        {/* Single collapsed "Server Settings" row — the picker drives
+           which server's tabs are visible below, rather than rendering
+           one row per admin server. Reduces vertical clutter when the
+           user admins multiple servers. */}
+        {renderServerRow()}
       </div>
 
       {/* Tab content */}

@@ -526,6 +526,16 @@ export default function App() {
             }
             video={false}
             options={{
+              // webAudioMix: true tells LiveKit to create and manage an
+              // AudioContext internally and attach it to any LocalAudioTrack
+              // the room publishes. Without this, LocalAudioTrack.audioContext
+              // is undefined and setProcessor() throws "Audio context needs
+              // to be set on LocalAudioTrack in order to enable processors",
+              // which cascades into an onError → voiceDisconnect →
+              // "Client initiated disconnect" cascade. Our ConcordNoiseGateProcessor
+              // reads opts.audioContext in init(), so this is load-bearing
+              // for the noise-gate / mic-volume / HP-filter pipeline.
+              webAudioMix: true,
               audioCaptureDefaults: {
                 ...buildLiveKitAudioCaptureOptions({
                   masterInputVolume,

@@ -1,6 +1,18 @@
 import { useEffect, useState, useRef } from "react";
-import { RoomEvent, NotificationCountType } from "matrix-js-sdk";
+import { RoomEvent, NotificationCountType, ClientEvent } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
+
+/** Event types the unread counter cares about. State events, reactions,
+ *  receipts, and other ambient updates don't contribute to unread and
+ *  marking them read doesn't decrement anything. We walk back from the
+ *  end of the live timeline until we hit a message-shaped event so the
+ *  read marker lands on the thing the user actually saw. */
+const UNREAD_CONTRIBUTING_TYPES = new Set([
+  "m.room.message",
+  "m.room.encrypted",
+  "m.sticker",
+  "m.call.invite",
+]);
 
 async function markRoomRead(
   client: ReturnType<typeof useAuthStore.getState>["client"],
@@ -10,10 +22,33 @@ async function markRoomRead(
   const room = client.getRoom(roomId);
   if (!room) return;
   const timeline = room.getLiveTimeline().getEvents();
-  const lastEvent = timeline[timeline.length - 1];
+  // Walk back to the last event that actually contributes to unread.
+  // Using the tail of the live timeline unconditionally means the marker
+  // often lands on a membership / receipt / redaction event whose id the
+  // server doesn't consider part of the room's "unread run" — the
+  // badge stays lit until the next message arrives and rescans.
+  let target = null;
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const ev = timeline[i];
+    if (ev && UNREAD_CONTRIBUTING_TYPES.has(ev.getType())) {
+      target = ev;
+      break;
+    }
+  }
+  // Fall back to the raw tail if no message-shaped event is visible (new
+  // or quiet room) — better to send a receipt than nothing.
+  const lastEvent = target ?? timeline[timeline.length - 1];
   const lastEventId = lastEvent?.getId?.();
   if (!lastEvent || !lastEventId) return;
-  await client.setRoomReadMarkers(roomId, lastEventId, lastEvent);
+  try {
+    await client.setRoomReadMarkers(roomId, lastEventId, lastEvent);
+  } catch (err) {
+    // Surface failures instead of swallowing — when the receipt doesn't
+    // land the badge stays lit forever and the user has no signal for
+    // why. A console.warn at least shows up in a bug report.
+    console.warn("[unread] setRoomReadMarkers failed", { roomId, err });
+    throw err;
+  }
 }
 
 export function useUnreadCounts(): Map<string, number> {
@@ -58,11 +93,18 @@ export function useUnreadCounts(): Map<string, number> {
 
     client.on(RoomEvent.Timeline, debouncedUpdate);
     client.on(RoomEvent.Receipt, debouncedUpdate);
+    // Account-data updates carry the `m.fully_read` marker — without
+    // this listener the badge stays lit until the next Receipt or
+    // Timeline event happens to bump the refresh.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    client.on(ClientEvent.AccountData as any, debouncedUpdate);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       client.removeListener(RoomEvent.Timeline, debouncedUpdate);
       client.removeListener(RoomEvent.Receipt, debouncedUpdate);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      client.removeListener(ClientEvent.AccountData as any, debouncedUpdate);
     };
   }, [client]);
 
@@ -121,11 +163,18 @@ export function useHighlightCounts(): Map<string, number> {
 
     client.on(RoomEvent.Timeline, debouncedUpdate);
     client.on(RoomEvent.Receipt, debouncedUpdate);
+    // Account-data updates carry the `m.fully_read` marker — without
+    // this listener the badge stays lit until the next Receipt or
+    // Timeline event happens to bump the refresh.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    client.on(ClientEvent.AccountData as any, debouncedUpdate);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       client.removeListener(RoomEvent.Timeline, debouncedUpdate);
       client.removeListener(RoomEvent.Receipt, debouncedUpdate);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      client.removeListener(ClientEvent.AccountData as any, debouncedUpdate);
     };
   }, [client]);
 

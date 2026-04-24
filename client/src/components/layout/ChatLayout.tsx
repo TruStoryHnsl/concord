@@ -2897,6 +2897,7 @@ function AddSourceModal({
   const updateSource = useSourcesStore((s) => s.updateSource);
   const sources = useSourcesStore((s) => s.sources);
   const accessToken = useAuthStore((s) => s.accessToken);
+  const openSettings = useSettingsStore((s) => s.openSettings);
   const resumeHandled = useRef(false);
 
   useEffect(() => {
@@ -3190,12 +3191,32 @@ function AddSourceModal({
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
 
-              {/* Discord is managed under Settings → Connections in the
-                 user-scoped bridge redesign. It's not an "add source" —
-                 it's a personal account connection, and the bridge only
-                 surfaces Discord guilds as Concord rooms once auth
-                 actually succeeds. See docs/bridges/user-scoped-bridge-
-                 redesign.md. */}
+              {/* Discord entry — routes to Settings → Connections, which
+                 is where the user-scoped bridge redesign put the actual
+                 Connect/Disconnect controls. Keeping a Discord tile here
+                 anyway because operators asked for parity with the other
+                 sources in the Add Source modal — having to know that
+                 Discord lives under a different surface was non-obvious
+                 and a known UX complaint. See
+                 docs/bridges/user-scoped-bridge-redesign.md for why the
+                 actual login flow can't live in this modal. */}
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  openSettings("connections");
+                }}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-[#5865F2]/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="discord" size={24} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-on-surface">Discord</p>
+                  <p className="text-xs text-on-surface-variant">Connect your Discord account — manages in Connections</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
 
               <button
                 type="button"
