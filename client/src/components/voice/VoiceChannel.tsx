@@ -440,6 +440,16 @@ function VoiceRoomUI({
     const processor = getVoiceInputProcessor(voiceInputSettings);
     const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
     if (!micTrack) return;
+    // LiveKit throws "Audio context needs to be set on LocalAudioTrack in
+    // order to enable processors" if the track has no audioContext. That
+    // used to surface to the user as a "Voice failed" toast and cascade
+    // into a disconnect. The room-level webAudioMix=true option normally
+    // attaches an AudioContext at track creation, but there's a short
+    // window during reconnects / track swaps where it's still undefined
+    // — skip silently there and let the next effect run pick it up once
+    // the track is fully set up.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!(micTrack as any).audioContext) return;
     const currentProcessor = micTrack.getProcessor();
     if (!currentProcessor || currentProcessor.name !== processor.name) {
       micTrack.setProcessor(processor).catch((error) => {

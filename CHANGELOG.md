@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-04-24
+
+### Fixed
+- **Voice chat crashed on join with "Audio context needs to be set on LocalAudioTrack"** — LiveKit Room options now pass `webAudioMix: true` so LocalAudioTracks get an AudioContext attached at creation. Without it, our `ConcordNoiseGateProcessor.init()` (which reads `opts.audioContext`) aborted before any track work, the error bubbled through `onError → voiceDisconnect`, and the user saw a cascade of three toasts ending in "Client initiated disconnect". The post-publish `setProcessor` useEffect in `VoiceChannel` also got a `micTrack.audioContext` guard so the short window during track swaps / reconnects doesn't resurrect the same crash.
+- **Notifications didn't clear reliably** — `markRoomRead` now walks back to the last unread-contributing event (`m.room.message` / `m.room.encrypted` / `m.sticker` / `m.call.invite`) instead of anchoring the marker on whatever tail event happened to be there. State events / redactions / reactions don't advance the server's "unread run", so the old behaviour often left the badge lit after a channel was actually read. `useUnreadCounts` + `useHighlightCounts` now also listen to `ClientEvent.AccountData` so `m.fully_read` updates refresh the badge immediately rather than waiting for an unrelated Timeline/Receipt tick. `setRoomReadMarkers` errors are surfaced via `console.warn` so the next regression has a trace.
+- **"Connection Failed — NetworkError" when adding a sibling Concord instance as a source** — `CORS_ORIGINS` env is now forwarded into the `concord-api` container via `docker-compose.yml` (it was being read from the host `.env` but never reaching the container, so FastAPI's CORSMiddleware saw an empty allow-list and fell back to the localhost/tauri-only default). Operators still set the actual domains in their `.env`; this just wires the plumbing.
+
+### Added
+- **Discord tile in the Add Source picker.** User-scoped Discord still lives under Settings → Connections (one-click connect, ToS gate, no deep-linked modal step), but the Add Source menu now shows a Discord entry that routes the user there instead of the previous silence. Parity with Concord / Matrix / Mozilla / Reticulum options.
+
+### Changed
+- **Server-scoped tabs in Settings collapse to a single "Server Settings" row.** Previously each admin server rendered its own full-width tab strip (so admin-ing N servers produced N stacked rows); now one row with a server dropdown expands the selected server's tabs inline. Non-admin servers opened via gear context menu still appear in the picker. Reduces vertical footprint without removing any controls.
+
 ## [0.2.3] - 2026-04-24
 
 ### Fixed
