@@ -127,7 +127,7 @@ describe("<BridgesTab />", () => {
 
     // Type a token and save.
     const input = screen.getByTestId("bot-token-input");
-    await user.type(input, "MTIzNDU2Nzg5MDEyMzQ1Njc4.GA1234.abcdefghijklmnopqrstuv");
+    await user.type(input, "EXAMPLE_FAKE_TOKEN_NOPE_X.FAKE12.do_not_use_test_fixture");
 
     // After typing, update the mock status to reflect token stored.
     mockedStatus.mockResolvedValue({
@@ -143,7 +143,7 @@ describe("<BridgesTab />", () => {
 
     // Token argument should be the pasted value.
     expect(mockedSetToken).toHaveBeenCalledWith(
-      "MTIzNDU2Nzg5MDEyMzQ1Njc4.GA1234.abcdefghijklmnopqrstuv",
+      "EXAMPLE_FAKE_TOKEN_NOPE_X.FAKE12.do_not_use_test_fixture",
     );
   });
 

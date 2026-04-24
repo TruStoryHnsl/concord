@@ -1063,7 +1063,7 @@ mod tests {
 
     #[test]
     fn test_extract_yaml_value_bot_token() {
-        let yaml = "  bot_token: MTIzNDU2Nzg5MDEyMzQ1Njc4.GA1234.abcdefghij\n";
+        let yaml = "  bot_token: EXAMPLE_FAKE_TOKEN_NOPE_X.FAKE12.do_not_use\n";
         let token = extract_yaml_value(yaml, "bot_token");
         assert!(token.is_some());
         assert!(token.unwrap().starts_with("MTIzNDU2"));
@@ -1086,9 +1086,9 @@ mod tests {
         // GitHub Push Protection's secret scanner on the literal string.
         let fake_token = format!(
             "{}.{}.{}",
-            "MTIzNDU2Nzg5MDEyMzQ1Njc4", // base64("1234567890123456789")
+            "EXAMPLE_FAKE_TOKEN_NOPE_X", // 24-char placeholder, not a real token
             "GA1234",
-            "abcdefghijklmnopqrstuvwxyz12"
+            "do_not_use_test_fixture_only_xx"
         );
         let input = format!("token is {}", fake_token);
         let output = redact_for_logging(&input);
