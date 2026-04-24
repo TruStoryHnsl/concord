@@ -526,15 +526,16 @@ export default function App() {
             }
             video={false}
             options={{
-              // webAudioMix: true tells LiveKit to create and manage an
-              // AudioContext internally and attach it to any LocalAudioTrack
-              // the room publishes. Without this, LocalAudioTrack.audioContext
-              // is undefined and setProcessor() throws "Audio context needs
-              // to be set on LocalAudioTrack in order to enable processors",
-              // which cascades into an onError → voiceDisconnect →
-              // "Client initiated disconnect" cascade. Our ConcordNoiseGateProcessor
-              // reads opts.audioContext in init(), so this is load-bearing
-              // for the noise-gate / mic-volume / HP-filter pipeline.
+              // webAudioMix=true makes LiveKit set up an AudioContext at
+              // room level, so later ``track.setAudioContext(ctx)`` (which
+              // fires AFTER createLocalTracks in 26604 of the esm bundle)
+              // has something to hand the track. It does NOT help the
+              // createLocalTracks → setProcessor path that bit us in the
+              // three-toast pileup — see buildLiveKitAudioCaptureOptions
+              // for why we don't attach the processor via capture defaults
+              // at all. Keeping webAudioMix on is still useful for the
+              // per-track audioContext pipeline once attachments land, and
+              // makes setSinkId-style output device switching work.
               webAudioMix: true,
               audioCaptureDefaults: {
                 ...buildLiveKitAudioCaptureOptions({

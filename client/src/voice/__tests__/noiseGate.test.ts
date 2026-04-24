@@ -3,6 +3,7 @@ import {
   buildLiveKitAudioCaptureOptions,
   buildMicTrackConstraints,
   computeSignalLevelDb,
+  getVoiceInputProcessor,
   INPUT_NOISE_GATE_DB_DEFAULT,
   normalizeSignalLevelDbToMeter,
   resetVoiceInputProcessorForTests,
@@ -74,15 +75,30 @@ describe("noiseGate", () => {
     expect((constraints as MediaTrackConstraints & { voiceIsolation?: boolean }).voiceIsolation).toBe(true);
   });
 
-  it("attaches a singleton livekit processor to capture options", () => {
-    const first = buildLiveKitAudioCaptureOptions(baseSettings);
-    const second = buildLiveKitAudioCaptureOptions({
+  it("does NOT attach a processor to capture options", () => {
+    // Regression guard for the v0.4-era three-toast pileup: if the
+    // processor is passed via AudioCaptureOptions, LiveKit's
+    // createLocalTracks → setProcessor path runs before the room's
+    // setAudioContext, LocalAudioTrack.audioContext is still
+    // undefined, and setProcessor throws "Audio context needs to be
+    // set on LocalAudioTrack in order to enable processors". We
+    // instead attach the processor post-publish from VoiceChannel's
+    // useEffect (with a guard on micTrack.audioContext). Keep this
+    // test red if someone reintroduces the processor field here.
+    const opts = buildLiveKitAudioCaptureOptions(baseSettings);
+    expect((opts as { processor?: unknown }).processor).toBeUndefined();
+  });
+
+  it("returns the same processor singleton regardless of call count", () => {
+    // getVoiceInputProcessor backs the post-publish VoiceChannel path;
+    // its stability is what lets the useEffect bail out with
+    // "processor already current" on a no-op settings tick.
+    const a = getVoiceInputProcessor(baseSettings);
+    const b = getVoiceInputProcessor({
       ...baseSettings,
       inputNoiseGateThresholdDb: -36,
     });
-
-    expect(first.processor).toBeDefined();
-    expect(second.processor).toBe(first.processor);
-    expect(first.processor?.name).toBe("concord-noise-gate");
+    expect(a).toBe(b);
+    expect(a.name).toBe("concord-noise-gate");
   });
 });

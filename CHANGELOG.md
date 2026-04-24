@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-24
+
+### Fixed
+- **Voice chat crash *actually* fixed this time.** The v0.4.0 attempt added `webAudioMix: true` to `RoomOptions`, which was necessary but not sufficient: LiveKit's `Room.createLocalTracks` calls `track.setProcessor(...)` while the track is being constructed — *before* it runs `track.setAudioContext(this.audioContext)` in line 26604 of the esm bundle. So the processor check `!this.audioContext` always threw during track creation regardless of `webAudioMix`. The user kept seeing the three-toast pileup (`Microphone unavailable` → `Audio context needs to be set on LocalAudioTrack` → `Client initiated disconnect`). Real fix: `buildLiveKitAudioCaptureOptions` no longer includes a `processor` field. The noise-gate / HP filter / master-volume processor is attached exclusively post-publish via the guarded `useEffect` in `VoiceChannel.tsx`, which runs *after* LiveKit has wired `audioContext` onto the track. Added a regression test (`noiseGate.test.ts::does NOT attach a processor to capture options`) so a future refactor can't reintroduce the field without going red.
+
 ## [0.5.0] - 2026-04-24
 
 ### Changed — Discord user integration moved from bridge to OAuth2 (breaking)

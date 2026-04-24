@@ -294,8 +294,22 @@ export function resetVoiceInputProcessorForTests(): void {
 export function buildLiveKitAudioCaptureOptions(
   settings: VoiceInputSettings,
 ): AudioCaptureOptions {
-  return {
-    ...buildMicTrackConstraints(settings),
-    processor: getVoiceInputProcessor(settings),
-  };
+  // IMPORTANT: no ``processor`` key here. Passing one via capture options
+  // triggers LiveKit's ``createLocalTracks`` → internal ``setProcessor``
+  // call, which requires ``LocalAudioTrack.audioContext`` to be set.
+  // But LiveKit's Room only calls ``track.setAudioContext(...)`` AFTER
+  // ``createLocalTracks`` returns (see Room.mergedOptionsWithProcessors in
+  // livekit-client.esm.mjs), so the context attachment lands too late and
+  // the ``setProcessor`` throws
+  // ``Audio context needs to be set on LocalAudioTrack``. That cascades
+  // into ``onError → voiceDisconnect → "Client initiated disconnect"``
+  // — the three-toast pileup the user has reported.
+  //
+  // The processor is instead attached post-publish by the useEffect in
+  // ``VoiceChannel.tsx``, which guards on ``micTrack.audioContext`` and
+  // is invoked only once the track has been fully set up inside the
+  // room. That guard is the single source of truth for "is it safe to
+  // enable processors on this track" — don't add the processor back
+  // here without removing the guard there first.
+  return buildMicTrackConstraints(settings);
 }
