@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-04-24
+
+### Fixed
+- **First-boot picker re-appears on every refresh for pre-INS-050 instances.** Any Concord instance provisioned before the INS-050 Host/Join picker landed has an `instance.json` that records `default_server_seeded` / `welcome_posted` but was never migrated to carry the newer `first_boot_complete` flag. `/api/instance` returned `first_boot: true` on every request for those installs, so the picker was stuck in front of the real UI. Added `_is_first_boot(settings)` which honours the explicit flag when present but also treats either legacy provisioning marker as proof that first boot is long past. `/api/register` uses the same helper so the invite-gate bypass doesn't silently open on upgraded instances.
+
 ## [0.2.2] - 2026-04-23
 
 ### Removed

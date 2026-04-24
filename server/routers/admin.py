@@ -54,6 +54,24 @@ def _write_instance_settings(settings: dict) -> None:
     INSTANCE_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
 
 
+def _is_first_boot(settings: dict) -> bool:
+    """Decide whether the instance should show the first-boot picker.
+
+    The explicit ``first_boot_complete`` flag is the source of truth, but it
+    was introduced with INS-050 and is absent on instances provisioned before
+    that feature shipped. Those instances already have other provisioning
+    markers (a seeded default server, a posted welcome message) — treat any
+    of those as implicit proof that first boot is long past. Without this
+    migration the picker re-appears on every page refresh for upgraded
+    operators.
+    """
+    if settings.get("first_boot_complete", False):
+        return False
+    if settings.get("default_server_seeded") or settings.get("welcome_posted"):
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Instance info (public, no auth)
 # ---------------------------------------------------------------------------
@@ -75,7 +93,7 @@ async def get_instance():
     node_view = _public_node_view()
     import os
     open_reg = os.getenv("OPEN_REGISTRATION", "").lower() in ("true", "1", "yes")
-    first_boot = not settings.get("first_boot_complete", False)
+    first_boot = _is_first_boot(settings)
     return {
         "name": settings.get("name", INSTANCE_NAME_DEFAULT),
         "require_totp": settings.get("require_totp", False),

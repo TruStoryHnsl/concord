@@ -112,10 +112,14 @@ async def register_user(
     # token. Login for existing accounts is unaffected (different endpoint).
     # Exception: first boot (no first_boot_complete in instance.json) always
     # allows registration so the operator can create the initial admin account.
+    # Shares _is_first_boot with the /api/instance endpoint so upgraded
+    # instances (pre-INS-050 provisioning) aren't mis-classified as
+    # first-boot here either — that would silently relax the invite gate.
     import json
     from config import INSTANCE_SETTINGS_FILE
+    from routers.admin import _is_first_boot
     _inst = json.loads(INSTANCE_SETTINGS_FILE.read_text()) if INSTANCE_SETTINGS_FILE.exists() else {}
-    is_first_boot = not _inst.get("first_boot_complete", False)
+    is_first_boot = _is_first_boot(_inst)
 
     open_reg = os.getenv("OPEN_REGISTRATION", "").lower() in ("true", "1", "yes")
     if not is_first_boot and not open_reg and not body.invite_token:
