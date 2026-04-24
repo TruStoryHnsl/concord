@@ -589,6 +589,92 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Click an inline chat image → open it in a modal lightbox in the same
+ * app surface. Previously the image was wrapped in an `<a target="_blank">`
+ * which yanked the user to a new browser tab for every preview, breaking
+ * the stay-in-app experience and mobile tab hygiene.
+ *
+ * Controls:
+ *   - click the backdrop or close button → dismiss
+ *   - Esc → dismiss
+ *   - click the image itself → open the source URL in a new tab
+ *     (still available for "save as / share link" via the
+ *     escape-hatch link at the top-right)
+ */
+function ImageLightboxTrigger({
+  src,
+  alt,
+  children,
+}: {
+  src: string;
+  alt?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    // Lock body scroll while the overlay is up so a long chat behind
+    // the modal doesn't scroll under the user's mouse wheel.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="block p-0 border-0 bg-transparent text-left"
+        aria-label={alt ? `Open ${alt} in lightbox` : "Open image in lightbox"}
+      >
+        {children}
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setOpen(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <img
+            src={src}
+            alt={alt ?? ""}
+            className="max-w-full max-h-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="absolute top-4 right-16 px-3 py-1.5 text-xs text-on-surface bg-surface-container rounded-lg hover:bg-surface-container-high transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Open original
+          </a>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Close image lightbox"
+            className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-surface-container hover:bg-surface-container-high text-on-surface transition-colors"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function MessageContent({ message }: MessageContentProps) {
   if (message.redacted) {
     return (
@@ -601,11 +687,11 @@ export function MessageContent({ message }: MessageContentProps) {
   if (msgtype === "m.image" && url) {
     return (
       <div className="mt-1">
-        <a href={url} target="_blank" rel="noopener noreferrer">
+        <ImageLightboxTrigger src={url} alt={body}>
           <img
             src={url}
             alt={body}
-            className="max-w-sm max-h-80 rounded-lg object-contain"
+            className="max-w-sm max-h-80 rounded-lg object-contain cursor-zoom-in"
             style={
               info?.w && info?.h
                 ? {
@@ -616,7 +702,7 @@ export function MessageContent({ message }: MessageContentProps) {
             }
             loading="lazy"
           />
-        </a>
+        </ImageLightboxTrigger>
         {body && body !== "image" && (
           <p className="text-xs text-on-surface-variant mt-1">{body}</p>
         )}

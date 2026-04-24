@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-04-24
+
+### Changed
+- **Click an image in chat → in-app lightbox, not a new tab.** The `m.image` renderer previously wrapped every message image in `<a target="_blank">`, which kicked users to a new browser tab on every click and broke stay-in-app flow (especially on mobile). New `ImageLightboxTrigger` opens a full-screen overlay with the image; Esc or backdrop click closes it; a separate "Open original" button is still available for the save/share case. Body scroll is locked while the lightbox is up so the chat behind doesn't scroll under the mouse wheel.
+
 ## [0.4.1] - 2026-04-24
 
 ### Fixed
