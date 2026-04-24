@@ -209,6 +209,18 @@ async def user_discord_login(
     that landed, repeated login triggers produced a pile of orphan DM
     rooms and the "login" command often ended up in one the bot had
     never joined — the symptom was "UI says QR sent, but no DM arrives".
+
+    Second landmine: mautrix-discord tracks login state per-MXID in its
+    own SQLite DB. If the user has a stale session there (e.g. Discord
+    revoked the token from their side but the bridge hasn't noticed),
+    sending ``login`` gets the reply ``You're already logged in`` and
+    NO QR is produced. The UI shows a Connect button (status endpoint
+    is a stub that always returns ``connected: false``) so the user
+    clicks over and over and nothing happens. We defensively send
+    ``logout`` first and ignore the response — if there was no session
+    the bridge says "you're not logged in" and moves on; if there was
+    one, it's now cleared and the subsequent ``login`` produces a
+    fresh QR.
     """
     bridge_bot = _bridge_bot_mxid()
 
@@ -222,6 +234,21 @@ async def user_discord_login(
             status_code=502,
             detail=f"Could not create DM with bridge bot: {exc}",
         ) from exc
+
+    # Best-effort clear any stale bridge session before asking for a
+    # fresh QR. Fire-and-forget: we intentionally don't raise if the
+    # bridge rejects it (e.g. no session to clear) — the main event is
+    # the login command below. We sleep briefly after so the bridge
+    # has time to process the logout before the login lands, otherwise
+    # the "you're already logged in" reply races the session cleanup.
+    import asyncio
+    try:
+        await _send_as_user(access_token, room_id, "logout")
+        await asyncio.sleep(2.0)
+    except Exception as exc:
+        logger.info(
+            "user_discord_login: pre-login logout no-op for %s: %s", user_id, exc
+        )
 
     try:
         # Send "login" AS THE USER — mautrix-discord binds the Discord

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-04-24
+
+### Fixed
+- **Discord Connect silently returned "You're already logged in" and no QR.** The DM room and the `login` command were reaching the bridge (confirmed by inspecting the room timeline — @discordbot replied "You're already logged in"), but mautrix-discord tracks login state per-MXID in its own SQLite DB, so a stale session there short-circuited the QR generation. The `/api/users/me/discord` status endpoint is still a stub that always returns `connected: false`, so the UI kept showing Connect — and every click just refreshed the same error. `user_discord_login` now sends `logout` before `login` (with a 2s settle gap), clearing any stale bridge session so the `login` that follows actually produces a fresh QR.
+
 ## [0.4.2] - 2026-04-24
 
 ### Changed
