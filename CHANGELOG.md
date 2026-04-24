@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-04-24
+
+### Fixed
+- **Discord connection status now reflects real bridge state.** `GET /api/users/me/discord` was a stub that always returned `connected: false`, so the UI always showed Connect — even after a successful login. Clicking Connect on a connected account produced "You're already logged in" (invisibly) and ate the QR reply. The endpoint now opens (or reuses) the user's management DM with the bridge bot and scans recent messages for the bot's reply phrases (`already logged in`, `successfully logged in`, `pong` → connected; `not logged in`, `logged out` → disconnected). Best-effort — the real fix is the mautrix-discord provisioning API (shared-secret HTTP), but that requires bridge config changes operators haven't opted into.
+
+### Changed
+- **Dropped the pin icon next to DM threads.** The per-row pin/unpin button was unnecessary chrome. Pin state still affects sort order (pinned DMs render above the regular stack in the sidebar); the surface for toggling it just lives elsewhere now.
+
 ## [0.4.3] - 2026-04-24
 
 ### Fixed

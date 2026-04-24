@@ -169,16 +169,77 @@ async def _send_as_user(
 @router.get("/discord", response_model=DiscordConnectionStatus)
 async def user_discord_status(
     user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
 ) -> DiscordConnectionStatus:
-    """Return the caller's Discord connection status.
+    """Return the caller's Discord connection status by inspecting
+    the bridge bot's last few replies in the caller's management DM.
 
-    PR1: always returns ``connected: false`` with the caller's MXID.
-    The real check — querying the bridge's per-user session table —
-    lands in a follow-up PR once we wire per-user bridge-provisioning-
-    API access. For now, the endpoint exists so the frontend can
-    render the UI shell and wire its polling loop without the backend
-    returning 404s.
+    The mautrix-discord bridge does not expose its per-user session
+    state via an appservice-token endpoint. The proper fix is enabling
+    the bridge's provisioning API (shared-secret HTTP) — tracked as a
+    follow-up — but until that lands, we read the DM timeline: the
+    bridge bot's replies to prior ``login`` / ``logout`` commands are
+    strong signals for "is this user logged in right now?". The
+    heuristic walks messages newest-first and matches the first
+    phrase it recognises:
+
+      - "already logged in" / "logged in as" / "pong (logged in)"
+        → ``connected: true``
+      - "not logged in" / "logged out" / "log in"           → ``connected: false``
+      - nothing matched                                     → ``connected: false``
+
+    Always best-effort; returning ``connected: false`` on errors is
+    safe because the worst case is the UI shows Connect when the user
+    is already connected, and our login flow sends ``logout`` first
+    anyway (v0.4.3) so re-clicking just cycles the session cleanly.
     """
+    try:
+        room_id = await create_dm_room(
+            access_token, _bridge_bot_mxid(), user_id=user_id
+        )
+    except Exception as exc:
+        logger.info(
+            "user_discord_status: dm room lookup failed for %s: %s",
+            user_id, exc,
+        )
+        return DiscordConnectionStatus(connected=False, mxid=user_id)
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"{MATRIX_HOMESERVER_URL}/_matrix/client/v3/rooms/{room_id}/messages",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"dir": "b", "limit": "25"},
+            )
+            resp.raise_for_status()
+            chunk = resp.json().get("chunk") or []
+    except Exception as exc:
+        logger.info(
+            "user_discord_status: timeline fetch failed for %s: %s",
+            user_id, exc,
+        )
+        return DiscordConnectionStatus(connected=False, mxid=user_id)
+
+    bridge_bot = _bridge_bot_mxid()
+    for event in chunk:  # newest-first
+        if event.get("sender") != bridge_bot:
+            continue
+        if event.get("type") != "m.room.message":
+            continue
+        body = (event.get("content") or {}).get("body") or ""
+        low = body.lower()
+        # The order of these checks matters — "not logged in" must be
+        # tested before "logged in" because the latter is a substring.
+        if "not logged in" in low or "logged out" in low or "logout successful" in low:
+            return DiscordConnectionStatus(connected=False, mxid=user_id)
+        if (
+            "already logged in" in low
+            or "successfully logged in" in low
+            or "logged in as" in low
+            or "pong" in low  # mautrix ping reply includes "pong (logged in)"
+        ):
+            return DiscordConnectionStatus(connected=True, mxid=user_id)
+
     return DiscordConnectionStatus(connected=False, mxid=user_id)
 
 

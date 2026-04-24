@@ -79,17 +79,26 @@ async def test_status_returns_caller_mxid(
     client: AsyncClient,
     mock_matrix: dict[str, AsyncMock],
 ) -> None:
-    """Status endpoint echoes the CALLER's mxid, not someone else's."""
+    """Status endpoint echoes the CALLER's mxid, not someone else's.
+
+    v0.4.4 stopped being a stub — the status endpoint now inspects the
+    bridge bot's recent replies in the user's management DM to
+    derive connected state (since mautrix-discord's provisioning API
+    requires a shared-secret config that operators haven't set yet).
+    That means create_dm_room IS called here for the DM lookup, and
+    the timeline fetch may be attempted. Those calls are fine — the
+    test's core contract is "the response echoes MY mxid", which still
+    holds regardless of what side effects the implementation picks up.
+    """
     login_as("@alice:test.local")
     resp = await client.get("/api/users/me/discord")
     assert resp.status_code == 200
     body = resp.json()
     assert body["mxid"] == "@alice:test.local"
-    # PR1 reports false unconditionally; see the doc in the endpoint.
+    # With no prior DM timeline, the heuristic has nothing to match
+    # and defaults to "not connected" — same user-visible behaviour
+    # as the prior stub, just for a better reason.
     assert body["connected"] is False
-    # No side effects on a read.
-    assert mock_matrix["create_dm_room"].await_count == 0
-    assert mock_matrix["bot_send_message"].await_count == 0
 
 
 async def test_status_does_not_leak_other_user(
@@ -131,22 +140,34 @@ async def test_login_sends_login_command(
     client: AsyncClient,
     mock_matrix: dict[str, AsyncMock],
 ) -> None:
-    """Login posts the literal string 'login' to the DM room AS THE USER.
+    """Login posts 'login' to the DM room AS THE USER.
 
     mautrix-discord binds the Discord session to whichever MXID authored
     the 'login' message. We must send as the caller, not the concord-bot,
     or the wrong account gets bridged. The body must be exactly 'login'
     for mautrix's user-mode trigger to fire.
+
+    v0.4.3 also sends a preparatory 'logout' first to clear any stale
+    bridge session ("You're already logged in" was eating the QR reply
+    on prod). We check BOTH sends: the last one must be 'login', and
+    there must be a preceding 'logout'. If the sequence changes in the
+    future this test will catch the regression.
     """
     login_as("@alice:test.local")
     await client.post("/api/users/me/discord/login")
 
-    mock_matrix["send_as_user"].assert_awaited_once()
-    args, _ = mock_matrix["send_as_user"].call_args
-    # args: (access_token, room_id, body)
-    assert args[0] == "fake-token-for-tests"  # CALLER's token, not bot's
-    assert args[1] == "!roomid:test.local"
-    assert args[2] == "login"
+    # Expect two sends: logout, then login.
+    assert mock_matrix["send_as_user"].await_count == 2, (
+        f"expected logout+login, got {mock_matrix['send_as_user'].await_count} send(s)"
+    )
+    bodies = [call.args[2] for call in mock_matrix["send_as_user"].await_args_list]
+    assert bodies == ["logout", "login"], (
+        f"expected ['logout', 'login'] in order, got {bodies}"
+    )
+    # Both sends target the same DM room and are authored by the CALLER.
+    for call in mock_matrix["send_as_user"].await_args_list:
+        assert call.args[0] == "fake-token-for-tests"  # CALLER's token
+        assert call.args[1] == "!roomid:test.local"
 
 
 async def test_login_unauthenticated_rejected(client: AsyncClient) -> None:
