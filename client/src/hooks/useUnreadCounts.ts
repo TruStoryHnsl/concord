@@ -1,18 +1,93 @@
 import { useEffect, useState, useRef } from "react";
-import { RoomEvent, NotificationCountType, ClientEvent } from "matrix-js-sdk";
+import { RoomEvent, ClientEvent } from "matrix-js-sdk";
+import type { MatrixEvent, Room } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
 
 /** Event types the unread counter cares about. State events, reactions,
  *  receipts, and other ambient updates don't contribute to unread and
- *  marking them read doesn't decrement anything. We walk back from the
- *  end of the live timeline until we hit a message-shaped event so the
- *  read marker lands on the thing the user actually saw. */
+ *  marking them read doesn't decrement anything. */
 const UNREAD_CONTRIBUTING_TYPES = new Set([
   "m.room.message",
   "m.room.encrypted",
   "m.sticker",
   "m.call.invite",
 ]);
+
+/** How many unread we'll bother showing before clamping to "99+". */
+const UNREAD_DISPLAY_CAP = 99;
+
+/** Walk the live timeline backwards and return the most recent event whose
+ *  type contributes to the unread run. The server only treats certain event
+ *  types as "unread-contributing", so anchoring the read marker on the raw
+ *  tail (which might be a state event or a reaction) leaves the badge lit
+ *  even after the receipt round-trips. */
+function findLastUnreadContributingEvent(room: Room): MatrixEvent | null {
+  const timeline = room.getLiveTimeline().getEvents();
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const ev = timeline[i];
+    if (ev && UNREAD_CONTRIBUTING_TYPES.has(ev.getType())) {
+      return ev;
+    }
+  }
+  // Fallback: the raw tail, so a brand-new room with only state events
+  // still gets a receipt and doesn't sit forever on a stale anchor.
+  return timeline[timeline.length - 1] ?? null;
+}
+
+/** Deterministic, client-side unread count for a single room. We don't
+ *  trust `room.getUnreadNotificationCount(Total)` because tuwunel's push
+ *  count refresh after a read marker is unreliable — counts can persist
+ *  long after the receipt is acked, which is the user-visible "always
+ *  says the same thing" bug. Instead we walk the live timeline ourselves
+ *  and ask `room.hasUserReadEvent` per event, which consults the local
+ *  read-receipt state. */
+function computeUnreadForRoom(room: Room, userId: string): {
+  unread: number;
+  highlight: number;
+} {
+  const events = room.getLiveTimeline().getEvents();
+  let unread = 0;
+  let highlight = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (!ev) continue;
+    const type = ev.getType();
+    if (!UNREAD_CONTRIBUTING_TYPES.has(type)) continue;
+    // Don't count my own messages as unread.
+    if (ev.getSender() === userId) continue;
+    const evId = ev.getId();
+    if (!evId) continue;
+    // hasUserReadEvent walks both threaded and unthreaded receipts.
+    if (room.hasUserReadEvent(userId, evId)) {
+      // Everything older than this is also read — short-circuit.
+      break;
+    }
+    unread++;
+    // Highlight if the message explicitly mentions me via m.mentions
+    // or the body contains my MXID. Push-rule keyword matching isn't
+    // implemented client-side; this is the conservative subset.
+    const content = ev.getContent?.() ?? {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mentions = (content as any)["m.mentions"];
+    if (
+      mentions &&
+      Array.isArray(mentions.user_ids) &&
+      mentions.user_ids.includes(userId)
+    ) {
+      highlight++;
+      continue;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = (content as any).body;
+    if (typeof body === "string" && body.includes(userId)) {
+      highlight++;
+    }
+  }
+  return {
+    unread: Math.min(unread, UNREAD_DISPLAY_CAP + 1),
+    highlight,
+  };
+}
 
 async function markRoomRead(
   client: ReturnType<typeof useAuthStore.getState>["client"],
@@ -21,57 +96,45 @@ async function markRoomRead(
   if (!client) return;
   const room = client.getRoom(roomId);
   if (!room) return;
-  const timeline = room.getLiveTimeline().getEvents();
-  // Walk back to the last event that actually contributes to unread.
-  // Using the tail of the live timeline unconditionally means the marker
-  // often lands on a membership / receipt / redaction event whose id the
-  // server doesn't consider part of the room's "unread run" — the
-  // badge stays lit until the next message arrives and rescans.
-  let target = null;
-  for (let i = timeline.length - 1; i >= 0; i--) {
-    const ev = timeline[i];
-    if (ev && UNREAD_CONTRIBUTING_TYPES.has(ev.getType())) {
-      target = ev;
-      break;
-    }
-  }
-  // Fall back to the raw tail if no message-shaped event is visible (new
-  // or quiet room) — better to send a receipt than nothing.
-  const lastEvent = target ?? timeline[timeline.length - 1];
-  const lastEventId = lastEvent?.getId?.();
-  if (!lastEvent || !lastEventId) return;
+  const target = findLastUnreadContributingEvent(room);
+  const targetId = target?.getId?.();
+  if (!target || !targetId) return;
   try {
-    await client.setRoomReadMarkers(roomId, lastEventId, lastEvent);
+    await client.setRoomReadMarkers(roomId, targetId, target);
   } catch (err) {
     // Surface failures instead of swallowing — when the receipt doesn't
     // land the badge stays lit forever and the user has no signal for
-    // why. A console.warn at least shows up in a bug report.
+    // why.
     console.warn("[unread] setRoomReadMarkers failed", { roomId, err });
     throw err;
   }
 }
 
-export function useUnreadCounts(): Map<string, number> {
+/** Shared core for useUnreadCounts / useHighlightCounts. Subscribes to the
+ *  events that can change either count and invokes the supplied selector
+ *  to project a per-room number. */
+function useRoomCountMap(
+  selector: (per: { unread: number; highlight: number }) => number,
+): Map<string, number> {
   const client = useAuthStore((s) => s.client);
+  const userId = useAuthStore((s) => s.userId);
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevKeyRef = useRef<string>("");
 
   useEffect(() => {
-    if (!client) return;
+    if (!client || !userId) return;
 
     const update = () => {
       const rooms = client.getRooms();
       const map = new Map<string, number>();
       for (const room of rooms) {
-        const count = room.getUnreadNotificationCount(
-          NotificationCountType.Total,
-        );
-        if (count > 0) {
-          map.set(room.roomId, count);
+        const per = computeUnreadForRoom(room, userId);
+        const value = selector(per);
+        if (value > 0) {
+          map.set(room.roomId, value);
         }
       }
-      // Only update state if counts actually changed
       const key = Array.from(map.entries())
         .map(([id, c]) => `${id}:${c}`)
         .join(",");
@@ -81,9 +144,9 @@ export function useUnreadCounts(): Map<string, number> {
       }
     };
 
-    // Debounce: Timeline events fire very frequently (every message in any
-    // room triggers this). Without debouncing, we re-scan all rooms and
-    // allocate new Maps on every single event.
+    // Debounce: Timeline / Receipt events fire frequently. 200ms is short
+    // enough to feel instant when a receipt clears a badge, long enough
+    // that a burst of 50 incoming messages doesn't recompute 50 times.
     const debouncedUpdate = () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(update, 200);
@@ -94,7 +157,7 @@ export function useUnreadCounts(): Map<string, number> {
     client.on(RoomEvent.Timeline, debouncedUpdate);
     client.on(RoomEvent.Receipt, debouncedUpdate);
     // Account-data updates carry the `m.fully_read` marker — without
-    // this listener the badge stays lit until the next Receipt or
+    // this listener the badge can stay lit until the next Receipt or
     // Timeline event happens to bump the refresh.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.on(ClientEvent.AccountData as any, debouncedUpdate);
@@ -106,94 +169,36 @@ export function useUnreadCounts(): Map<string, number> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client.removeListener(ClientEvent.AccountData as any, debouncedUpdate);
     };
-  }, [client]);
+  }, [client, userId, selector]);
 
   return counts;
 }
 
-/**
- * Per-room "needs attention" highlight counts. Returns rooms that have
- * any highlight-worthy notification (@mentions, keyword alerts, DMs
- * by push rule) so the server tile can surface a yellow dot when a
- * channel inside it is actually asking for the user's attention, as
- * distinct from the ordinary unread indicator.
- *
- * Parallel implementation to `useUnreadCounts` above; kept as a
- * sibling hook rather than extended in-place so each consumer only
- * re-renders when ITS count map actually changes.
- */
+const selectUnread = (per: { unread: number; highlight: number }) => per.unread;
+const selectHighlight = (per: { unread: number; highlight: number }) => per.highlight;
+
+export function useUnreadCounts(): Map<string, number> {
+  return useRoomCountMap(selectUnread);
+}
+
 export function useHighlightCounts(): Map<string, number> {
-  const client = useAuthStore((s) => s.client);
-  const [counts, setCounts] = useState<Map<string, number>>(new Map());
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevKeyRef = useRef<string>("");
-
-  useEffect(() => {
-    if (!client) return;
-
-    const update = () => {
-      const rooms = client.getRooms();
-      const map = new Map<string, number>();
-      for (const room of rooms) {
-        const count = room.getUnreadNotificationCount(
-          NotificationCountType.Highlight,
-        );
-        if (count > 0) {
-          map.set(room.roomId, count);
-        }
-      }
-      const key = Array.from(map.entries())
-        .map(([id, c]) => `${id}:${c}`)
-        .join(",");
-      if (key !== prevKeyRef.current) {
-        prevKeyRef.current = key;
-        setCounts(map);
-      }
-    };
-
-    // Debounce: Timeline events fire very frequently (every message in any
-    // room triggers this). Without debouncing, we re-scan all rooms and
-    // allocate new Maps on every single event.
-    const debouncedUpdate = () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(update, 200);
-    };
-
-    update();
-
-    client.on(RoomEvent.Timeline, debouncedUpdate);
-    client.on(RoomEvent.Receipt, debouncedUpdate);
-    // Account-data updates carry the `m.fully_read` marker — without
-    // this listener the badge stays lit until the next Receipt or
-    // Timeline event happens to bump the refresh.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    client.on(ClientEvent.AccountData as any, debouncedUpdate);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      client.removeListener(RoomEvent.Timeline, debouncedUpdate);
-      client.removeListener(RoomEvent.Receipt, debouncedUpdate);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      client.removeListener(ClientEvent.AccountData as any, debouncedUpdate);
-    };
-  }, [client]);
-
-  return counts;
+  return useRoomCountMap(selectHighlight);
 }
 
 /**
  * Send read receipts for the active room.
  *
- * Fires on two triggers:
- *   1. Room switch — debounced 300ms after `roomId` changes, so opening a
- *      channel marks its latest event as read.
- *   2. Live message arrival — debounced 500ms after new timeline events land
- *      in the active room, so a user sitting in a channel doesn't see a
- *      ghost unread badge for a message they were literally looking at.
+ * Fires on every trigger that signals "the user is looking at this":
+ *   1. Room switch (debounced 300ms after `roomId` changes).
+ *   2. Live message arrival in the active room (debounced 500ms).
+ *   3. Tab/window becomes visible (visibilitychange → visible).
+ *   4. Window regains focus.
  *
- * Both triggers gate on visibility: `document.visibilityState === "visible"`
- * plus an optional caller-supplied `isVisible` (e.g. mobile view-switcher
- * state — false when the user is on the channels/settings tab, not chat).
+ * All triggers gate on visibility (`document.visibilityState === "visible"`
+ * + the caller's `isVisible` arg, which on mobile reflects the chat-pane
+ * tab state). Without the aggressive visibility/focus triggers, switching
+ * away from the tab while a message arrives leaves the badge stuck even
+ * after the user comes back and stares straight at the message.
  */
 export function useSendReadReceipt(
   roomId: string | null,
@@ -202,6 +207,7 @@ export function useSendReadReceipt(
   const client = useAuthStore((s) => s.client);
   const switchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Room-switch read receipt — fires once 300ms after roomId changes.
   useEffect(() => {
@@ -234,12 +240,10 @@ export function useSendReadReceipt(
       removed: boolean,
       data: { liveEvent?: boolean } | undefined,
     ) => {
-      // Ignore pagination, redactions, and non-live updates.
       if (removed) return;
       if (!data?.liveEvent) return;
       if (!room || room.roomId !== roomId) return;
 
-      // Visibility gate — only mark read if the user is actually looking.
       if (!isVisible) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
@@ -251,9 +255,6 @@ export function useSendReadReceipt(
       }, 500);
     };
 
-    // The matrix-js-sdk Timeline event signature is broader than what we
-    // need; cast through `any` at the listener boundary to keep the rest
-    // of the hook strictly typed.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     client.on(RoomEvent.Timeline, onTimeline as any);
 
@@ -261,6 +262,32 @@ export function useSendReadReceipt(
       if (liveDebounceRef.current) clearTimeout(liveDebounceRef.current);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client.removeListener(RoomEvent.Timeline, onTimeline as any);
+    };
+  }, [client, roomId, isVisible]);
+
+  // Visibility / focus read receipt — when the user returns to the tab or
+  // the window regains focus, mark the active room read. Without this, a
+  // message that arrives while the tab is hidden stays unread forever
+  // even after the user returns and visibly reads it.
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    if (!client || !roomId) return;
+    if (!isVisible) return;
+
+    const fire = () => {
+      if (document.visibilityState !== "visible") return;
+      if (focusDebounceRef.current) clearTimeout(focusDebounceRef.current);
+      focusDebounceRef.current = setTimeout(() => {
+        markRoomRead(client, roomId).catch(() => {});
+      }, 200);
+    };
+
+    document.addEventListener("visibilitychange", fire);
+    window.addEventListener("focus", fire);
+    return () => {
+      if (focusDebounceRef.current) clearTimeout(focusDebounceRef.current);
+      document.removeEventListener("visibilitychange", fire);
+      window.removeEventListener("focus", fire);
     };
   }, [client, roomId, isVisible]);
 }

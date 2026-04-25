@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-04-26
+
+### Fixed — unread counts are deterministic and decrement reliably
+- **"No matter how much I read in a channel the unread messages display always says the same thing."** `useUnreadCounts` and `useHighlightCounts` previously trusted `room.getUnreadNotificationCount(Total/Highlight)`, which is the homeserver-pushed count. Tuwunel doesn't reliably push a fresh count after a read marker is acked, so the badge stayed lit even though the receipt had landed. Replaced both hooks with a deterministic client-side scan: walk the live timeline backwards, ask `room.hasUserReadEvent(userId, eventId)` per event, count unread-contributing types from senders other than the current user. The count now drops to zero the moment the local read state advances, regardless of whether the homeserver gets around to telling us about it.
+- **Read receipts now fire on visibility/focus, not just on switch + live event.** Previously a message that arrived while the tab was in the background never got a receipt, even after the user returned and visibly read it. New `visibilitychange → visible` and window `focus` listeners in `useSendReadReceipt` re-fire `markRoomRead` for the active room (debounced 200ms), so coming back to the tab clears the badge.
+- Highlight counts are now computed client-side too — a message counts as a highlight when its `m.mentions.user_ids` contains the current user OR its body contains the user's MXID. Push-rule keyword matching isn't implemented (tuwunel doesn't reliably surface push rules either), but the conservative subset is still meaningful where the previous "always says the same thing" wasn't.
+- Test coverage: `useUnreadCounts.test.ts` now has 4 new cases covering the read-receipt boundary, own-message exclusion, and non-message-event filtering.
+
 ## [0.7.3] - 2026-04-25
 
 ### Fixed
