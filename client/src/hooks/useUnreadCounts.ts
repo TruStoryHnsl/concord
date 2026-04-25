@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { RoomEvent, ClientEvent } from "matrix-js-sdk";
+import { RoomEvent, ClientEvent, NotificationCountType } from "matrix-js-sdk";
 import type { MatrixEvent, Room } from "matrix-js-sdk";
 import { useAuthStore } from "../stores/auth";
 
@@ -29,9 +29,15 @@ function findLastUnreadContributingEvent(room: Room): MatrixEvent | null {
       return ev;
     }
   }
-  // Fallback: the raw tail, so a brand-new room with only state events
-  // still gets a receipt and doesn't sit forever on a stale anchor.
-  return timeline[timeline.length - 1] ?? null;
+  // No message-shaped event in the live timeline. Don't anchor a receipt
+  // on a state event — the homeserver doesn't treat state events as
+  // unread-contributing, so the receipt lands but the server-side
+  // notification count never decrements and the badge re-lights on the
+  // next sync push. Sparse-timeline rooms (lazy-load batched, freshly-
+  // synced app channels per v0.7.2) regularly hit this path. Returning
+  // null short-circuits markRoomRead → no spurious receipt; computeUnread
+  // already skips state events so the local count is 0 anyway.
+  return null;
 }
 
 /** Deterministic, client-side unread count for a single room. We don't
@@ -48,6 +54,13 @@ function computeUnreadForRoom(room: Room, userId: string): {
   const events = room.getLiveTimeline().getEvents();
   let unread = 0;
   let highlight = 0;
+  // Diagnostic trace — captured per call so the dev console shows exactly
+  // why the count came out the way it did. Activate in the browser with
+  // `localStorage.concordUnreadDebug = "1"` and reload.
+  const debug =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("concordUnreadDebug") === "1";
+  const trace: string[] = [];
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (!ev) continue;
@@ -58,7 +71,11 @@ function computeUnreadForRoom(room: Room, userId: string): {
     const evId = ev.getId();
     if (!evId) continue;
     // hasUserReadEvent walks both threaded and unthreaded receipts.
-    if (room.hasUserReadEvent(userId, evId)) {
+    const isRead = room.hasUserReadEvent(userId, evId);
+    if (debug) {
+      trace.push(`${evId.slice(0, 12)}…(${ev.getSender()?.slice(0, 8)}…)=${isRead ? "READ" : "UNREAD"}`);
+    }
+    if (isRead) {
       // Everything older than this is also read — short-circuit.
       break;
     }
@@ -83,6 +100,13 @@ function computeUnreadForRoom(room: Room, userId: string): {
       highlight++;
     }
   }
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[unread] room ${room.roomId} unread=${unread} hl=${highlight} timeline.len=${events.length} sdkTotal=${room.getUnreadNotificationCount(NotificationCountType.Total)}`,
+      trace.slice(0, 10),
+    );
+  }
   return {
     unread: Math.min(unread, UNREAD_DISPLAY_CAP + 1),
     highlight,
@@ -98,9 +122,22 @@ async function markRoomRead(
   if (!room) return;
   const target = findLastUnreadContributingEvent(room);
   const targetId = target?.getId?.();
+  const debug =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("concordUnreadDebug") === "1";
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[unread] markRoomRead ${roomId} → ${targetId?.slice(0, 12)}… (sender=${target?.getSender?.()?.slice(0, 12)}…, type=${target?.getType?.()})`,
+    );
+  }
   if (!target || !targetId) return;
   try {
     await client.setRoomReadMarkers(roomId, targetId, target);
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.log(`[unread] setRoomReadMarkers OK ${roomId}`);
+    }
   } catch (err) {
     // Surface failures instead of swallowing — when the receipt doesn't
     // land the badge stays lit forever and the user has no signal for
@@ -123,7 +160,23 @@ function useRoomCountMap(
   const prevKeyRef = useRef<string>("");
 
   useEffect(() => {
-    if (!client || !userId) return;
+    if (!client || !userId) {
+      const debug =
+        typeof localStorage !== "undefined" &&
+        localStorage.getItem("concordUnreadDebug") === "1";
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.log(`[unread] hook bailed — client=${!!client} userId=${userId}`);
+      }
+      return;
+    }
+    const debugMount =
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem("concordUnreadDebug") === "1";
+    if (debugMount) {
+      // eslint-disable-next-line no-console
+      console.log(`[unread] hook mounted (selector=${selector.name || "?"}, userId=${userId})`);
+    }
 
     const update = () => {
       const rooms = client.getRooms();
@@ -134,6 +187,15 @@ function useRoomCountMap(
         if (value > 0) {
           map.set(room.roomId, value);
         }
+      }
+      const debug =
+        typeof localStorage !== "undefined" &&
+        localStorage.getItem("concordUnreadDebug") === "1";
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[unread] update (selector=${selector.name || "?"}) — ${rooms.length} rooms scanned, ${map.size} have value > 0`,
+        );
       }
       const key = Array.from(map.entries())
         .map(([id, c]) => `${id}:${c}`)
@@ -212,6 +274,16 @@ export function useSendReadReceipt(
   // Room-switch read receipt — fires once 300ms after roomId changes.
   useEffect(() => {
     if (switchDebounceRef.current) clearTimeout(switchDebounceRef.current);
+
+    const debug =
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem("concordUnreadDebug") === "1";
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[unread] useSendReadReceipt switch effect — client=${!!client} roomId=${roomId} isVisible=${isVisible} docVisible=${typeof document !== "undefined" ? document.visibilityState : "n/a"}`,
+      );
+    }
 
     if (!client || !roomId) return;
     if (!isVisible) return;
