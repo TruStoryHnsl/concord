@@ -149,6 +149,16 @@ export async function apiFetch<T>(
     throw new Error(message);
   }
 
+  // 204 No Content (and any other empty-body 2xx) — `.json()` would
+  // throw "unexpected end of JSON" because the body is the empty
+  // string. The DELETE endpoints in admin_extensions / admin invites /
+  // user OAuth and the POST /extensions/reload all return 204 by
+  // design; callers type those as Promise<void>. Returning undefined
+  // here makes that contract correct rather than silently broken.
+  if (resp.status === 204 || resp.headers.get("content-length") === "0") {
+    return undefined as T;
+  }
+
   return resp.json();
 }
 
