@@ -54,6 +54,13 @@ function computeUnreadForRoom(room: Room, userId: string): {
   const events = room.getLiveTimeline().getEvents();
   let unread = 0;
   let highlight = 0;
+  // Diagnostic trace — captured per call so the dev console shows exactly
+  // why the count came out the way it did. Activate in the browser with
+  // `localStorage.concordUnreadDebug = "1"` and reload.
+  const debug =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("concordUnreadDebug") === "1";
+  const trace: string[] = [];
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (!ev) continue;
@@ -64,7 +71,11 @@ function computeUnreadForRoom(room: Room, userId: string): {
     const evId = ev.getId();
     if (!evId) continue;
     // hasUserReadEvent walks both threaded and unthreaded receipts.
-    if (room.hasUserReadEvent(userId, evId)) {
+    const isRead = room.hasUserReadEvent(userId, evId);
+    if (debug) {
+      trace.push(`${evId.slice(0, 12)}…(${ev.getSender()?.slice(0, 8)}…)=${isRead ? "READ" : "UNREAD"}`);
+    }
+    if (isRead) {
       // Everything older than this is also read — short-circuit.
       break;
     }
@@ -89,6 +100,13 @@ function computeUnreadForRoom(room: Room, userId: string): {
       highlight++;
     }
   }
+  if (debug && unread > 0) {
+    // eslint-disable-next-line no-console
+    console.debug(
+      `[unread] ${room.roomId} unread=${unread} hl=${highlight} timeline.len=${events.length}`,
+      trace.slice(0, 10),
+    );
+  }
   return {
     unread: Math.min(unread, UNREAD_DISPLAY_CAP + 1),
     highlight,
@@ -104,9 +122,22 @@ async function markRoomRead(
   if (!room) return;
   const target = findLastUnreadContributingEvent(room);
   const targetId = target?.getId?.();
+  const debug =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("concordUnreadDebug") === "1";
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.debug(
+      `[unread] markRoomRead ${roomId} → ${targetId?.slice(0, 12)}… (sender=${target?.getSender?.()?.slice(0, 12)}…, type=${target?.getType?.()})`,
+    );
+  }
   if (!target || !targetId) return;
   try {
     await client.setRoomReadMarkers(roomId, targetId, target);
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.debug(`[unread] setRoomReadMarkers OK ${roomId}`);
+    }
   } catch (err) {
     // Surface failures instead of swallowing — when the receipt doesn't
     // land the badge stays lit forever and the user has no signal for
