@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-25
+
+### Changed
+- App-channel section header in `ChannelSidebar` reads `Applications` instead of `Apps`. Matches the user-facing terminology in product copy and the requested label.
+
 ## [0.7.0] - 2026-04-25
 
 ### Added — app channels (extensions as channels under "Applications")
