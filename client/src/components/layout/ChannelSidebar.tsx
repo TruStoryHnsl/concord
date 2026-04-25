@@ -502,12 +502,12 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
           </div>
         )}
 
-        {/* Apps section — app channels installed by the server admin */}
+        {/* Applications section — app channels installed by the server admin */}
         {(appChannels.length > 0 || (isOwner && showAdminControls)) && (
           <div className="mb-3">
             <div className="flex items-center justify-between px-2 mb-1">
               <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
-                Apps
+                Applications
               </h3>
             </div>
             {appChannels.map((ch) => {
