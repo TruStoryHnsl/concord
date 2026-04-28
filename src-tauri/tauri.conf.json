@@ -42,8 +42,7 @@
     ],
     "resources": [
       "resources/tuwunel/**/*",
-      "resources/dendrite/**/*",
-      "resources/discord_bridge/**/*"
+      "resources/dendrite/**/*"
     ],
     "linux": {
       "deb": {
