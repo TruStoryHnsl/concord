@@ -198,7 +198,7 @@ log "Locating Concord.exe on remote..."
 LOCATE_CMD=$(cat <<'PS'
 $candidates = @(
     "$env:ProgramFiles\Concord\Concord.exe",
-    "$env:ProgramFiles(x86)\Concord\Concord.exe",
+    "${env:ProgramFiles(x86)}\Concord\Concord.exe",
     "$env:LOCALAPPDATA\Programs\Concord\Concord.exe"
 )
 $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
