@@ -122,6 +122,26 @@ cargo tauri dev      # development
 cargo tauri build    # produces a native installer for your OS
 ```
 
+#### Windows installer
+
+CI ([`.github/workflows/windows-build.yml`](.github/workflows/windows-build.yml)) builds an MSI and an NSIS `.exe` on every push to `main`. Grab the artifact:
+
+1. Open the latest **Windows build** run on [GitHub Actions](https://github.com/TruStoryHnsl/concord/actions/workflows/windows-build.yml).
+2. Download either `concord-windows-msi` or `concord-windows-nsis` from the run's Artifacts panel (14-day retention).
+3. Unzip; double-click the installer.
+
+You'll see **"Windows protected your PC"** on first launch. The build is unsigned (no code-signing cert yet), so SmartScreen warns on every download. Click **More info → Run anyway** to proceed. Once signing lands the warning goes away — tracked separately, not blocking on it for the open-source distribution.
+
+What the first launch looks like:
+
+- Installer drops Concord to `%PROGRAMFILES%\Concord\` (MSI) or `%LOCALAPPDATA%\Programs\Concord\` (NSIS / per-user install).
+- The app boots into a **Server Picker** screen (Join an existing server / Host your own). It does NOT pre-configure any server — you point it at a Concord or Matrix homeserver of your choice. Enter `concordchat.net` if you want to try the public instance.
+- Embedded chat database (tuwunel) lives at `%APPDATA%\concord\tuwunel\` and is preserved across reinstalls. App config (server URL, encryption keys) lives at `%APPDATA%\com.concord.chat\` and is wiped by uninstall.
+
+Building it yourself on Windows: see [`docs/native-apps/windows-install.md`](docs/native-apps/windows-install.md) for the full bootstrap (`scripts/win-dev-bootstrap.ps1`) + native build (`scripts/build_windows_native.ps1`).
+
+> Note: cross-compiling Windows installers from Linux is currently blocked by libsodium-sys-stable's POSIX-only build deps in the iota_stronghold tree. Use the Windows CI workflow or a real Windows host. `scripts/build_windows_wsl.sh` exits with a clear diagnostic if you try.
+
 Day-to-day:
 
 ```bash
