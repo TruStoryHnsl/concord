@@ -937,10 +937,44 @@ impl Transport for DendriteFederationTransport {
             if let Some(child) = self.child.as_mut() {
                 match child.try_wait() {
                     Ok(Some(status)) => {
+                        // Drain stderr + stdout so the user can SEE
+                        // why dendrite refused to start instead of
+                        // staring at "exit code: 1". Best-effort —
+                        // limited to 16 KB each so a misbehaving
+                        // child can't blow the heap.
+                        use tokio::io::AsyncReadExt;
+                        let mut stderr_buf = Vec::with_capacity(4096);
+                        let mut stdout_buf = Vec::with_capacity(4096);
+                        if let Some(mut e) = child.stderr.take() {
+                            let _ = e.take(16 * 1024).read_to_end(&mut stderr_buf).await;
+                        }
+                        if let Some(mut o) = child.stdout.take() {
+                            let _ = o.take(16 * 1024).read_to_end(&mut stdout_buf).await;
+                        }
+                        let stderr_s = String::from_utf8_lossy(&stderr_buf);
+                        let stdout_s = String::from_utf8_lossy(&stdout_buf);
+                        // Persist to data_dir so a user can scp/post
+                        // the log even after the dialog closes.
+                        let log_path = self
+                            .data_dir
+                            .as_ref()
+                            .map(|d| d.join("dendrite-startup-failure.log"))
+                            .unwrap_or_else(|| {
+                                std::path::PathBuf::from("dendrite-startup-failure.log")
+                            });
+                        let _ = tokio::fs::write(
+                            &log_path,
+                            format!(
+                                "exit_status: {status}\n--- stderr ---\n{stderr_s}\n--- stdout ---\n{stdout_s}\n",
+                            ),
+                        )
+                        .await;
                         self.child = None;
                         return Err(TransportError::StartFailed(format!(
-                            "dendrite exited during startup: {}",
-                            status
+                            "dendrite exited during startup: {status}; stderr: {}; stdout: {}; full log at {}",
+                            stderr_s.trim().chars().take(500).collect::<String>(),
+                            stdout_s.trim().chars().take(200).collect::<String>(),
+                            log_path.display(),
                         )));
                     }
                     Ok(None) => {}
