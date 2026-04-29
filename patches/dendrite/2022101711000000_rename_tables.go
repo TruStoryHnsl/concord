@@ -13,8 +13,10 @@
 // Since Concord-bundled dendrite is always a fresh install, the
 // rename migration is unnecessary: the post-migration schema's
 // `CREATE TABLE IF NOT EXISTS userapi_*` statements produce the
-// correct layout from scratch. Make UpRenameTables a no-op so the
-// migration tracking row is recorded as run and dendrite proceeds.
+// correct layout from scratch. Make Up/DownRenameTables a no-op so
+// the migration tracking row is recorded as run and dendrite
+// proceeds. Both functions are retained because storage.go references
+// them by name in its migration registration list.
 //
 // This file is dropped over the upstream original by
 // .github/workflows/build-dendrite-windows.yml before `go build`.
@@ -28,6 +30,12 @@ import (
 )
 
 func UpRenameTables(ctx context.Context, tx *sql.Tx) error {
+	_ = ctx
+	_ = tx
+	return nil
+}
+
+func DownRenameTables(ctx context.Context, tx *sql.Tx) error {
 	_ = ctx
 	_ = tx
 	return nil
