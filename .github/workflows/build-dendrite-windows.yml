@@ -108,12 +108,45 @@ jobs:
           echo "Resolved dendrite version: $v"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout Concord (for patches)
+        uses: actions/checkout@v4
+        with:
+          path: concord-src
+          fetch-depth: 1
+
       - name: Checkout dendrite source
         uses: actions/checkout@v4
         with:
           repository: matrix-org/dendrite
           ref: ${{ steps.resolve.outputs.version }}
           fetch-depth: 0
+          path: dendrite-src
+
+      - name: Apply Concord patches over dendrite source
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The userapi rename_tables migration fails on fresh Windows
+          # SQLite installs ("SQL logic error: near 'EXISTS'") because
+          # the pure-Go SQLite library bundled into the cross-compiled
+          # Windows build has stricter parsing than dendrite's
+          # migration framework expects. Replace it with a no-op —
+          # Concord-bundled dendrite is always a fresh install, so the
+          # rename is unnecessary; the post-migration `CREATE TABLE
+          # IF NOT EXISTS` produces the right schema from scratch.
+          target="dendrite-src/userapi/storage/sqlite3/deltas/2022101711000000_rename_tables.go"
+          patch_src="concord-src/patches/dendrite/2022101711000000_rename_tables.go"
+          if [[ ! -f "$target" ]]; then
+            echo "ERROR: target file missing at $target — dendrite layout changed?"
+            exit 1
+          fi
+          if [[ ! -f "$patch_src" ]]; then
+            echo "ERROR: patch file missing at $patch_src — Concord checkout layout changed?"
+            exit 1
+          fi
+          cp "$patch_src" "$target"
+          echo "--- patched $target ---"
+          head -40 "$target"
 
       - name: Set up Go toolchain
         uses: actions/setup-go@v5
@@ -128,13 +161,14 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-dendrite-${{ runner.os }}-${{ steps.resolve.outputs.version }}-${{ hashFiles('go.sum') }}
+          key: go-dendrite-${{ runner.os }}-${{ steps.resolve.outputs.version }}-${{ hashFiles('dendrite-src/go.sum') }}
           restore-keys: |
             go-dendrite-${{ runner.os }}-${{ steps.resolve.outputs.version }}-
             go-dendrite-${{ runner.os }}-
 
       - name: Print toolchain + dendrite layout (debug)
         shell: bash
+        working-directory: dendrite-src
         run: |
           go version
           echo "--- top-level files ---"
@@ -146,6 +180,7 @@ jobs:
 
       - name: Build dendrite.exe + create-account.exe + generate-keys.exe (cross GOOS=windows)
         shell: bash
+        working-directory: dendrite-src
         env:
           GOOS: windows
           GOARCH: amd64
@@ -174,6 +209,7 @@ jobs:
 
       - name: Sanity-check .exe outputs (size + PE MZ magic)
         shell: bash
+        working-directory: dendrite-src
         env:
           OUT_DIR: out
         run: |
@@ -207,7 +243,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dendrite-windows-${{ steps.resolve.outputs.version }}
-          path: out/*.exe
+          path: dendrite-src/out/*.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -236,8 +272,8 @@ jobs:
             Source-of-truth dendrite releases:
             https://github.com/matrix-org/dendrite/releases.
           files: |
-            out/dendrite.exe
-            out/create-account.exe
-            out/generate-keys.exe
+            dendrite-src/out/dendrite.exe
+            dendrite-src/out/create-account.exe
+            dendrite-src/out/generate-keys.exe
           fail_on_unmatched_files: true
           token: ${{ secrets.GITHUB_TOKEN }}
