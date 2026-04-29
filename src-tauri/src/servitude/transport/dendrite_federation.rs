@@ -217,6 +217,13 @@ pub fn render_dendrite_config(
     let sqlite_dsn = format!("file:{}/{}", dd, DENDRITE_SQLITE_FILENAME);
     let media_dir = format!("{}/media_store", dd);
     let jetstream_dir = format!("{}/jetstream", dd);
+    // Dendrite's logging hook types are platform-gated. Linux supports
+    // `std`, `syslog`, and `file`; Windows (per upstream's
+    // log_windows.go:45 SetupHookLogging) only accepts `file`. Use the
+    // `file` hook universally so the same config works on every
+    // platform — empirically observed on corr@win11 / 2026-04-28
+    // ("Unrecognised logging hook type: std" with type: std).
+    let logs_dir = format!("{}/logs", dd);
 
     // Heredoc-style string. Comments are sparse; the upstream
     // dendrite-sample.yaml is the reference.
@@ -323,8 +330,10 @@ user_api:
     connection_string: {sqlite_dsn}
 
 logging:
-  - type: std
+  - type: file
     level: info
+    params:
+      path: {logs_dir}
 
 tracing:
   enabled: false
@@ -343,6 +352,7 @@ tracing:
         jetstream_dir = jetstream_dir,
         media_dir = media_dir,
         shared_secret = shared_secret,
+        logs_dir = logs_dir,
     )
     + &format!(
         "\n# Listener — bound to 127.0.0.1:{port}, plain HTTP, monolith mode.\n",
