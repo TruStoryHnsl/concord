@@ -344,6 +344,48 @@ class DisposableNode(Base):
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class Extension(Base):
+    """Runtime-installed extension (INS-066 W1).
+
+    Each row corresponds to an extension installed via
+    POST /api/extensions/install. The legacy static catalog
+    (installed_extensions.json) is still honoured as a fallback for
+    pre-INS-066 deployments — new installs write here, and the listing
+    endpoint merges DB rows with the static catalog (DB authoritative
+    on collision).
+
+    Columns:
+      id          reverse-domain extension identifier (e.g.
+                  ``com.concord.orrdia-bridge``). Primary key.
+      version     semver string from the manifest.
+      pricing     manifest ``pricing`` field (``"free"``, ``"paid"``,
+                  etc.). Defaults to ``"free"`` so pre-paid manifests
+                  don't accidentally insert NULL.
+      enabled     admin toggle to hide an installed extension without
+                  uninstalling. Defaults True.
+      cached_at   install timestamp (UTC). Set on insert; not updated
+                  on enable/disable.
+      remote_url  origin URL the ``.zip`` was fetched from. NULL for
+                  sideloaded local installs.
+      manifest    full validated manifest JSON, stored as TEXT (SQLite
+                  has no native JSON column; downstream readers
+                  ``json.loads()`` it). Includes the ``permissions``
+                  array enforced by W7.
+    """
+
+    __tablename__ = "extensions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    pricing: Mapped[str] = mapped_column(String, default="free")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    cached_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    remote_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    manifest: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class PlaceLedgerHeader(Base):
     """Compressed snapshot of a place ledger after a re-mint.
 
