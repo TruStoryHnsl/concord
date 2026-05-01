@@ -344,6 +344,20 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).warning("Lobby welcome setup failed: %s", e)
 
     extensions.init_catalog()
+    # INS-066-FUP-C: one-shot migration of static-catalog entries to DB
+    # rows so ``GET /api/extensions`` surfaces a permissions array for
+    # every extension and the ext_proxy fetch:external gate covers them
+    # uniformly. Idempotent — already-DB-installed extensions are not
+    # touched. Failure here does NOT crash startup (logged + skipped).
+    try:
+        from database import async_session as _async_session
+        async with _async_session() as _db:
+            await extensions.migrate_static_catalog(_db)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Static-catalog DB migration failed (continuing without it): %s", e
+        )
     # INS-066 W3: mount StaticFiles routes for every installed extension
     # found under EXTENSIONS_DIR. Subsequent installs register their
     # mounts at request time via routers.extensions.register_mount().
@@ -663,7 +677,10 @@ app.include_router(explore.router)
 app.include_router(wellknown.router)
 app.include_router(extensions.router)
 app.include_router(admin_extensions.router)
-app.include_router(admin_extensions.public_router)
+# Note (INS-066-FUP-B): the legacy `admin_extensions.public_router`
+# previously served /ext/{id}/ via FileResponse — removed in favor
+# of the canonical `routers.extensions` StaticFiles mount registered
+# in the lifespan via `extensions.mount_installed(app)`.
 app.include_router(ext_proxy.router)
 app.include_router(ext_proxy.admin_router)
 app.include_router(rooms.router)

@@ -344,3 +344,57 @@ describe("INS-066 W6 — extension:send_state_event handling", () => {
     });
   });
 });
+
+// =====================================================================
+// Cold-reader negative coverage (INS-066-FUP-D)
+// ---------------------------------------------------------------------
+// The cases above all stub iframe.contentWindow.postMessage with a
+// vi.fn(). That stub silently records the message regardless of the
+// `targetOrigin` argument. The targetOrigin contract is unit-tested
+// directly in `sdk.postToFrame.test.ts` (delivered alongside FUP-F),
+// where the second arg is asserted explicitly.
+//
+// The negative case below pins the W6 permission-denied reply
+// channel: a denied verb must surface the canonical envelope to the
+// source window, not silently drop. Without this assertion, a
+// regression that swallowed the `event.source.postMessage` call
+// would leave extensions waiting forever on a verb the shell quietly
+// ignored.
+// =====================================================================
+
+describe("INS-066-FUP-D — permission_denied reply is delivered, not dropped", () => {
+  it("emits permission_denied to the source window when manifest lacks the perm", () => {
+    const replies: Array<[unknown, string]> = [];
+    const onSend = vi.fn();
+    render(
+      <ExtensionSurfaceManager
+        {...COMMON_PROPS}
+        sdkInit={SDK_INIT}
+        manifestPermissions={["fetch:external"]}
+        roomId="!room:test.local"
+        onSendStateEvent={onSend}
+      />,
+    );
+
+    const fakeSource: Pick<Window, "postMessage"> = {
+      postMessage: ((m: unknown, targetOrigin?: string) =>
+        replies.push([m, targetOrigin ?? ""])) as Window["postMessage"],
+    };
+    const ev = new MessageEvent("message", {
+      data: {
+        type: "extension:send_state_event",
+        payload: { eventType: "x", content: {} },
+        version: CONCORD_SDK_VERSION,
+      },
+      source: fakeSource as unknown as MessageEventSource,
+    });
+    window.dispatchEvent(ev);
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(replies).toHaveLength(1);
+    expect(replies[0][0]).toMatchObject({
+      type: "concord:permission_denied",
+      payload: { reason: "manifest_missing_permission" },
+    });
+  });
+});

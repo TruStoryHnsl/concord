@@ -116,15 +116,41 @@ class ConcordClientWellKnown(BaseModel):
     )
 
 
+def _domain_for_server_name(server_name: str) -> str:
+    """INS-051: expand a bare slug to ``<slug>.<DEFAULT_DOMAIN_ROOT>``.
+
+    If ``server_name`` already contains a dot, treat it as a fully
+    qualified host and return it unchanged. If it's a bare label (no
+    dots) and not the literal ``localhost`` sentinel, advertise it under
+    the default domain root (``concordchat.net`` by default; overridable
+    via ``CONCORD_DEFAULT_DOMAIN_ROOT``).
+
+    Examples:
+        "alpha"                 -> "alpha.concordchat.net"
+        "concord.example.com"   -> "concord.example.com" (unchanged)
+        "localhost"             -> "localhost"            (unchanged)
+    """
+    from config import CONCORD_DEFAULT_DOMAIN_ROOT
+
+    s = server_name.strip().lstrip(".")
+    if not s:
+        return s
+    if s == "localhost":
+        return s
+    if "." in s:
+        return s
+    return f"{s}.{CONCORD_DEFAULT_DOMAIN_ROOT}"
+
+
 def _resolve_api_base() -> str:
     """Derive the canonical Concord API base URL from env.
 
     Prefers ``PUBLIC_BASE_URL`` (explicit override) if set, else
-    synthesises ``https://<CONDUWUIT_SERVER_NAME>/api`` from the
-    already-required homeserver name. The result never carries a
-    trailing slash because the client's Pydantic wire-model on the
-    other side rejects one (same rule the Matrix spec enforces on
-    homeserver base URLs).
+    synthesises ``https://<expanded>/api`` from the homeserver name,
+    expanding bare slugs to ``<slug>.<DEFAULT_DOMAIN_ROOT>`` per
+    INS-051. The result never carries a trailing slash because the
+    client's Pydantic wire-model on the other side rejects one (same
+    rule the Matrix spec enforces on homeserver base URLs).
     """
     override = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
     if override:
@@ -136,7 +162,7 @@ def _resolve_api_base() -> str:
         # proxies this endpoint runs with the same env as concord-api
         # so this is a configuration bug, not a runtime error.
         server_name = "localhost"
-    return f"https://{server_name}/api"
+    return f"https://{_domain_for_server_name(server_name)}/api"
 
 
 def _resolve_livekit_url() -> str | None:
@@ -147,14 +173,15 @@ def _resolve_livekit_url() -> str | None:
     wss:// endpoint routed by Caddy at ``/livekit/``. We synthesise
     that public URL from ``CONDUWUIT_SERVER_NAME`` so the value is
     always consistent with how Caddy actually proxies the signaling
-    channel. If the homeserver name is missing the caller is
-    misconfigured, so we return ``None`` and the client disables
-    voice rather than connecting to a bogus URL.
+    channel. INS-051: bare-slug server names get expanded under the
+    default domain root (``concordchat.net``). If the homeserver name
+    is missing the caller is misconfigured, so we return ``None`` and
+    the client disables voice rather than connecting to a bogus URL.
     """
     server_name = os.environ.get("CONDUWUIT_SERVER_NAME", "").strip()
     if not server_name:
         return None
-    return f"wss://{server_name}/livekit/"
+    return f"wss://{_domain_for_server_name(server_name)}/livekit/"
 
 
 def _resolve_instance_name() -> str | None:

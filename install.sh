@@ -416,9 +416,11 @@ wizard_step_3() {
     echo ""
     echo -e "${DIM}This is the domain your users will visit to reach your server.${NC}"
     echo -e "${DIM}It must already be on Cloudflare (free plan works).${NC}"
+    echo -e "${DIM}If you have no custom domain, the canonical Concord default${NC}"
+    echo -e "${DIM}is <slug>.concordchat.net (INS-051).${NC}"
     echo ""
 
-    read_input "Domain (e.g. chat.example.com): " "${DOMAIN:-}" DOMAIN || return 1
+    read_input "Domain (e.g. chat.example.com or alpha.concordchat.net): " "${DOMAIN:-}" DOMAIN || return 1
 
     if [ -z "$DOMAIN" ]; then
       warn "A domain is required for tunnel setup."

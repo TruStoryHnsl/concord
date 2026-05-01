@@ -118,6 +118,11 @@ services:
       # INS-050: Pre-populates the domain confirm field in the first-boot Host/Join picker.
       # Defaults to CONDUWUIT_SERVER_NAME if not set explicitly.
       CONCORD_DOMAIN: ${CONCORD_DOMAIN:-${CONDUWUIT_SERVER_NAME}}
+      # INS-051: canonical default domain root. Bare-slug server names
+      # are advertised as <slug>.concordchat.net unless overridden
+      # explicitly via CONCORD_DEFAULT_DOMAIN_ROOT (alternate forks
+      # who maintain a different generic domain).
+      CONCORD_DEFAULT_DOMAIN_ROOT: ${CONCORD_DEFAULT_DOMAIN_ROOT:-concordchat.net}
       # FastAPI CORSMiddleware allow-origins. When unset, main.py falls back
       # to a localhost/tauri-only default. Operators add their public
       # hostname(s) here so cross-origin flows work — e.g. adding a
@@ -152,6 +157,10 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    # See docs/voice/port-coherence.md for the four-file port contract.
+    # The container-side range here (right of `:`) MUST equal
+    # config/livekit.yaml rtc.port_range_start..port_range_end.
+    # CI's config-lint job enforces this on every PR.
     ports:
       - "${LIVEKIT_TCP_PORT:-7881}:7881"
       - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
@@ -160,6 +169,18 @@ services:
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
     command: --config /etc/livekit.yaml
+    # INS-067 W3 (deferred): a runtime UDP-bound healthcheck would
+    # detect the docker-port-mapping black-hole that caused the
+    # 2026-05-01 incident, but LiveKit doesn't pre-bind the ICE range
+    # — UDP sockets open on-demand per peer connection. At idle,
+    # /proc/net/udp{,6} contain ZERO entries for the port_range. There
+    # is no practical container-side health probe that succeeds at
+    # idle and detects misconfig. The catch-the-misconfig safeguards
+    # are: (1) INS-067 W2's static config-coherence linter (catches
+    # drift at PR time), (2) INS-067 W1's CI smoke (boots the stack
+    # and exercises a real relay allocation against the actual host
+    # port mapping). Filed as INS-067-FUP if a sidecar-based runtime
+    # check is wanted later.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
       interval: 30s

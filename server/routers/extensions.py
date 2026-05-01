@@ -138,6 +138,93 @@ def init_catalog() -> None:
     logger.info("Loaded %d static extension(s)", len(_catalog))
 
 
+# ── Static-catalog → DB migration (INS-066-FUP-C) ───────────────
+#
+# Pre-INS-066 deployments registered extensions via the static JSON
+# catalog (server/extensions.json or <DATA_DIR>/installed_extensions.json).
+# Those entries have NO DB row, so the W7 fetch:external permission gate
+# in ext_proxy short-circuits to "deny" (defensive default) but uniformity
+# matters for two reasons:
+#
+#   1. Operators expect ``GET /api/extensions`` to surface a `permissions`
+#      array for every extension, not silently empty for legacy ones.
+#   2. The ext_proxy gate checks for the row first; an absent row reads
+#      identically to "extension uninstalled" and returns 404, not 403.
+#      That's the wrong error code for a still-active legacy extension.
+#
+# The fix is a one-shot, idempotent on-boot migration: for each static
+# entry without a DB row, create a synthetic row with permissions=[].
+# Legacy extensions therefore get the most-restrictive policy by default
+# — admins must explicitly re-install via POST /api/extensions/install
+# to grant `fetch:external` or any other permission. No silent permission
+# inflation (W7 invariant preserved).
+
+
+async def migrate_static_catalog(db: AsyncSession) -> int:
+    """Create synthetic DB rows for any static-catalog entry without one.
+
+    Idempotent: rows already in the ``extensions`` table are NEVER
+    touched (their permissions/manifest are preserved verbatim). Legacy
+    entries are inserted with an empty ``permissions`` list — this is
+    the safe default because the static catalog has no permissions
+    schema, and W7 (INS-066) prohibits silent permission inflation.
+
+    Returns the number of rows inserted. Logs the count.
+    """
+    if not _catalog:
+        return 0
+
+    # Pull the existing DB ids in one query so we don't N+1 the catalog.
+    existing = await db.execute(select(Extension.id))
+    existing_ids = {row for (row,) in existing.all()}
+
+    inserted = 0
+    now = datetime.now(timezone.utc)
+    for entry in _catalog:
+        if entry.id in existing_ids:
+            continue
+        # Derive the entry html from the static `url` field. The static
+        # shape is ``/ext/{id}/index.html`` or just ``/ext/{id}/``; we
+        # strip the prefix so the DB-side manifest looks like a normal
+        # runtime-installed manifest.
+        entry_path = "index.html"
+        prefix = f"/ext/{entry.id}/"
+        if entry.url.startswith(prefix):
+            tail = entry.url[len(prefix):].strip()
+            entry_path = tail or "index.html"
+
+        synthesized: dict[str, Any] = {
+            "id": entry.id,
+            "version": "0.0.0",  # static catalog had no version field
+            "entry": entry_path,
+            "permissions": [],   # legacy → no permissions; re-install to grant
+            "name": entry.name,
+            "description": entry.description,
+            "icon": entry.icon,
+            "pricing": "free",
+        }
+        row = Extension(
+            id=entry.id,
+            version=synthesized["version"],
+            pricing=synthesized["pricing"],
+            enabled=True,
+            cached_at=now,
+            remote_url=None,
+            manifest=json.dumps(synthesized),
+        )
+        db.add(row)
+        inserted += 1
+
+    if inserted:
+        await db.commit()
+        logger.info(
+            "migrate_static_catalog: inserted %d synthetic DB row(s) for legacy "
+            "static-catalog entries (permissions=[])",
+            inserted,
+        )
+    return inserted
+
+
 # ── Install pipeline (W2) ───────────────────────────────────────
 
 
