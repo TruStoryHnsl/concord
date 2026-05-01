@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Windows native build CI on `windows-latest`
+- **`.github/workflows/windows-build.yml`** runs on every push to `main`, every pull request, and on manual dispatch. Builds the React client, then `cargo tauri build --ci --bundles msi nsis` on a real Windows runner, then uploads `concord-windows-msi` and `concord-windows-nsis` artifacts (14-day retention). The runner caches the cargo registry/index across builds (~95% of cold-build time) and `src-tauri/target/` on a `Cargo.lock`-keyed cache so dep updates blow it cleanly.
+- Linux cross-compile via cargo-xwin remains blocked by libsodium-sys-stable (POSIX-only build deps in iota_stronghold) — the canonical path to a distributable Windows installer is now this CI workflow or a developer running `scripts/build_windows_native.ps1` on a Windows host. `scripts/build_windows_wsl.sh` retained for fast Rust-side iteration but exits with a clear diagnostic on the libsodium failure.
+
+### Removed — Discord bridge purged entirely
+- **All Discord integration code, configuration, and runtime state has been removed.** This includes: the `mautrix-discord` Matrix appservice container, the bot-based `discord-voice-bridge` LiveKit sidecar, the `Transport::DiscordBridge` Tauri variant + bubblewrap sandbox, per-user Discord OAuth2 (admin + user), the `DiscordSourceBrowser` / `DiscordPanel` / `DiscordTosModal` UI surfaces, the `bridgeType: "discord"` server marker, and the `splitDiscordVoiceBridgeParticipants` helper.
+- **DB tables dropped:** `discord_voice_bridges`, `user_discord_oauth`, `discord_oauth_state`.
+- **Files / dirs removed:** `discord-voice-bridge/`, `client/src/components/discord/`, `client/src/api/bridges.ts`, `client/src/components/voice/discordVoiceBridge.ts`, `server/services/{bridge_config,bridge_bootstrap,discord_voice_config}.py`, `server/routers/{admin_bridges,admin_discord_voice,user_discord_oauth}.py`, `src-tauri/src/{bridge_commands.rs,servitude/transport/discord_bridge.rs}`, `src-tauri/resources/discord_bridge/`, `config/{mautrix-discord,discord-voice-bridge}/`, `config/discord-bridge.env.example`, `docs/bridges/`.
+- **docker-compose.yml** loses `concord-discord-bridge`, `concord-discord-voice-bridge`, and the named volume `concord-discord-bridge-data`.
+- **tuwunel.toml** appservice registration `concord_discord_2` cleared.
+- INS-024 (sandboxed Discord bridge) and INS-033 (Discord-as-source) are abandoned.
+
 ## [0.7.5] - 2026-04-26
 
 ### Fixed — unread badges actually decrement now (the rest of v0.7.4)

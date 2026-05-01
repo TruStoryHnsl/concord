@@ -120,6 +120,15 @@ config/**/*.bak
 # Worktree directories
 .worktrees/
 
+# Build artifacts directory (local only)
+artifacts/
+
+# Splash render sequence frames
+splash[0-9]*.mp4
+
+# Discord bridge compiled/runtime binaries (not committed)
+src-tauri/resources/discord_bridge/
+
 # YAML scratch
 format-panel-open.yml
 

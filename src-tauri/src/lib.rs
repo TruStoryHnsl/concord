@@ -2,10 +2,10 @@ use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
-pub mod bridge_commands;
 pub mod servitude;
 
 use servitude::{LifecycleState, ServitudeConfig, ServitudeHandle};
+use servitude::transport::dendrite_federation::RegisterOwnerResponse;
 
 /// Tauri-managed state wrapping the optional embedded servitude handle.
 ///
@@ -124,6 +124,108 @@ async fn servitude_status(state: tauri::State<'_, ServitudeState>) -> Result<Str
     serde_json::to_string(&response).map_err(|e| e.to_string())
 }
 
+/// Return the embedded tuwunel's per-instance registration token.
+///
+/// W2-11. The Host onboarding flow reads this AFTER `servitude_start`
+/// has resolved Running. The token gates the
+/// `m.login.registration_token` UI-Authentication flow used to create
+/// the owner account on a freshly-spawned local homeserver, AND any
+/// invitation tokens the owner shares with later members.
+///
+/// Returns Err when:
+///   * servitude has never been started (no handle), OR
+///   * the handle exists but a MatrixFederation transport hasn't
+///     been started yet (token not materialized).
+///
+/// The token is regenerated only when the on-disk file at
+/// `<data_dir>/registration_token` is missing or empty — see
+/// `ensure_registration_token` for the exact semantics. Calls to this
+/// command after a successful start are idempotent: the SAME token is
+/// returned every time.
+#[tauri::command]
+async fn servitude_get_registration_token(
+    state: tauri::State<'_, ServitudeState>,
+) -> Result<String, String> {
+    let guard = state.0.lock().await;
+    match guard.as_ref() {
+        Some(handle) => match handle.registration_token() {
+            Some(t) => Ok(t.to_string()),
+            None => Err(
+                "servitude is not running, or the matrix-federation transport \
+                 has not yet materialized its registration token"
+                    .to_string(),
+            ),
+        },
+        None => Err("servitude has not been started".to_string()),
+    }
+}
+
+/// Drive owner registration through whichever embedded homeserver
+/// backend is active for this platform. Wave 3 sprint W3-05.
+///
+/// Linux/macOS (tuwunel): performs the
+/// `m.login.registration_token` UIA dance using the per-instance
+/// registration_token, then `/login` to obtain an access token.
+///
+/// Windows (dendrite): shells out to bundled `create-account.exe`
+/// `-admin` to register + elevate, then `/login` to obtain an
+/// access token. (Dendrite does NOT support the registration_token
+/// UIA flow — see `dendrite_federation.rs` module-doc for the
+/// rationale.)
+///
+/// The frontend's HostOnboarding flow calls this exactly once during
+/// the spinner step. On success, the returned tuple drives the
+/// useSourcesStore.markOwner() flow that records the owner badge.
+#[tauri::command]
+async fn servitude_register_owner(
+    state: tauri::State<'_, ServitudeState>,
+    username: String,
+    password: String,
+) -> Result<RegisterOwnerResponse, String> {
+    if username.is_empty() {
+        return Err("username must not be empty".to_string());
+    }
+    if password.is_empty() {
+        return Err("password must not be empty".to_string());
+    }
+
+    let guard = state.0.lock().await;
+    let handle = guard
+        .as_ref()
+        .ok_or_else(|| "servitude has not been started".to_string())?;
+    handle
+        .register_owner(&username, &password)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Diagnostic logger for INS-065 — appends to
+/// `<app_local_data>/diag.log` so the renderer can surface
+/// errors and lifecycle markers that aren't visible because the
+/// boot splash + Welcome screen aren't painting on Windows.
+/// Removable once the bug is closed.
+#[tauri::command]
+async fn log_diagnostic(app: tauri::AppHandle, msg: String) -> Result<(), String> {
+    use std::io::Write;
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("no app_local_data_dir: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("diag.log");
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    writeln!(f, "{ts} {msg}").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTK GPU compositing is unreliable on many Linux setups
@@ -166,60 +268,16 @@ pub fn run() {
             // Ensure settings store exists
             let _ = app.handle().store("settings.json");
 
-            // Auto-start servitude if the Discord bridge was previously
-            // enabled. The config is persisted in the settings store,
-            // but the runtime state (ServitudeHandle) is in-memory and
-            // lost on app restart. This spawns a background task that
-            // reads the persisted config and brings servitude back up.
+            // INS-065: force-open devtools at launch on Windows so we can
+            // inspect Network/Console for the missing Welcome render.
+            // Compiled in via the `devtools` Cargo feature on the tauri
+            // crate (also active in release builds, gated only by this
+            // explicit call). Removable once INS-065 is closed.
+            #[cfg(target_os = "windows")]
             {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    use servitude::config::Transport;
-
-                    let config = match ServitudeConfig::from_store(&app_handle) {
-                        Ok(c) => c,
-                        Err(_) => return,
-                    };
-
-                    if !config.enabled_transports.contains(&Transport::DiscordBridge) {
-                        return;
-                    }
-
-                    log::info!(
-                        target: "concord::bridge",
-                        "auto-starting servitude — Discord bridge was previously enabled"
-                    );
-
-                    let state = app_handle.state::<ServitudeState>();
-                    let mut guard = state.0.lock().await;
-
-                    match ServitudeHandle::new(config) {
-                        Ok(handle) => {
-                            *guard = Some(handle);
-                        }
-                        Err(e) => {
-                            log::error!(
-                                target: "concord::bridge",
-                                "auto-start: failed to create handle: {}", e
-                            );
-                            return;
-                        }
-                    }
-
-                    if let Some(handle) = guard.as_mut() {
-                        if let Err(e) = handle.start().await {
-                            log::error!(
-                                target: "concord::bridge",
-                                "auto-start: failed to start servitude: {}", e
-                            );
-                        } else {
-                            log::info!(
-                                target: "concord::bridge",
-                                "servitude auto-started with Discord bridge"
-                            );
-                        }
-                    }
-                });
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
             }
 
             // INS-020: Set the native WKWebView + UIView background color to
@@ -327,15 +385,9 @@ pub fn run() {
             servitude_start,
             servitude_stop,
             servitude_status,
-            bridge_commands::discord_bridge_set_bot_token,
-            bridge_commands::discord_bridge_enable,
-            bridge_commands::discord_bridge_disable,
-            bridge_commands::discord_bridge_status,
-            bridge_commands::discord_bridge_ensure_binary,
-            bridge_commands::discord_bridge_enable_and_start,
-            bridge_commands::discord_bridge_list_guilds,
-            bridge_commands::discord_bridge_guild,
-            bridge_commands::discord_bridge_unbridge_guild,
+            servitude_get_registration_token,
+            servitude_register_owner,
+            log_diagnostic,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

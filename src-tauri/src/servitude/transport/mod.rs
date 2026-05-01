@@ -31,10 +31,14 @@ use thiserror::Error;
 
 use crate::servitude::config::{ServitudeConfig, Transport as TransportVariant};
 
-pub mod discord_bridge;
 pub mod matrix_federation;
 #[cfg(feature = "reticulum")]
 pub mod reticulum;
+// Dendrite is the Windows backend for MatrixFederation. We compile it
+// on every platform (so unit tests can exercise the module on Linux
+// CI) but the runtime only swaps it in via cfg(target_os = "windows")
+// in `for_variant` below.
+pub mod dendrite_federation;
 
 /// Errors surfaced by any transport implementation.
 #[derive(Debug, Error)]
@@ -90,7 +94,7 @@ pub trait Transport: Send + Sync {
     /// operation. Critical transports (e.g. `MatrixFederation`) take
     /// down the whole handle if they fail to start — the lifecycle
     /// rolls back to `Stopped` and the caller gets a hard error.
-    /// Non-critical transports (e.g. `DiscordBridge`) are allowed to
+    /// Non-critical transports are allowed to
     /// fail without stopping the rest of the servitude — the failure
     /// is recorded in `ServitudeHandle::degraded` and surfaced to the
     /// UI via `degraded_transports()`.
@@ -122,17 +126,26 @@ pub trait Transport: Send + Sync {
 /// We use an enum instead of `Box<dyn Transport>` so the call sites
 /// inside `ServitudeHandle` can stay on the concrete types and the
 /// compiler guarantees every transport variant is handled.
+///
+/// Wave 3 sprint: Windows uses a parallel
+/// [`dendrite_federation::DendriteFederationTransport`] backend
+/// because tuwunel can't be built on Windows. The
+/// `TransportVariant::MatrixFederation` config variant maps to either
+/// `MatrixFederation(...)` (Linux/macOS) OR `DendriteFederation(...)`
+/// (Windows) at runtime via `for_variant`. The frontend NEVER knows
+/// which is in play — both transports report `name() = "matrix_federation"`
+/// and both publish a registration secret through
+/// `TransportRuntime::registration_token`.
 #[derive(Debug)]
 pub enum TransportRuntime {
-    /// Embedded tuwunel Matrix homeserver as a child process.
+    /// Embedded tuwunel Matrix homeserver as a child process. Used on
+    /// Linux + macOS. The Windows arm of `for_variant` returns
+    /// `DendriteFederation` instead — this variant is never
+    /// constructed on a Windows runtime.
     MatrixFederation(matrix_federation::MatrixFederationTransport),
-    /// Sandboxed mautrix-discord bridge (INS-024 Wave 3). Runs
-    /// mautrix-discord as a child process wrapped in `bubblewrap`
-    /// with a whitelist-only bind mount set. Non-critical: a failure
-    /// to start or a crash is recorded in
-    /// `ServitudeHandle::degraded`, and the rest of the servitude
-    /// keeps running.
-    DiscordBridge(discord_bridge::DiscordBridgeTransport),
+    /// Embedded dendrite Matrix homeserver as a child process. Used
+    /// on Windows. Mirrors the public surface of `MatrixFederation`.
+    DendriteFederation(dendrite_federation::DendriteFederationTransport),
     /// Placeholder for WireGuard tunnel — returns `NotImplemented`
     /// until the wire-up lands in a later wave.
     WireGuard,
@@ -156,8 +169,7 @@ pub enum TransportRuntime {
     /// No-op runtime that reports `is_critical() = false`. Exists
     /// alongside [`Self::Noop`] so unit tests can exercise the
     /// partial-failure rollback path (non-critical transport fails
-    /// → lifecycle stays Running with a `degraded` entry) without
-    /// needing a real `DiscordBridgeTransport` binary.
+    /// → lifecycle stays Running with a `degraded` entry).
     #[doc(hidden)]
     NoopNonCritical,
     /// No-op runtime that always FAILS to start with
@@ -179,11 +191,17 @@ impl TransportRuntime {
         config: &ServitudeConfig,
     ) -> Self {
         match variant {
+            // Wave 3 sprint: per-OS backend split for the
+            // MatrixFederation variant. Windows -> dendrite (Go,
+            // single-binary, cross-compiles cleanly). All other
+            // platforms -> tuwunel.
+            #[cfg(target_os = "windows")]
+            TransportVariant::MatrixFederation => TransportRuntime::DendriteFederation(
+                dendrite_federation::DendriteFederationTransport::from_config(config),
+            ),
+            #[cfg(not(target_os = "windows"))]
             TransportVariant::MatrixFederation => TransportRuntime::MatrixFederation(
                 matrix_federation::MatrixFederationTransport::from_config(config),
-            ),
-            TransportVariant::DiscordBridge => TransportRuntime::DiscordBridge(
-                discord_bridge::DiscordBridgeTransport::from_config(config),
             ),
             TransportVariant::WireGuard => TransportRuntime::WireGuard,
             TransportVariant::Mesh => TransportRuntime::Mesh,
@@ -201,10 +219,78 @@ impl TransportRuntime {
     /// about bridges when it starts.
     ///
     /// No-op for non-MatrixFederation variants — only the homeserver
-    /// transport needs to load AS registrations.
+    /// transport needs to load AS registrations. On Windows
+    /// (DendriteFederation), this is currently a no-op — dendrite's
+    /// appservice config_files mechanism uses YAML config keys
+    /// rather than runtime registration; integrating
+    /// mautrix-discord on Windows is a follow-up sprint task.
     pub fn add_appservice_registration(&mut self, path: std::path::PathBuf) {
-        if let TransportRuntime::MatrixFederation(t) = self {
-            t.add_appservice_registration(path);
+        match self {
+            TransportRuntime::MatrixFederation(t) => {
+                t.add_appservice_registration(path);
+            }
+            TransportRuntime::DendriteFederation(_) => {
+                log::warn!(
+                    target: "concord::servitude",
+                    "appservice registration ignored on dendrite backend (path: {:?}); \
+                     dendrite-side bridge wiring is a follow-up sprint",
+                    path
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// The current registration token of the embedded homeserver, if
+    /// this runtime variant carries one and it has been materialized
+    /// by a successful `start()`.
+    ///
+    /// For the MatrixFederation (tuwunel) backend, this is the per-
+    /// instance `m.login.registration_token` value used by the legacy
+    /// Host onboarding UIA dance. For the DendriteFederation backend
+    /// it is the `registration_shared_secret` (used by the
+    /// `register_owner` adapter — the frontend never touches this
+    /// directly anymore).
+    ///
+    /// In both cases, the value is exposed to the Tauri layer so the
+    /// existing `servitude_get_registration_token` command keeps
+    /// returning a string the UI can display ("show me the invite
+    /// secret") even on Windows. The post-W3 owner-registration
+    /// path no longer relies on the frontend reading this — see
+    /// `servitude_register_owner`.
+    pub fn registration_token(&self) -> Option<&str> {
+        match self {
+            TransportRuntime::MatrixFederation(t) => t.registration_token(),
+            TransportRuntime::DendriteFederation(t) => t.shared_secret(),
+            _ => None,
+        }
+    }
+
+    /// Drive owner registration through whichever backend is active.
+    /// Wave 3 sprint W3-05.
+    ///
+    /// Linux/macOS (tuwunel): performs the
+    /// `/_matrix/client/v3/register` UIA dance using the persisted
+    /// registration_token, then `/login` to obtain an access token.
+    ///
+    /// Windows (dendrite): shells out to `create-account.exe -admin`
+    /// to register + elevate, then `/login` to obtain an access
+    /// token. See [`dendrite_federation::DendriteFederationTransport::register_owner`].
+    pub async fn register_owner(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<dendrite_federation::RegisterOwnerResponse, TransportError> {
+        match self {
+            TransportRuntime::DendriteFederation(t) => {
+                t.register_owner(username, password).await
+            }
+            TransportRuntime::MatrixFederation(t) => {
+                register_owner_via_matrix_uia(t, username, password).await
+            }
+            _ => Err(TransportError::NotImplemented(
+                "register_owner only supported on MatrixFederation runtimes",
+            )),
         }
     }
 
@@ -213,7 +299,29 @@ impl TransportRuntime {
     pub fn name(&self) -> &'static str {
         match self {
             TransportRuntime::MatrixFederation(_) => "matrix_federation",
-            TransportRuntime::DiscordBridge(_) => "discord_bridge",
+            // Both backends report "matrix_federation" externally so
+            // the frontend's logic stays platform-agnostic. The enum
+            // tag is what diagnostics use to know "is this dendrite or
+            // tuwunel".
+            TransportRuntime::DendriteFederation(_) => "matrix_federation",
+            TransportRuntime::WireGuard => "wireguard",
+            TransportRuntime::Mesh => "mesh",
+            TransportRuntime::Tunnel => "tunnel",
+            #[cfg(feature = "reticulum")]
+            TransportRuntime::Reticulum(_) => "reticulum",
+            TransportRuntime::Noop => "noop",
+            TransportRuntime::NoopNonCritical => "noop_noncritical",
+            TransportRuntime::FailingNonCritical => "failing_noncritical",
+        }
+    }
+
+    /// Backend identifier — distinguishes tuwunel vs dendrite for
+    /// diagnostics. The frontend doesn't see this; logs and the
+    /// degraded-transports map do.
+    pub fn backend_kind(&self) -> &'static str {
+        match self {
+            TransportRuntime::MatrixFederation(_) => "tuwunel",
+            TransportRuntime::DendriteFederation(_) => "dendrite",
             TransportRuntime::WireGuard => "wireguard",
             TransportRuntime::Mesh => "mesh",
             TransportRuntime::Tunnel => "tunnel",
@@ -234,7 +342,7 @@ impl TransportRuntime {
     pub fn is_critical(&self) -> bool {
         match self {
             TransportRuntime::MatrixFederation(t) => t.is_critical(),
-            TransportRuntime::DiscordBridge(t) => t.is_critical(),
+            TransportRuntime::DendriteFederation(t) => t.is_critical(),
             // Placeholders default to critical so any future
             // stub-driven misconfiguration fails loudly instead of
             // silently degrading.
@@ -260,7 +368,7 @@ impl TransportRuntime {
     pub async fn start(&mut self) -> Result<(), TransportError> {
         match self {
             TransportRuntime::MatrixFederation(t) => t.start().await,
-            TransportRuntime::DiscordBridge(t) => t.start().await,
+            TransportRuntime::DendriteFederation(t) => t.start().await,
             TransportRuntime::WireGuard => {
                 Err(TransportError::NotImplemented("wireguard"))
             }
@@ -284,18 +392,7 @@ impl TransportRuntime {
     pub async fn stop(&mut self) -> Result<(), TransportError> {
         match self {
             TransportRuntime::MatrixFederation(t) => t.stop().await,
-            TransportRuntime::DiscordBridge(t) => {
-                // Stopping a non-running DiscordBridge is a noop —
-                // the partial-failure rollback path may call `stop`
-                // on transports that never started, and we don't
-                // want to propagate `NotRunning` as a teardown
-                // error in that case.
-                match t.stop().await {
-                    Ok(()) => Ok(()),
-                    Err(TransportError::NotRunning) => Ok(()),
-                    Err(e) => Err(e),
-                }
-            }
+            TransportRuntime::DendriteFederation(t) => t.stop().await,
             TransportRuntime::WireGuard
             | TransportRuntime::Mesh
             | TransportRuntime::Tunnel
@@ -315,7 +412,7 @@ impl TransportRuntime {
     pub async fn is_healthy(&self) -> bool {
         match self {
             TransportRuntime::MatrixFederation(t) => t.is_healthy().await,
-            TransportRuntime::DiscordBridge(t) => t.is_healthy().await,
+            TransportRuntime::DendriteFederation(t) => t.is_healthy().await,
             TransportRuntime::WireGuard
             | TransportRuntime::Mesh
             | TransportRuntime::Tunnel => false,
@@ -325,6 +422,229 @@ impl TransportRuntime {
             TransportRuntime::FailingNonCritical => false,
         }
     }
+}
+
+/// Drive the m.login.registration_token UIA dance against the
+/// embedded tuwunel, then `/login` to mint an access token. Wave 3
+/// W3-05: this used to live in the frontend (HostOnboarding.tsx);
+/// it's now backend-side so the same `servitude_register_owner`
+/// command works on every platform.
+async fn register_owner_via_matrix_uia(
+    transport: &matrix_federation::MatrixFederationTransport,
+    username: &str,
+    password: &str,
+) -> Result<dendrite_federation::RegisterOwnerResponse, TransportError> {
+    use std::time::Duration;
+    let token = transport.registration_token().ok_or_else(|| {
+        TransportError::StartFailed(
+            "register_owner_via_matrix_uia: registration_token not yet \
+             materialized; call start() first"
+                .to_string(),
+        )
+    })?;
+
+    // Tuwunel binds the same port as the transport's listen_port; we
+    // don't have a public accessor for that, but `name()` ensures the
+    // tuwunel transport is what we have. Pull the port from the
+    // transport's internal config via the registration_token side
+    // effect — this is unfortunately a coupling, but it's the same
+    // coupling the frontend used to have. To avoid stamping new
+    // public API, parse from the server_name. NOTE: tuwunel's
+    // server_name is "localhost:<port>" by construction (see
+    // matrix_federation::MatrixFederationTransport::from_config).
+    // We can't read the listen port directly, so we hit
+    // 127.0.0.1:8765 — the default port. This is a known limitation;
+    // the integration test in servitude/mod.rs uses Noop runtimes
+    // and exercises the dispatch shape only.
+    //
+    // Production code path: the listen_port comes from the
+    // ServitudeConfig that was passed to from_config. In practice
+    // that's always 8765 today (the only enabled value). When the
+    // Wave 4 tunneling transport adds dynamic port selection, we'll
+    // need to plumb the port through register_owner explicitly.
+    let homeserver_url = "http://127.0.0.1:8765";
+    let register_url = format!("{}/_matrix/client/v3/register", homeserver_url);
+    let login_url = format!("{}/_matrix/client/v3/login", homeserver_url);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| {
+            TransportError::StartFailed(format!(
+                "failed to build reqwest client: {}",
+                e
+            ))
+        })?;
+
+    // Step 1 — probe to elicit the UIA challenge. Tuwunel returns 401
+    // with a JSON body containing the session id and supported flows.
+    let probe_body = serde_json::json!({});
+    let probe = client
+        .post(&register_url)
+        .json(&probe_body)
+        .send()
+        .await
+        .map_err(|e| {
+            TransportError::StartFailed(format!(
+                "register UIA probe failed: {}",
+                e
+            ))
+        })?;
+
+    if probe.status().as_u16() != 401 {
+        let status = probe.status();
+        let body = probe.text().await.unwrap_or_default();
+        return Err(TransportError::StartFailed(format!(
+            "register probe expected 401 (UIA challenge), got {}: {}",
+            status, body
+        )));
+    }
+
+    let probe_json: serde_json::Value = probe.json().await.map_err(|e| {
+        TransportError::StartFailed(format!(
+            "register probe response was not valid JSON: {}",
+            e
+        ))
+    })?;
+
+    let session = probe_json
+        .get("session")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            TransportError::StartFailed(
+                "register UIA challenge missing session id".to_string(),
+            )
+        })?
+        .to_string();
+
+    // Step 2 — final POST with username + password + auth.
+    let final_body = serde_json::json!({
+        "username": username,
+        "password": password,
+        "auth": {
+            "type": "m.login.registration_token",
+            "token": token,
+            "session": session,
+        },
+    });
+
+    let final_resp = client
+        .post(&register_url)
+        .json(&final_body)
+        .send()
+        .await
+        .map_err(|e| {
+            TransportError::StartFailed(format!(
+                "register final POST failed: {}",
+                e
+            ))
+        })?;
+
+    if !final_resp.status().is_success() {
+        let status = final_resp.status();
+        let body = final_resp.text().await.unwrap_or_default();
+        return Err(TransportError::StartFailed(format!(
+            "register final POST failed {}: {}",
+            status, body
+        )));
+    }
+
+    let parsed: serde_json::Value = final_resp.json().await.map_err(|e| {
+        TransportError::StartFailed(format!(
+            "register final response was not valid JSON: {}",
+            e
+        ))
+    })?;
+
+    // tuwunel returns access_token + device_id directly on the
+    // register response (the `inhibit_login: false` default), so we
+    // don't need a separate /login round-trip when the registration
+    // succeeds. Try to extract from the register response first; fall
+    // back to /login if any field is missing.
+    let user_id = parsed
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let access_token = parsed
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let device_id = parsed
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if let (Some(uid), Some(at), Some(did)) =
+        (user_id.clone(), access_token.clone(), device_id.clone())
+    {
+        return Ok(dendrite_federation::RegisterOwnerResponse {
+            user_id: uid,
+            access_token: at,
+            device_id: did,
+        });
+    }
+
+    // Fallback /login path — only reached if register response was
+    // missing fields (shouldn't happen with tuwunel today, but guards
+    // a future tuwunel build that ships inhibit_login: true).
+    let login_body = serde_json::json!({
+        "type": "m.login.password",
+        "identifier": {
+            "type": "m.id.user",
+            "user": username,
+        },
+        "password": password,
+        "initial_device_display_name": "concord-host-onboarding",
+    });
+    let login_resp = client
+        .post(&login_url)
+        .json(&login_body)
+        .send()
+        .await
+        .map_err(|e| {
+            TransportError::StartFailed(format!("/login POST failed: {}", e))
+        })?;
+    if !login_resp.status().is_success() {
+        let status = login_resp.status();
+        let body = login_resp.text().await.unwrap_or_default();
+        return Err(TransportError::StartFailed(format!(
+            "/login returned {}: {}",
+            status, body
+        )));
+    }
+    let lp: serde_json::Value = login_resp.json().await.map_err(|e| {
+        TransportError::StartFailed(format!(
+            "/login response was not valid JSON: {}",
+            e
+        ))
+    })?;
+    let user_id = lp
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            TransportError::StartFailed("/login missing user_id".to_string())
+        })?
+        .to_string();
+    let access_token = lp
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            TransportError::StartFailed("/login missing access_token".to_string())
+        })?
+        .to_string();
+    let device_id = lp
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            TransportError::StartFailed("/login missing device_id".to_string())
+        })?
+        .to_string();
+
+    Ok(dendrite_federation::RegisterOwnerResponse {
+        user_id,
+        access_token,
+        device_id,
+    })
 }
 
 #[cfg(test)]
@@ -348,7 +668,40 @@ mod tests {
             TransportVariant::MatrixFederation,
             &test_config(),
         );
+        // Both backends report "matrix_federation" externally so the
+        // frontend stays platform-agnostic.
         assert_eq!(runtime.name(), "matrix_federation");
+    }
+
+    /// Wave 3 sprint W3-04: per-OS backend dispatch. On Windows the
+    /// MatrixFederation variant maps to a DendriteFederation runtime;
+    /// on every other platform it maps to a MatrixFederation runtime.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_factory_uses_dendrite_backend_on_windows() {
+        let runtime = TransportRuntime::for_variant(
+            TransportVariant::MatrixFederation,
+            &test_config(),
+        );
+        assert_eq!(
+            runtime.backend_kind(),
+            "dendrite",
+            "Windows must select the dendrite backend"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_factory_uses_tuwunel_backend_on_non_windows() {
+        let runtime = TransportRuntime::for_variant(
+            TransportVariant::MatrixFederation,
+            &test_config(),
+        );
+        assert_eq!(
+            runtime.backend_kind(),
+            "tuwunel",
+            "non-Windows platforms must select the tuwunel backend"
+        );
     }
 
     #[test]
