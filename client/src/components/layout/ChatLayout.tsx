@@ -2029,7 +2029,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 }
 
 /* ── Source Server Browser ── */
-function SourceServerBrowser({
+// Exported (in addition to its primary use inside ChatLayout below) so
+// INS-068 cross-instance directory tests can mount it standalone.
+export function SourceServerBrowser({
   source,
   onClose,
 }: {
@@ -2074,7 +2076,10 @@ function SourceServerBrowser({
   );
 
   useEffect(() => {
-    if (!source || source.platform !== "matrix" || source.authFlows?.length) return;
+    // INS-068: Concord-instance sources also expose a Matrix public-room
+    // directory (their homeserver is Matrix-compatible). The only
+    // platform that has no Matrix room directory at all is Reticulum.
+    if (!source || source.platform === "reticulum" || source.authFlows?.length) return;
     let cancelled = false;
     import("../../api/matrix")
       .then(({ fetchLoginFlows }) => fetchLoginFlows(source.homeserverUrl))
@@ -2088,7 +2093,9 @@ function SourceServerBrowser({
   }, [source, updateSource]);
 
   const loadSourceDirectory = useCallback(async () => {
-    if (!source || source.platform !== "matrix") return;
+    // INS-068: skip only Reticulum — concord/matrix both have a Matrix
+    // public-room directory the federated `publicRooms` call can target.
+    if (!source || source.platform === "reticulum") return;
     setPublicRoomsLoading(true);
     setPublicRoomsError(null);
     setAuthRequired(false);
@@ -2138,7 +2145,9 @@ function SourceServerBrowser({
   }, [source, updateSource, userId]);
 
   useEffect(() => {
-    if (source?.platform !== "matrix") return;
+    // INS-068: load directory for both concord and matrix sources;
+    // skip only reticulum (no Matrix directory).
+    if (!source || source.platform === "reticulum") return;
     loadSourceDirectory();
   }, [source?.id, source?.platform, loadSourceDirectory]);
 
