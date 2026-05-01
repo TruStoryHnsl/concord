@@ -107,6 +107,7 @@ concord-splash.mp4
 concord-splashscreen.fbx
 0001-*.webm
 0001-*.mkv
+splash[0-9]*-[0-9]*.mp4
 0001-*.mp4
 
 # Screenshots and ad-hoc captures (root-level)
