@@ -1,8 +1,15 @@
 /**
- * Windows native first-launch flow — empirical assertion.
+ * Windows native first-launch flow — INS-058 hollow-shell contract.
  *
- * This test exists to lock in what a fresh Windows install of Concord
- * actually does on first boot, from the user's perspective:
+ * This test asserts the post-INS-058 design (per
+ * `feedback_ux_hollow_webui_spec.md`, 2026-04-10): every native build
+ * (Windows, macOS, Linux, iOS, Android, Apple TV, Google TV) renders
+ * the FULL hollow Concord shell on first launch — Sources + Servers
+ * + Channels + Chat columns all rendered, columns empty, with the
+ * SourcesPanel `+` tile as the universal entry point for adding a
+ * Concord/Matrix instance. NO modal/gate screen.
+ *
+ * What this test verifies:
  *
  *   1. Tauri v2 webview starts.
  *   2. `window.__TAURI_INTERNALS__` is present (the canonical v2
@@ -11,33 +18,17 @@
  *   3. `tauri-plugin-store` has no persisted serverConfig under
  *      `%APPDATA%\com.concord.chat\<store>` because the install is
  *      fresh.
- *   4. `localStorage` (which the persist middleware also writes via
- *      Tauri's webview shim) is empty.
+ *   4. `localStorage` is empty.
  *
- * Under those conditions, `App` MUST render `ServerPickerScreen` as
- * the first interactive surface — NOT `LoginForm`, NOT `ChatLayout`.
+ * Under those conditions, `App` MUST render `ChatLayout` as the
+ * first interactive surface — NOT `ServerPickerScreen` (gating
+ * modal removed by INS-058), NOT `LoginForm` (login happens AFTER
+ * the user picks a source via the `+` tile), NOT `DockerFirstBootScreen`
+ * (web/Docker path only).
  *
- *   ──────────────────────────────────────────────────────────────
- *   IMPORTANT — UX-spec mismatch documented (NOT fixed in this test)
- *   ──────────────────────────────────────────────────────────────
- *   Per `feedback_ux_hollow_webui_spec.md` (mempalace, 2026-04-10),
- *   the user's stated spec is that EVERY native build (Windows,
- *   macOS, Linux, iOS, Android, Apple TV, Google TV) should render
- *   the FULL hollow Concord web UI on first launch — Sources +
- *   Servers + Channels + Chat panels rendered but empty — and the
- *   "add server" flow lives inside the Sources column's `+` tile,
- *   NOT as a modal/gate screen.
- *
- *   Today's behavior (asserted by this test) is the CURRENT
- *   implementation: a modal-style ServerPickerScreen renders as a
- *   gate before any chat shell is shown. That is empirically what
- *   ships on Windows; this test prevents regressions from the
- *   current state until the hollow-UI rewrite lands.
- *
- *   When the hollow-UI restructure happens, this test will need to
- *   be updated to assert the full ChatLayout renders with empty
- *   columns + a `+` tile in Sources. Filed as INS-NNN — see
- *   `instructions_inbox.md`.
+ * The `+`-tile-visible coverage lives in the SourcesPanel component
+ * tests (since this test mocks ChatLayout to a sentinel and can't
+ * peek inside).
  *
  * Test mechanics:
  *
@@ -223,7 +214,7 @@ describe("first-launch (Windows native): __TAURI_INTERNALS__ + empty serverConfi
     window.localStorage.clear();
   });
 
-  it("renders ServerPickerScreen as the first interactive surface", async () => {
+  it("renders ChatLayout (hollow shell) as the first interactive surface", async () => {
     const { default: App } = await import("../App");
 
     render(<App />);
@@ -232,13 +223,17 @@ describe("first-launch (Windows native): __TAURI_INTERNALS__ + empty serverConfi
     // unmount the splash overlay.
     await new Promise((r) => setTimeout(r, 5));
 
-    // Critical: ServerPickerScreen must be the rendered first screen.
-    expect(screen.getByTestId("server-picker-screen")).toBeTruthy();
+    // Critical: ChatLayout — the hollow shell — must be the rendered
+    // first screen. The `+` tile inside SourcesPanel is the entry
+    // point for adding a Concord/Matrix source; no modal/gate.
+    expect(screen.getByTestId("chat-layout")).toBeTruthy();
 
     // Negative space — none of these should render on first launch
-    // for a Tauri Windows build with no persisted server.
+    // for a Tauri build with no persisted server. Under INS-058, the
+    // ServerPickerScreen + LoginForm flows live BEHIND the `+` tile
+    // inside SourcesPanel, not as pre-shell gates.
+    expect(screen.queryByTestId("server-picker-screen")).toBeNull();
     expect(screen.queryByTestId("login-form")).toBeNull();
-    expect(screen.queryByTestId("chat-layout")).toBeNull();
     expect(screen.queryByTestId("docker-first-boot")).toBeNull();
   });
 });
