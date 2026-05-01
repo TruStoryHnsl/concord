@@ -856,6 +856,37 @@ export async function changePassword(
   );
 }
 
+// --- Recovery Email (INS-071 Phase A) ---
+//
+// Privacy invariant: the API never echoes the actual recovery_email back
+// to the client. The status endpoint returns ONLY a boolean. The setter
+// endpoint returns 204 (no body). The client must not log or persist
+// the value beyond the form submission lifetime.
+
+export interface RecoveryEmailStatus {
+  has_recovery_email: boolean;
+}
+
+export async function setRecoveryEmail(
+  recoveryEmail: string | null,
+  accessToken: string,
+): Promise<void> {
+  return apiFetch(
+    "/user/recovery-email",
+    {
+      method: "PUT",
+      body: JSON.stringify({ recovery_email: recoveryEmail }),
+    },
+    accessToken,
+  );
+}
+
+export async function getRecoveryEmailStatus(
+  accessToken: string,
+): Promise<RecoveryEmailStatus> {
+  return apiFetch("/user/recovery-email-status", {}, accessToken);
+}
+
 // --- Bug Reports ---
 
 export async function submitBugReport(
