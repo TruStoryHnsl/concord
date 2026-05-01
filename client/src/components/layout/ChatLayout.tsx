@@ -36,6 +36,7 @@ import { useExtensionRoomBridge } from "../../hooks/useExtensionBridge";
 import { useExtensionStore } from "../../stores/extension";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
+import { ExtensionCatalogModal } from "../extension/ExtensionCatalogModal";
 import { ServerSidebar } from "./ServerSidebar";
 import { Avatar } from "../ui/Avatar";
 import { ChannelSidebar, UserBar } from "./ChannelSidebar";
@@ -227,6 +228,28 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [statsTarget, setStatsTarget] = useState<{ type: "user" } | { type: "server"; serverId: string } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [placeBannerDismissed, setPlaceBannerDismissed] = useState(false);
+  // INS-070 — admin gate + Extension Library modal visibility.
+  const [isInstanceAdmin, setIsInstanceAdmin] = useState(false);
+  const [extensionCatalogOpen, setExtensionCatalogOpen] = useState(false);
+  useEffect(() => {
+    if (!accessToken) {
+      setIsInstanceAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { checkAdmin } = await import("../../api/concord");
+        const result = await checkAdmin(accessToken);
+        if (!cancelled) setIsInstanceAdmin(result.is_admin);
+      } catch {
+        if (!cancelled) setIsInstanceAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   // INS-044: Multi-tab browse. Each BrowseTab has its own page-depth
   // position (sources → servers → channels → chat). Overlay views
@@ -1206,6 +1229,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               openSettings();
               setMobileView("settings");
             }}
+            onExtensionLibrary={
+              isInstanceAdmin ? () => setExtensionCatalogOpen(true) : undefined
+            }
           />
         </div>
         {/* T003: Account button — visible on every mobile view */}
@@ -1611,6 +1637,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               onStats={() => setStatsTarget({ type: "user" })}
               onBug={() => setShowBugReport(true)}
               onSettings={() => openSettings()}
+              onExtensionLibrary={
+                isInstanceAdmin ? () => setExtensionCatalogOpen(true) : undefined
+              }
             />
             <TopBarIconButton
               icon={sidebarCollapsed ? "left_panel_open" : "left_panel_close"}
@@ -2024,6 +2053,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           />
         );
       })()}
+      {/* INS-070: admin-only Extension Library modal — surfaced from
+          the Tools dropdown so installs are one click instead of
+          two-clicks-deep in Settings → Admin → Extensions. */}
+      {extensionCatalogOpen && (
+        <ExtensionCatalogModal onClose={() => setExtensionCatalogOpen(false)} />
+      )}
     </>
   );
 }
@@ -3439,6 +3474,7 @@ function TopBarMoreMenu({
   onStats,
   onBug,
   onSettings,
+  onExtensionLibrary,
 }: {
   voiceMicActive?: boolean;
   showExtension?: boolean;
@@ -3447,6 +3483,12 @@ function TopBarMoreMenu({
   onStats: () => void;
   onBug: () => void;
   onSettings: () => void;
+  /**
+   * INS-070 — admin-only Extension Library entry. When defined,
+   * renders a "library_books" menu item that opens the global
+   * install/uninstall modal. Hidden when undefined (non-admins).
+   */
+  onExtensionLibrary?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -3492,7 +3534,18 @@ function TopBarMoreMenu({
             <ConnectedHostLabel />
           </div>
           {showExtension && onExtension && (
-            <OverflowMenuItem icon="extension" label="Extensions" onClick={handle(onExtension)} />
+            <OverflowMenuItem
+              icon="extension"
+              label="Room Extensions"
+              onClick={handle(onExtension)}
+            />
+          )}
+          {onExtensionLibrary && (
+            <OverflowMenuItem
+              icon="library_books"
+              label="Extension Library"
+              onClick={handle(onExtensionLibrary)}
+            />
           )}
           <OverflowMenuItem icon="help" label="Help" onClick={handle(onHelp)} />
           <OverflowMenuItem icon="bar_chart" label="Your stats" onClick={handle(onStats)} />
