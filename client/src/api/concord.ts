@@ -157,6 +157,13 @@ export interface ServerExtension {
   url: string;
   icon: string;
   description: string;
+  /**
+   * INS-066-FUP-A: manifest permissions array, surfaced from the server's
+   * `/api/extensions` endpoint. Always present in the response (empty list
+   * for legacy static-catalog entries that have no manifest). Optional in
+   * the type for backward compat with mocks/old captures.
+   */
+  permissions?: string[];
 }
 
 export async function listExtensions(accessToken: string): Promise<ServerExtension[]> {

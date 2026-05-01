@@ -164,6 +164,13 @@ async def test_list_extensions_includes_installed(
     assert EXT_ID in ids
     matching = next(it for it in items if it["id"] == EXT_ID)
     assert matching["url"] == f"/ext/{EXT_ID}/index.html"
+    # INS-066-FUP-A: manifest permissions surfaced on the listing so the
+    # client can pass them to <ExtensionSurfaceManager> as the gate for
+    # concord:state_event delivery / extension:send_state_event acceptance.
+    assert "permissions" in matching, matching
+    assert isinstance(matching["permissions"], list)
+    assert "state_events" in matching["permissions"]
+    assert "fetch:external" in matching["permissions"]
 
 
 async def test_uninstall_removes_row_and_files(
