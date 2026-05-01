@@ -42,6 +42,48 @@ from pydantic import BaseModel, Field
 router = APIRouter(tags=["wellknown"])
 
 
+# Hex colour pattern shared by BrandingConfig and the admin endpoint
+# that writes it. Six-digit form only — `#abc` shortcuts and named
+# colours are rejected so the wire is unambiguous and the client can
+# safely interpolate the string into CSS color-mix() expressions.
+_HEX_COLOR_PATTERN = r"^#[0-9A-Fa-f]{6}$"
+
+
+class BrandingConfig(BaseModel):
+    """Per-instance branding (INS-069).
+
+    Surfaced in ``GET /.well-known/concord/client`` so cross-instance
+    Sources tiles can render with the instance's own colours, and
+    written via the admin-only
+    ``POST /api/admin/instance/branding`` endpoint.
+
+    All fields are validated server-side so the client can trust the
+    string and interpolate it into inline styles without re-validating.
+    Six-digit hex required (``#aabbcc``) — short-form and named
+    colours are rejected.
+    """
+
+    primary_color: str = Field(
+        ...,
+        pattern=_HEX_COLOR_PATTERN,
+        description="Six-digit hex (#rrggbb). Used as the tinted background base.",
+    )
+    accent_color: str = Field(
+        ...,
+        pattern=_HEX_COLOR_PATTERN,
+        description="Six-digit hex (#rrggbb). Used as the tile ring/accent.",
+    )
+    logo_url: str | None = Field(
+        None,
+        max_length=2048,
+        pattern=r"^https?://.+",
+        description=(
+            "Optional logo URL (HTTP or HTTPS). Falls back to the "
+            "default Source brand icon when absent."
+        ),
+    )
+
+
 class ConcordClientWellKnown(BaseModel):
     """Schema returned from ``GET /.well-known/concord/client``.
 
@@ -112,6 +154,17 @@ class ConcordClientWellKnown(BaseModel):
             "True when this node advertises itself as a tunnel anchor "
             "(i.e. accepts inbound WireGuard sessions from other nodes). "
             "Defaults to False when the service-node config is absent."
+        ),
+    )
+    branding: BrandingConfig | None = Field(
+        None,
+        description=(
+            "Per-instance branding (INS-069). Null when the operator "
+            "has not configured branding — clients fall back to the "
+            "default Source tile styling. When set, cross-instance "
+            "Source rails render the tile with the instance's primary "
+            "colour as the background tint and the accent colour as "
+            "the ring."
         ),
     )
 
@@ -213,6 +266,35 @@ def _resolve_turn_servers() -> list[dict]:
     return servers
 
 
+def _resolve_branding() -> BrandingConfig | None:
+    """Read the persisted branding block from ``instance.json``.
+
+    Lives at the top-level ``branding`` key alongside ``name`` and
+    other instance settings. Reuses the admin router's read helper so
+    there's a single source of truth for instance settings parsing —
+    if the file is missing, malformed, or the key is absent, return
+    None and the well-known omits the field entirely.
+
+    Imported inline (and lazily) so test fixtures that patch the
+    admin module's settings reader see a fresh lookup per request.
+    """
+    try:
+        from routers.admin import _read_instance_settings
+    except Exception:
+        return None
+    settings = _read_instance_settings()
+    raw = settings.get("branding") if isinstance(settings, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return BrandingConfig.model_validate(raw)
+    except Exception:
+        # Persisted-but-malformed branding is a configuration bug —
+        # serve the document without the field rather than 500'ing
+        # the entire discovery endpoint.
+        return None
+
+
 def _advertised_features() -> list[str]:
     """Return the stable list of feature identifiers advertised.
 
@@ -264,4 +346,5 @@ async def concord_client_wellknown() -> ConcordClientWellKnown:
         turn_servers=_resolve_turn_servers(),
         node_role=node_view.node_role,
         tunnel_anchor=node_view.tunnel_anchor_enabled,
+        branding=_resolve_branding(),
     )

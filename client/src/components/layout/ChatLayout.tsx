@@ -2883,6 +2883,7 @@ function AddSourceModal({
         status: "connected",
         enabled: true,
         platform: "concord",
+        branding: config.branding,
       });
       onSourceAdded();
     } catch (err) {

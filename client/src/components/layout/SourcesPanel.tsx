@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -91,32 +91,72 @@ function normalizeRailOrder(sourceIds: string[], stored: string[] | null): strin
 function sourceTile(source: ConcordSource): {
   brand: SourceBrand;
   bg: string;
+  bgStyle: CSSProperties | undefined;
   icon: ReactNode;
   label: string;
 } {
   const label = source.instanceName ?? source.host;
   const brand = inferSourceBrand(source);
-  const bg = "bg-surface-container-high ring-1 ring-outline-variant/15";
+
+  // INS-069 — when the source advertises branding, paint the tile
+  // with a tinted background derived from `primaryColor` and an
+  // accent ring derived from `accentColor`. Falls back to the
+  // default surface-container styling when branding is absent.
+  // Uses `color-mix(in srgb, …)` so we don't have to hand-roll an
+  // RGB blend for the tint.
+  const branding = source.branding;
+  let bg: string;
+  let bgStyle: CSSProperties | undefined;
+  if (branding) {
+    bg = "ring-1";
+    bgStyle = {
+      backgroundColor: `color-mix(in srgb, ${branding.primaryColor} 22%, var(--color-surface-container-high))`,
+      // `boxShadow: inset 0 0 0 1px <accent>` would also work; we
+      // use the ring utility's `--tw-ring-color` analogue via a
+      // direct boxShadow to bypass tailwind's runtime needs.
+      boxShadow: `0 0 0 1px ${branding.accentColor}`,
+    };
+  } else {
+    bg = "bg-surface-container-high ring-1 ring-outline-variant/15";
+    bgStyle = undefined;
+  }
+
+  // Icon colour: when branding is set, prefer the accent colour so
+  // the icon stays visually keyed to the instance even if the
+  // primary tint is dim. Otherwise leave the default per-brand
+  // styling intact.
+  const iconColor = branding?.accentColor;
+
   switch (brand) {
     case "mozilla":
       return {
         brand,
         bg,
-        icon: <SourceBrandIcon brand={brand} size={28} />,
+        bgStyle,
+        icon: <SourceBrandIcon brand={brand} size={28} color={iconColor} />,
         label: `Mozilla — ${label}`,
       };
     case "matrix":
       return {
         brand,
         bg,
-        icon: <SourceBrandIcon brand={brand} size={28} className="text-on-surface" />,
+        bgStyle,
+        icon: (
+          <SourceBrandIcon
+            brand={brand}
+            size={28}
+            className={iconColor ? undefined : "text-on-surface"}
+            color={iconColor}
+          />
+        ),
         label: `Matrix — ${label}`,
       };
     default:
       return {
         brand,
         bg,
-        icon: <SourceBrandIcon brand={brand} size={28} />,
+        bgStyle,
+        icon: <SourceBrandIcon brand={brand} size={28} color={iconColor} />,
         label,
       };
   }
@@ -133,7 +173,7 @@ function SortableSourceTile({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: source.id });
-  const { bg, icon, label } = sourceTile(source);
+  const { bg, bgStyle, icon, label } = sourceTile(source);
   const constrainedTransform = transform ? { ...transform, x: 0 } : null;
 
   return (
@@ -156,6 +196,8 @@ function SortableSourceTile({
           onSourceOpen?.(source.id);
         }}
         title={source.isOwner ? `${label} (owner)` : label}
+        data-testid={`source-tile-${source.id}`}
+        style={bgStyle}
         className={`group relative w-8 h-8 flex items-center justify-center transition-all duration-150 ${bg} ${
           source.enabled
             ? "rounded-xl shadow-lg scale-100 text-on-surface"
@@ -209,8 +251,56 @@ export function SourcesPanel({
   const rawSources = useSourcesStore((s) => s.sources);
   const toggleSource = useSourcesStore((s) => s.toggleSource);
   const setSourceOrder = useSourcesStore((s) => s.setSourceOrder);
+  const updateSource = useSourcesStore((s) => s.updateSource);
 
   const sources = rawSources;
+
+  // INS-069 — lazy-fetch per-instance branding for any source whose
+  // `branding` field is undefined. This populates the rail tile with
+  // the upstream operator's chosen colours on first render after a
+  // migration (v5 → v6 sources have undefined branding) or for any
+  // source added before INS-069 shipped. We do NOT re-fetch when
+  // branding is already populated — operators rotate branding rarely
+  // and a stale cache is far cheaper than a fetch storm.
+  //
+  // Skipped for reticulum (no Concord well-known) and for hosts that
+  // can't be parsed as URLs (the discoverHomeserver fetch would 500).
+  useEffect(() => {
+    let cancelled = false;
+    const candidates = sources.filter(
+      (s) =>
+        s.branding === undefined &&
+        s.platform !== "reticulum" &&
+        typeof s.host === "string" &&
+        s.host.length > 0,
+    );
+    if (candidates.length === 0) return;
+    void (async () => {
+      const { discoverHomeserver } = await import("../../api/wellKnown");
+      for (const source of candidates) {
+        if (cancelled) return;
+        try {
+          const config = await discoverHomeserver(source.host);
+          if (cancelled) return;
+          if (config.branding) {
+            updateSource(source.id, { branding: config.branding });
+          }
+          // Note: when no branding is upstream, we leave `branding`
+          // undefined in the store so a future operator-side
+          // configuration becomes visible without a manual refresh.
+          // This is a deliberate trade-off vs. a "fetched, none found"
+          // sentinel — re-fetch traffic per source-tile mount is
+          // negligible and the UX win is stronger.
+        } catch {
+          // Ignore — discovery failures shouldn't block the rail.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources.length]);
 
   const isTouchDevice =
     typeof window !== "undefined" &&

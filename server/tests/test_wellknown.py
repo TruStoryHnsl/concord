@@ -81,6 +81,8 @@ async def test_response_shape_matches_contract(client, monkeypatch):
         # INS-023 additions — keep the client wire model in sync.
         "node_role",
         "tunnel_anchor",
+        # INS-069 — per-instance branding.
+        "branding",
     }, f"unexpected keys: {set(body.keys())}"
 
     # Type checks.
@@ -317,3 +319,80 @@ async def test_anchor_service_node_posture_surfaced(client, monkeypatch):
     assert "max_cpu_percent" not in body
     assert "max_bandwidth_mbps" not in body
     assert "max_storage_gb" not in body
+
+
+# ---------------------------------------------------------------------------
+# INS-069 — per-instance branding surfaced in the well-known document
+# ---------------------------------------------------------------------------
+
+
+async def test_branding_absent_when_unset(client, monkeypatch):
+    """A fresh deployment with no branding configured returns
+    ``branding: null``. The native client treats null as "use default
+    Source tile styling"."""
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
+
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    assert resp.json()["branding"] is None
+
+
+async def test_branding_appears_when_set(client, monkeypatch, tmp_path):
+    """When ``instance.json`` contains a ``branding`` block, the
+    well-known document echoes every field exactly so cross-instance
+    Source tiles can render with the upstream operator's chosen
+    colours.
+    """
+    import json
+
+    import routers.admin as admin_module
+
+    settings_file = tmp_path / "instance.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "name": "Branded Instance",
+                "branding": {
+                    "primary_color": "#1a2b3c",
+                    "accent_color": "#ffaabb",
+                    "logo_url": "https://example.test/brand.png",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(admin_module, "INSTANCE_SETTINGS_FILE", settings_file)
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
+
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["branding"] == {
+        "primary_color": "#1a2b3c",
+        "accent_color": "#ffaabb",
+        "logo_url": "https://example.test/brand.png",
+    }
+
+
+async def test_malformed_branding_falls_back_to_null(client, monkeypatch, tmp_path):
+    """An operator-corrupted branding block (wrong types, missing
+    fields) MUST NOT 500 the discovery endpoint — clients should still
+    be able to reach the instance to fix the configuration. Treat the
+    block as if absent and serve null."""
+    import json
+
+    import routers.admin as admin_module
+
+    settings_file = tmp_path / "instance.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "branding": {"primary_color": "not-a-hex", "accent_color": 123},
+            }
+        )
+    )
+    monkeypatch.setattr(admin_module, "INSTANCE_SETTINGS_FILE", settings_file)
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.com")
+
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    assert resp.json()["branding"] is None

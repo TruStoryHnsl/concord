@@ -1124,6 +1124,22 @@ export async function updateInstanceSettings(
   );
 }
 
+/**
+ * INS-069 — write the per-instance branding block to ``instance.json``.
+ * Server returns 204 No Content on success; ``apiFetch`` returns
+ * ``undefined`` for void bodies.
+ */
+export async function setInstanceBranding(
+  branding: { primary_color: string; accent_color: string; logo_url?: string | null },
+  accessToken: string,
+): Promise<void> {
+  await apiFetch(
+    "/admin/instance/branding",
+    { method: "POST", body: JSON.stringify(branding) },
+    accessToken,
+  );
+}
+
 // --- Admin invites ---
 
 export interface AdminInvite {

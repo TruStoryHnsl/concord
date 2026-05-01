@@ -24,6 +24,7 @@ import {
   adminGetExtensionCatalog,
   adminInstallExtension,
   adminUninstallExtension,
+  setInstanceBranding,
   type AdminStats,
   type AdminServer,
   type AdminUser,
@@ -290,6 +291,124 @@ function InstanceSection({ token }: { token: string | null }) {
             />
           </button>
         </div>
+      </div>
+
+      <InstanceBrandingSubsection token={token} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Instance Branding (INS-069) — primary/accent colours + optional logo
+// surfaced via `.well-known/concord/client` so cross-instance Source
+// rails render with the operator's chosen palette.
+// ---------------------------------------------------------------------------
+
+function InstanceBrandingSubsection({ token }: { token: string | null }) {
+  const addToast = useToastStore((s) => s.addToast);
+  const [primary, setPrimary] = useState("#5b6cff");
+  const [accent, setAccent] = useState("#ffaa55");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Pull existing branding (if any) from the instance's well-known so
+  // the controls reflect the persisted values on mount. We hit our
+  // own well-known endpoint rather than `/api/instance` because the
+  // branding block lives there alongside other discovery fields.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await fetch("/.well-known/concord/client", { credentials: "omit" });
+        if (!resp.ok) return;
+        const body = await resp.json();
+        if (cancelled || !body || typeof body !== "object" || !body.branding) return;
+        const b = body.branding as { primary_color?: string; accent_color?: string; logo_url?: string };
+        if (typeof b.primary_color === "string") setPrimary(b.primary_color);
+        if (typeof b.accent_color === "string") setAccent(b.accent_color);
+        if (typeof b.logo_url === "string") setLogoUrl(b.logo_url);
+      } catch {
+        /* well-known unreachable — leave the defaults */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleSave = async () => {
+    if (!token) return;
+    setSaving(true);
+    try {
+      await setInstanceBranding(
+        {
+          primary_color: primary,
+          accent_color: accent,
+          logo_url: logoUrl.trim() || null,
+        },
+        token,
+      );
+      addToast("Instance branding saved", "success");
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to save branding", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-outline-variant/15 pt-4 space-y-3">
+      <div>
+        <label className="text-sm text-on-surface-variant block">Instance Branding</label>
+        <p className="text-xs text-on-surface-variant mt-0.5">
+          Primary &amp; accent colours surface in cross-instance Source rails so users
+          can recognise this instance at a glance. Logo URL is optional.
+        </p>
+      </div>
+      <div className="flex items-center gap-4 flex-wrap">
+        <label className="flex items-center gap-2 text-xs text-on-surface-variant">
+          Primary
+          <input
+            type="color"
+            value={primary}
+            onChange={(e) => setPrimary(e.target.value)}
+            data-testid="instance-branding-primary"
+            className="w-10 h-8 rounded border border-outline-variant bg-transparent cursor-pointer"
+          />
+          <span className="font-mono text-[11px] text-on-surface-variant/80">{primary}</span>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-on-surface-variant">
+          Accent
+          <input
+            type="color"
+            value={accent}
+            onChange={(e) => setAccent(e.target.value)}
+            data-testid="instance-branding-accent"
+            className="w-10 h-8 rounded border border-outline-variant bg-transparent cursor-pointer"
+          />
+          <span className="font-mono text-[11px] text-on-surface-variant/80">{accent}</span>
+        </label>
+      </div>
+      <div>
+        <label className="text-xs text-on-surface-variant block mb-1">Logo URL (optional)</label>
+        <input
+          type="url"
+          value={logoUrl}
+          onChange={(e) => setLogoUrl(e.target.value)}
+          placeholder="https://example.com/logo.png"
+          data-testid="instance-branding-logo"
+          className="w-full px-3 py-2 bg-surface-container border border-outline-variant rounded text-sm text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+        />
+      </div>
+      <div className="flex justify-end">
+        <button
+          onClick={handleSave}
+          disabled={saving || !token}
+          data-testid="instance-branding-save"
+          className="px-4 py-2 primary-glow hover:brightness-110 disabled:opacity-40 text-on-surface text-sm rounded transition-colors"
+        >
+          {saving ? "Saving…" : "Save Branding"}
+        </button>
       </div>
     </div>
   );
