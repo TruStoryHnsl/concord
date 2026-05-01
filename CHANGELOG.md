@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Windows native build CI on `windows-latest`
+- **`.github/workflows/windows-build.yml`** runs on every push to `main`, every pull request, and on manual dispatch. Builds the React client, then `cargo tauri build --ci --bundles msi nsis` on a real Windows runner, then uploads `concord-windows-msi` and `concord-windows-nsis` artifacts (14-day retention). The runner caches the cargo registry/index across builds (~95% of cold-build time) and `src-tauri/target/` on a `Cargo.lock`-keyed cache so dep updates blow it cleanly.
+- Linux cross-compile via cargo-xwin remains blocked by libsodium-sys-stable (POSIX-only build deps in iota_stronghold) — the canonical path to a distributable Windows installer is now this CI workflow or a developer running `scripts/build_windows_native.ps1` on a Windows host. `scripts/build_windows_wsl.sh` retained for fast Rust-side iteration but exits with a clear diagnostic on the libsodium failure.
+
 ### Removed — Discord bridge purged entirely
 - **All Discord integration code, configuration, and runtime state has been removed.** This includes: the `mautrix-discord` Matrix appservice container, the bot-based `discord-voice-bridge` LiveKit sidecar, the `Transport::DiscordBridge` Tauri variant + bubblewrap sandbox, per-user Discord OAuth2 (admin + user), the `DiscordSourceBrowser` / `DiscordPanel` / `DiscordTosModal` UI surfaces, the `bridgeType: "discord"` server marker, and the `splitDiscordVoiceBridgeParticipants` helper.
 - **DB tables dropped:** `discord_voice_bridges`, `user_discord_oauth`, `discord_oauth_state`.
