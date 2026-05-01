@@ -161,6 +161,57 @@ async def test_missing_server_name_sentinel(client, monkeypatch):
     assert body["livekit_url"] is None
 
 
+async def test_bare_slug_server_name_expands_to_concordchat_net(client, monkeypatch):
+    """INS-051: a bare-slug CONDUWUIT_SERVER_NAME (no dots) is advertised
+    as <slug>.concordchat.net via the canonical default domain root."""
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "alpha")
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["api_base"] == "https://alpha.concordchat.net/api"
+    assert body["livekit_url"] == "wss://alpha.concordchat.net/livekit/"
+
+
+async def test_fully_qualified_server_name_is_unchanged(client, monkeypatch):
+    """A server name that already contains a dot is treated as an FQDN
+    and NOT re-expanded under concordchat.net — operators with their
+    own domain must keep working unchanged."""
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "chat.example.org")
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["api_base"] == "https://chat.example.org/api"
+    assert body["livekit_url"] == "wss://chat.example.org/livekit/"
+
+
+async def test_default_domain_root_overridable(client, monkeypatch):
+    """Forks who maintain a different generic domain can override the
+    default via CONCORD_DEFAULT_DOMAIN_ROOT.
+
+    Setup note: config.CONCORD_DEFAULT_DOMAIN_ROOT is read at module
+    load time. We monkeypatch the resolved attribute directly to
+    simulate a fresh process with the override env var set.
+    """
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "alpha")
+    import config as concord_config
+    monkeypatch.setattr(concord_config, "CONCORD_DEFAULT_DOMAIN_ROOT", "alt-concord.io")
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["api_base"] == "https://alpha.alt-concord.io/api"
+
+
+async def test_localhost_server_name_is_sentinel_not_expanded(client, monkeypatch):
+    """The literal `localhost` sentinel must NOT be expanded — it's
+    reserved for "configuration error, do not advertise a real domain"."""
+    monkeypatch.setenv("CONDUWUIT_SERVER_NAME", "localhost")
+    resp = await client.get("/.well-known/concord/client")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["api_base"] == "https://localhost/api"
+    assert body["livekit_url"] == "wss://localhost/livekit/"
+
+
 async def test_instance_name_optional(client, monkeypatch):
     """INSTANCE_NAME is optional; its absence must return ``null``
     rather than an empty string or the hostname.

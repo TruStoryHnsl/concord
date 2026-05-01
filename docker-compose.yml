@@ -118,6 +118,11 @@ services:
       # INS-050: Pre-populates the domain confirm field in the first-boot Host/Join picker.
       # Defaults to CONDUWUIT_SERVER_NAME if not set explicitly.
       CONCORD_DOMAIN: ${CONCORD_DOMAIN:-${CONDUWUIT_SERVER_NAME}}
+      # INS-051: canonical default domain root. Bare-slug server names
+      # are advertised as <slug>.concordchat.net unless overridden
+      # explicitly via CONCORD_DEFAULT_DOMAIN_ROOT (alternate forks
+      # who maintain a different generic domain).
+      CONCORD_DEFAULT_DOMAIN_ROOT: ${CONCORD_DEFAULT_DOMAIN_ROOT:-concordchat.net}
       # FastAPI CORSMiddleware allow-origins. When unset, main.py falls back
       # to a localhost/tauri-only default. Operators add their public
       # hostname(s) here so cross-origin flows work — e.g. adding a
@@ -152,6 +157,10 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    # See docs/voice/port-coherence.md for the four-file port contract.
+    # The container-side range here (right of `:`) MUST equal
+    # config/livekit.yaml rtc.port_range_start..port_range_end.
+    # CI's config-lint job enforces this on every PR.
     ports:
       - "${LIVEKIT_TCP_PORT:-7881}:7881"
       - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
@@ -160,12 +169,26 @@ services:
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
     command: --config /etc/livekit.yaml
+    # INS-067 W3: dual-protocol healthcheck. The container is healthy
+    # only when BOTH the HTTP API on 7880 (TCP) AND the first UDP relay
+    # port (port_range_start, default 50000) are bound. Without the UDP
+    # check, a misconfigured port range would still show "healthy" via
+    # the HTTP probe while voice silently broke (the failure mode that
+    # caused the 2026-05-01 incident, where LiveKit's HTTP was fine but
+    # no UDP socket was ever bound to the expected range).
+    #
+    # UDP-bound detection: /proc/net/udp lists every locally-bound UDP
+    # socket. Each line's second column is the local address in
+    # "ip:port" hex. Port 50000 hex is C350; we grep for ":C350 " to
+    # confirm an LiveKit-internal UDP listener is up.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
+      test:
+        - "CMD-SHELL"
+        - "wget -qO- http://localhost:7880 >/dev/null && awk '{print $2}' /proc/net/udp | grep -qi ':C350$'"
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
     networks:
       - concord
 

@@ -9,6 +9,17 @@ SOUNDBOARD_DIR = DATA_DIR / "soundboard"
 # e.g. ``EXTENSIONS_DIR / "com.concord.orrdia-bridge" / "index.html"``.
 EXTENSIONS_DIR = DATA_DIR / "extensions"
 
+# INS-051: canonical default domain root. Operators who do not supply
+# a custom domain advertise their instance at ``<slug>.concordchat.net``
+# automatically. The previous placeholder ``concorrd.com`` was corr's
+# personal instance hostname; ``concordchat.net`` is the generic
+# distribution domain. Override with CONCORD_DEFAULT_DOMAIN_ROOT for
+# alternate forks.
+CONCORD_DEFAULT_DOMAIN_ROOT = (
+    os.getenv("CONCORD_DEFAULT_DOMAIN_ROOT", "concordchat.net").strip().lstrip(".")
+    or "concordchat.net"
+)
+
 # Matrix homeserver (internal Docker network or local dev)
 MATRIX_HOMESERVER_URL = os.getenv("MATRIX_HOMESERVER_URL", "http://localhost:8080")
 MATRIX_SERVER_NAME = os.getenv("CONDUWUIT_SERVER_NAME", "localhost")
