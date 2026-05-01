@@ -176,9 +176,25 @@ jobs:
           ADMIN_TOKEN=${ADMIN_TOKEN_VALUE}
           EOF
 
+      - name: Materialize CI tuwunel.toml
+        run: |
+          # config/tuwunel.toml ships at mode 0600 (owner-only) for
+          # production secrets. The conduwuit container runs as non-root
+          # and can't read it under GitHub-runner ownership. Synthesize
+          # a throwaway tuwunel.toml from the .template at 0644 — values
+          # are public CI fixtures.
+          cp config/tuwunel.toml.template config/tuwunel.toml
+          chmod 0644 config/tuwunel.toml
+          ls -la config/tuwunel.toml
+
       - name: Boot docker-compose stack
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+          # Base compose only. The dev overlay adds vite-dev with an HMR
+          # node_modules named-volume mount that fails on GitHub runners
+          # ("read-only file system"). vite-dev is not required for the
+          # TURN/LiveKit relay smoke; the base stack (conduwuit + livekit
+          # + coturn + concord-api + web + docker-socket-proxy) is enough.
+          docker compose -f docker-compose.yml up -d
           # Print initial state for debugging.
           docker compose ps
 
