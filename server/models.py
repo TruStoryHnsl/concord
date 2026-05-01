@@ -386,6 +386,43 @@ class Extension(Base):
     manifest: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class User(Base):
+    """Per-user record for features that aren't covered by Matrix identity.
+
+    Concord delegates authentication and identity to the Matrix homeserver
+    (tuwunel/conduwuit) — there is no separate Concord-side login. Most
+    user state therefore lives in Matrix or is derived from
+    ``server_members`` rows. This table exists for the rare cases where
+    we need to persist data that belongs to the user account *outside*
+    Matrix's storage model.
+
+    INS-071 Phase A — recovery email:
+        ``recovery_email`` is the user-supplied address for password
+        recovery. Phase A stores it in plaintext, with a hard
+        admin-blind invariant: NO API surface returns the column.
+        Only direct DB access reveals it. Phase B (INS-071-FUP)
+        will add encryption-at-rest. ``recovery_token_hash`` holds
+        the SHA-256 of an active password-reset token; the
+        plaintext token is sent only to the user's recovery email
+        and never stored. ``recovery_token_expires`` enforces a
+        1-hour TTL.
+    """
+
+    __tablename__ = "users"
+
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    recovery_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    recovery_token_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    recovery_token_expires: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class PlaceLedgerHeader(Base):
     """Compressed snapshot of a place ledger after a re-mint.
 

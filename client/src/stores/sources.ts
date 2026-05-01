@@ -16,6 +16,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { MatrixLoginFlowKind } from "../api/matrix";
+import type { HomeserverBranding } from "../api/wellKnown";
 import { useServerConfigStore } from "./serverConfig";
 
 export interface ConcordSource {
@@ -70,6 +71,18 @@ export interface ConcordSource {
    * succeeds and the owner account is registered + elevated.
    */
   isOwner?: boolean;
+  /**
+   * INS-069 — per-instance branding fetched from this source's
+   * ``.well-known/concord/client``. Cached on the persisted source
+   * record so the rail tile can render with the right colours on
+   * mount, before any network lookup completes. Undefined means
+   * "branding not yet fetched OR upstream has none configured" — the
+   * SourcesPanel mount effect lazy-fetches when undefined and then
+   * persists whatever it gets back (including ``undefined`` for "no
+   * branding"). Cleared via the v6 migration below for any pre-INS-069
+   * persisted sources.
+   */
+  branding?: HomeserverBranding;
 }
 
 export function getSourceHomeserverHost(source: Pick<ConcordSource, "homeserverUrl">): string | null {
@@ -371,7 +384,7 @@ export const useSourcesStore = create<SourcesState>()(
         sources: state.sources,
         boundUserId: state.boundUserId,
       }),
-      version: 5,
+      version: 6,
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as { sources?: ConcordSource[]; boundUserId?: string | null };
         if (version === 0 && state.sources) {
@@ -411,6 +424,15 @@ export const useSourcesStore = create<SourcesState>()(
           state.sources = state.sources.map((s) => ({
             ...s,
             isOwner: s.isOwner ?? false,
+          }));
+        }
+        if (version < 6 && state.sources) {
+          // v5 → v6 (INS-069): add `branding` field. Initialise to
+          // undefined for every existing entry — the SourcesPanel
+          // mount effect will lazy-fetch it on next render.
+          state.sources = state.sources.map((s) => ({
+            ...s,
+            branding: s.branding ?? undefined,
           }));
         }
         return state as SourcesState;
