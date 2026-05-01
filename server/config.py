@@ -4,6 +4,10 @@ from pathlib import Path
 DATA_DIR = Path(os.getenv("CONCORD_DATA_DIR", "/data"))
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'concord.db'}"
 SOUNDBOARD_DIR = DATA_DIR / "soundboard"
+# INS-066: where unpacked runtime-installed extension bundles live.
+# Each subdirectory is a single extension keyed by its reverse-domain id,
+# e.g. ``EXTENSIONS_DIR / "com.concord.orrdia-bridge" / "index.html"``.
+EXTENSIONS_DIR = DATA_DIR / "extensions"
 
 # Matrix homeserver (internal Docker network or local dev)
 MATRIX_HOMESERVER_URL = os.getenv("MATRIX_HOMESERVER_URL", "http://localhost:8080")
@@ -59,3 +63,4 @@ GITHUB_BUG_REPORT_REPO = os.getenv("GITHUB_BUG_REPORT_REPO", "TruStoryHnsl/conco
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SOUNDBOARD_DIR.mkdir(parents=True, exist_ok=True)
+EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
