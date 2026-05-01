@@ -184,7 +184,7 @@ services:
     healthcheck:
       test:
         - "CMD-SHELL"
-        - "wget -qO- http://localhost:7880 >/dev/null && awk '{print $2}' /proc/net/udp | grep -qi ':C350$'"
+        - "wget -qO- http://localhost:7880 >/dev/null && (awk '{print $2}' /proc/net/udp /proc/net/udp6 2>/dev/null | grep -qi ':C350$')"
       interval: 30s
       timeout: 5s
       retries: 3
