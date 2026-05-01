@@ -135,6 +135,67 @@ The script runs the prerequisite check, builds the React client, then runs
 `cargo tauri build --bundles appimage,deb`. Artifacts land in
 `src-tauri/target/release/bundle/{appimage,deb}/`.
 
+#### Linux native — host vs client mode
+
+Every Linux native build is capable of running in either of two modes; the
+choice is made at first launch and is fully reversible from the in-app
+settings.
+
+- **Host mode** — the Linux app runs the embedded *Servitude* module
+  in-process. That spawns the bundled `tuwunel` Matrix homeserver
+  (`src-tauri/resources/tuwunel/tuwunel`, pinned in
+  `scripts/build_linux_native.sh`) as a child process listening on the
+  configured `listen_port` (default `8765`; see
+  `ServitudeConfig::default()` in `src-tauri/src/servitude/config.rs`).
+  Other clients on the LAN — or, with port forwarding / a tunnel,
+  remote clients — can then connect to this Linux box as their server.
+  The optional `DiscordBridge` transport additionally spawns a
+  bubblewrap-sandboxed `mautrix-discord` (declared as a `.deb`
+  `depends:` runtime requirement in `tauri.conf.json`).
+- **Client mode** — the Linux app does not bind any embedded server
+  port. It only opens outbound connections to whatever Concord
+  instance the user picked. The Servitude lifecycle remains in the
+  `Stopped` state and `servitude_status` reports `stopped` with an
+  empty `degraded_transports` map.
+
+**How the choice is surfaced**
+
+The first-launch picker lives in
+`client/src/components/auth/ServerPickerScreen.tsx`. The top-level menu
+shows a Host option when `canHost = isTauri && !isMobile` is true —
+which it is on every Linux desktop build. Choosing **Host** drives the
+picker into its `hosting` phase, which calls the
+`servitude_start` Tauri command (defined in `src-tauri/src/lib.rs`),
+polls `servitude_status` for the `running` transition, and then
+synthesises a local `HomeserverConfig` pointing at
+`http://localhost:<port>`. Choosing **Join** (or **Matrix** / **Bridge**)
+performs well-known discovery against a remote hostname instead and
+never touches `servitude_start`.
+
+**Where the choice persists**
+
+The chosen `HomeserverConfig` lives in the `serverConfig` zustand store
+(`client/src/stores/serverConfig.ts`), which is mirrored to the Tauri
+plugin-store `settings.json`. The picker is gated by
+`computeInitialServerConnected` in `client/src/serverPickerGate.ts` —
+on a fresh install with no `serverConfig`, the Linux native shell
+always opens hollow on the picker; on subsequent launches it goes
+straight to the chosen mode. The Servitude config itself
+(`ServitudeConfig` schema in `src-tauri/src/servitude/config.rs`) is
+persisted under the `servitude` key in the same store and is what
+`servitude_start` re-reads on every restart.
+
+**How to switch modes after first launch**
+
+Open Settings → Node and use the toggle in `NodeHostingTab`
+(`client/src/components/settings/NodeHostingTab.tsx`). It calls
+`servitudeStart` / `servitudeStop` from `client/src/api/servitude.ts`,
+which map directly to the Rust commands `servitude_start`,
+`servitude_stop`, and `servitude_status` registered in
+`src-tauri/src/lib.rs`. The tab polls `servitude_status` every 3s and
+shows transitional `starting` / `stopping` states with the action
+button disabled — no double-click wedge.
+
 ### macOS native (orrpheus)
 
 ```bash
