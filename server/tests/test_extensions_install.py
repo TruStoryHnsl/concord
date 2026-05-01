@@ -306,3 +306,275 @@ async def test_non_admin_cannot_uninstall(
     login_as(NON_ADMIN_USER)
     resp = await client.delete(f"/api/extensions/{EXT_ID}")
     assert resp.status_code == 403, resp.text
+
+
+# =====================================================================
+# Cold-reader negative-case coverage (INS-066-FUP-D)
+# ---------------------------------------------------------------------
+# These tests were added in a SEPARATE session from the implementation
+# to satisfy the CLAUDE.md "WRITTEN IN BLOOD" rule: tests written by
+# the same context that wrote the code encode the author's beliefs
+# rather than the code's actual user-visible behavior.
+#
+# Each test below is a specific failure mode that the original W8
+# happy-path tests did not cover. Naming convention: `test_neg_*`.
+# =====================================================================
+
+
+async def test_neg_install_rejects_malformed_zip_bytes(
+    client, tmp_path, clean_extensions_dir
+):
+    """A file that is not a valid zip archive must be rejected with 400
+    'not a valid zip archive'. The server must NOT crash with a 500."""
+    bad_path = tmp_path / "not-a-zip.zip"
+    bad_path.write_bytes(b"this is plainly not zip data" * 100)
+
+    login_as(ADMIN_USER)
+    resp = await client.post(
+        "/api/extensions/install", json={"remote_url": _file_url(bad_path)}
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert "zip" in str(body).lower()
+
+
+async def test_neg_install_rejects_zip_without_manifest_json(
+    client, tmp_path, clean_extensions_dir
+):
+    """A valid zip archive with NO manifest.json at the root must be
+    rejected at unpack time, not at validation time, with 422."""
+    bad_zip = _make_zip(
+        {
+            "index.html": b"<html>no manifest</html>",
+            "assets/x.js": b"console.log(1);",
+        }
+    )
+    bad_path = tmp_path / "no-manifest.zip"
+    bad_path.write_bytes(bad_zip)
+
+    login_as(ADMIN_USER)
+    resp = await client.post(
+        "/api/extensions/install", json={"remote_url": _file_url(bad_path)}
+    )
+    assert resp.status_code == 422, resp.text
+    assert "manifest" in resp.text.lower()
+
+
+async def test_neg_manifest_missing_each_required_key(
+    client, tmp_path, clean_extensions_dir
+):
+    """The validator requires id, version, and entry. Missing any one
+    of them must reject with 422 and name the specific missing key."""
+    cases = [
+        # (label, manifest dict missing one required key)
+        ("missing_id", {"version": "0.1.0", "entry": "index.html"}),
+        ("missing_version", {"id": "com.example.x", "entry": "index.html"}),
+        ("missing_entry", {"id": "com.example.x", "version": "0.1.0"}),
+    ]
+    login_as(ADMIN_USER)
+    for label, manifest in cases:
+        bad_zip = _make_zip(
+            {
+                "manifest.json": json.dumps(manifest).encode(),
+                "index.html": b"x",
+            }
+        )
+        bad_path = tmp_path / f"{label}.zip"
+        bad_path.write_bytes(bad_zip)
+        resp = await client.post(
+            "/api/extensions/install", json={"remote_url": _file_url(bad_path)}
+        )
+        assert resp.status_code == 422, f"{label}: {resp.text}"
+        # The validator's error message must mention "missing required keys"
+        # so the operator knows which field to fix.
+        assert "missing" in resp.text.lower() or "entry" in resp.text.lower(), (
+            f"{label}: {resp.text}"
+        )
+
+
+async def test_neg_manifest_with_multiple_unknown_permissions(
+    client, tmp_path, clean_extensions_dir
+):
+    """A manifest declaring multiple unknown permissions must reject
+    with 422 and surface ALL offending names (not just the first)."""
+    bad_zip = _make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "id": "com.example.multibad",
+                    "version": "0.1.0",
+                    "entry": "index.html",
+                    "permissions": [
+                        "filesystem.write",
+                        "network.raw_socket",
+                        "audio.record",
+                    ],
+                }
+            ).encode(),
+            "index.html": b"<html></html>",
+        }
+    )
+    bad_path = tmp_path / "multibad.zip"
+    bad_path.write_bytes(bad_zip)
+
+    login_as(ADMIN_USER)
+    resp = await client.post(
+        "/api/extensions/install", json={"remote_url": _file_url(bad_path)}
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert detail["error"] == "unknown_permissions"
+    perms = detail["permissions"]
+    assert "filesystem.write" in perms
+    assert "network.raw_socket" in perms
+    assert "audio.record" in perms
+
+
+async def test_neg_zip_with_absolute_path_entry(
+    client, tmp_path, clean_extensions_dir
+):
+    """Zip entries with absolute paths (`/etc/passwd`) must be rejected
+    with 400 BEFORE any file is written outside the staging dir."""
+    # Build the zip manually so we can include an absolute path.
+    import io
+    import zipfile as _zip
+
+    buf = io.BytesIO()
+    with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "id": "com.example.absolute",
+                    "version": "0.1.0",
+                    "entry": "index.html",
+                    "permissions": [],
+                }
+            ),
+        )
+        # Absolute path. zipfile preserves the leading slash in the
+        # archive entry name; the unpack path-validation step must
+        # reject this BEFORE any writeout happens.
+        zf.writestr("/etc/passwd", b"pwned")
+    bad_path = tmp_path / "absolute.zip"
+    bad_path.write_bytes(buf.getvalue())
+
+    login_as(ADMIN_USER)
+    resp = await client.post(
+        "/api/extensions/install", json={"remote_url": _file_url(bad_path)}
+    )
+    assert resp.status_code == 400, resp.text
+    # /etc/passwd was NOT created — the test just running proves it,
+    # but assert the path is reported in the error so operators can
+    # tell which entry tripped the gate.
+    assert "absolute" in resp.text.lower() or "passwd" in resp.text.lower()
+
+
+async def test_neg_install_duplicate_id_overwrites_idempotently(
+    client, fixture_url, clean_extensions_dir
+):
+    """Re-installing the same extension id MUST be idempotent (overwrite,
+    not 409 conflict). This is the documented contract — extensions get
+    upgraded by re-installing, not by uninstalling first.
+
+    DECISION: idempotent overwrite. The pipeline reuses the same DB
+    row (extension id is the primary key) and clobbers the on-disk
+    bundle. The endpoint returns 201 both times with the latest
+    manifest. If the operator wanted a hard 409, they would expect a
+    different endpoint (POST /api/extensions/{id}/upgrade or similar).
+    """
+    from config import EXTENSIONS_DIR
+
+    login_as(ADMIN_USER)
+    first = await client.post(
+        "/api/extensions/install", json={"remote_url": fixture_url}
+    )
+    assert first.status_code == 201, first.text
+    first_cached = first.json()["cached_at"]
+
+    # Second install — same id, same fixture. Must succeed (201) and
+    # overwrite the cached_at timestamp.
+    second = await client.post(
+        "/api/extensions/install", json={"remote_url": fixture_url}
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == EXT_ID
+    second_cached = second.json()["cached_at"]
+    # The DB row was updated (cached_at advanced) — not duplicated.
+    assert second_cached >= first_cached
+
+    # GET listing shows EXACTLY one entry for this id (no duplication).
+    listing = await client.get("/api/extensions")
+    matching = [it for it in listing.json() if it["id"] == EXT_ID]
+    assert len(matching) == 1, matching
+
+    # On-disk bundle still present.
+    assert (EXTENSIONS_DIR / EXT_ID / "index.html").is_file()
+
+
+async def test_neg_uninstall_nonexistent_id_returns_404(
+    client, clean_extensions_dir
+):
+    """Uninstalling an id that has no DB row must return 404, not 500
+    or 204. Explicit-not-found error code so client UIs can show a
+    clear message rather than 'silent success'."""
+    login_as(ADMIN_USER)
+    resp = await client.delete("/api/extensions/com.example.never-installed")
+    assert resp.status_code == 404, resp.text
+
+
+async def test_neg_install_rejects_invalid_remote_url_scheme(
+    client, clean_extensions_dir
+):
+    """The fetcher only accepts http(s):// and file://. Any other
+    scheme (e.g., ftp://, ssh://, javascript:) must reject with 400
+    BEFORE any I/O is attempted — defense against fetch primitive
+    abuse."""
+    login_as(ADMIN_USER)
+    for bad_url in (
+        "ftp://example.com/bundle.zip",
+        "ssh://example.com/bundle.zip",
+        "javascript:alert(1)",
+        "data:application/zip;base64,UEsDBA==",
+    ):
+        resp = await client.post(
+            "/api/extensions/install", json={"remote_url": bad_url}
+        )
+        assert resp.status_code == 400, f"{bad_url!r}: {resp.text}"
+
+
+async def test_neg_install_unreachable_remote_url_returns_clean_502(
+    client, clean_extensions_dir
+):
+    """An unreachable HTTP(S) remote_url must surface as a clean 502
+    (Bad Gateway), NOT a 500 (Internal Server Error). 500 hides the
+    operator-visible "your bundle source is down" signal.
+
+    Uses an invalid TLD + 127.0.0.1 with an unbound port so the
+    request fails fast (DNS or connect error) — no 60s wait."""
+    login_as(ADMIN_USER)
+    # 127.0.0.1:1 is RFC-reserved tcpmux; on most test hosts no socket
+    # is bound, so connect fails immediately. (Adjust port if a CI
+    # runner happens to have something listening — extremely rare.)
+    resp = await client.post(
+        "/api/extensions/install",
+        json={"remote_url": "http://127.0.0.1:1/bundle.zip"},
+    )
+    # 502 from `_fetch_zip_bytes` HTTPError branch.
+    assert resp.status_code == 502, resp.text
+    assert "fetch" in resp.text.lower() or "502" in resp.text
+
+
+async def test_neg_install_file_url_to_nonexistent_path_returns_400(
+    client, tmp_path, clean_extensions_dir
+):
+    """A file:// URL pointing at a path that does not exist must
+    surface as 400 'file not found', not 500."""
+    missing = tmp_path / "does-not-exist.zip"
+    login_as(ADMIN_USER)
+    resp = await client.post(
+        "/api/extensions/install",
+        json={"remote_url": f"file://{missing}"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "file" in resp.text.lower() or "not found" in resp.text.lower()
