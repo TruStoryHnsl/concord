@@ -344,6 +344,10 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).warning("Lobby welcome setup failed: %s", e)
 
     extensions.init_catalog()
+    # INS-066 W3: mount StaticFiles routes for every installed extension
+    # found under EXTENSIONS_DIR. Subsequent installs register their
+    # mounts at request time via routers.extensions.register_mount().
+    extensions.mount_installed(app)
 
     yield
 
