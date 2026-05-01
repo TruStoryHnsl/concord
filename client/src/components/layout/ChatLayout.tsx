@@ -32,6 +32,7 @@ import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
 import { useDisplayName } from "../../hooks/useDisplayName";
 import { useExtension } from "../../hooks/useExtension";
+import { useExtensionRoomBridge } from "../../hooks/useExtensionBridge";
 import { useExtensionStore } from "../../stores/extension";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
@@ -618,6 +619,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const extensionMenuOpen = useExtensionStore((s) => s.menuOpen);
   const setExtensionMenuOpen = useExtensionStore((s) => s.setMenuOpen);
   const extensionCatalog = useExtensionStore((s) => s.catalog);
+
+  // INS-066-FUP-A: bridge between matrix-js-sdk client + room store and the
+  // <ExtensionEmbed/> SDK ports. This is the call-site wiring W5/W6 deferred —
+  // without it, `subscribeRoomEvents` + `onSendStateEvent` are undefined and
+  // the SDK channels graceful no-op. With it, real Matrix events round-trip
+  // through the iframe boundary.
+  const extensionBridge = useExtensionRoomBridge(client, activeChannelId);
 
   // Extension / chat vertical split resize (desktop)
   // The legacy "extension on top, chat below" vertical split state
@@ -1777,6 +1785,23 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               hostUserId={userId ?? ""}
               isHost={false}
               onStop={handleStopAppChannel}
+              // INS-066-FUP-A: wire SDK channels to live matrix-js-sdk room.
+              // `manifestPermissions` gates concord:state_event delivery
+              // and extension:send_state_event acceptance fail-closed —
+              // legacy static-catalog entries surface as `[]`, so they
+              // can neither receive nor send state events without an
+              // explicit manifest declaration. `roomId` + bridge come
+              // from the active matrix room; if either is missing the
+              // shell silently degrades to no-op (graceful path tested
+              // in state_event_roundtrip).
+              manifestPermissions={appExt.permissions ?? []}
+              {...(activeChannelId ? { roomId: activeChannelId } : {})}
+              {...(extensionBridge
+                ? {
+                    subscribeRoomEvents: extensionBridge.subscribeRoomEvents,
+                    onSendStateEvent: extensionBridge.onSendStateEvent,
+                  }
+                : {})}
             />
           </div>
         );

@@ -373,6 +373,11 @@ class ExtensionOut(BaseModel):
     url: str
     icon: str
     description: str
+    # INS-066-FUP-A: surface manifest permissions to the client so the
+    # ExtensionSurfaceManager can gate concord:state_event delivery and
+    # extension:send_state_event acceptance. Always present (empty list
+    # for legacy static-catalog rows that have no manifest).
+    permissions: list[str] = []
 
 
 class InstalledExtensionOut(BaseModel):
@@ -404,12 +409,15 @@ def _extension_to_listing(row: Extension) -> ExtensionOut:
     except Exception:
         manifest = {}
     entry = manifest.get("entry", "index.html")
+    raw_perms = manifest.get("permissions") or []
+    perms = [p for p in raw_perms if isinstance(p, str)]
     return ExtensionOut(
         id=row.id,
         name=manifest.get("name", row.id),
         url=f"/ext/{row.id}/{entry}",
         icon=manifest.get("icon", "extension"),
         description=manifest.get("description", ""),
+        permissions=perms,
     )
 
 
