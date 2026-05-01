@@ -398,6 +398,44 @@ async def admin_update_instance(
 
 
 # ---------------------------------------------------------------------------
+# Admin: instance branding (INS-069)
+#
+# Per-instance branding is persisted under the ``branding`` top-level
+# key in ``instance.json`` and re-emitted in
+# ``/.well-known/concord/client`` so cross-instance Source rails can
+# render each tile with the upstream instance's own colours.
+# ---------------------------------------------------------------------------
+
+
+from fastapi import Response
+from routers.wellknown import BrandingConfig as _BrandingConfig
+
+
+@router.post("/api/admin/instance/branding", status_code=204)
+async def admin_set_instance_branding(
+    body: _BrandingConfig,
+    user_id: str = Depends(get_user_id),
+) -> Response:
+    """Persist the per-instance branding block (INS-069).
+
+    Validation lives entirely in the Pydantic model
+    (``BrandingConfig`` in ``routers.wellknown``): non-hex colours,
+    short-form ``#abc`` strings, and non-HTTP(S) logo URLs all fail
+    with 422 before this handler runs. We just need to write the
+    model dump to disk under the existing settings file.
+
+    Returns 204 (no body) on success — operators don't need a payload
+    echo back, and keeping the contract void means a future schema
+    addition doesn't break clients that only care about the ack.
+    """
+    require_admin(user_id)
+    settings = _read_instance_settings()
+    settings["branding"] = body.model_dump()
+    _write_instance_settings(settings)
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
 # Runtime-managed integration credentials (admin UI replaces .env edits)
 #
 # Each integration stores its secrets in instance.json rather than the

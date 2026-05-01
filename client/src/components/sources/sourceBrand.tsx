@@ -33,15 +33,33 @@ export function SourceBrandIcon({
   brand,
   size = 20,
   className,
+  color,
 }: {
   brand: SourceBrand;
   size?: number;
   className?: string;
+  /**
+   * INS-069 — optional override for the icon's drawing colour. When
+   * provided, it's applied via inline style so it wins over any
+   * `text-on-surface`-style classnames coming in via `className`.
+   * Used by the SourcesPanel tile to colour the icon to match the
+   * upstream instance's accent colour.
+   *
+   * Pass an exact CSS colour value (`#aabbcc`, `rgb(...)`, etc.).
+   * The component does NOT validate — callers should validate first
+   * (the well-known parser already does this).
+   */
+  color?: string;
 }) {
   const mozillaGradientId = useId();
+  // Inline `color` propagates to `currentColor` in the SVG paths via
+  // CSS inheritance (we pass the style down on the wrapping element).
+  // Using `style` rather than a classname so the override beats any
+  // tailwind text-* class on the same element.
+  const colorStyle = color ? { color } : undefined;
 
   if (brand === "concord") {
-    return <ConcordLogo size={size} className={className} />;
+    return <ConcordLogo size={size} className={className} style={colorStyle} />;
   }
 
   if (brand === "matrix") {
@@ -51,6 +69,7 @@ export function SourceBrandIcon({
         width={size}
         height={size}
         className={className}
+        style={colorStyle}
         aria-hidden="true"
       >
         <path
@@ -68,6 +87,7 @@ export function SourceBrandIcon({
         width={size}
         height={size}
         className={className}
+        style={colorStyle}
         aria-hidden="true"
       >
         <defs>
@@ -92,6 +112,7 @@ export function SourceBrandIcon({
         width={size}
         height={size}
         className={className}
+        style={colorStyle}
         aria-hidden="true"
         fill="none"
         stroke="currentColor"
@@ -111,5 +132,5 @@ export function SourceBrandIcon({
     );
   }
 
-  return <ConcordLogo size={size} className={className} />;
+  return <ConcordLogo size={size} className={className} style={colorStyle} />;
 }
