@@ -169,26 +169,24 @@ services:
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
     command: --config /etc/livekit.yaml
-    # INS-067 W3: dual-protocol healthcheck. The container is healthy
-    # only when BOTH the HTTP API on 7880 (TCP) AND the first UDP relay
-    # port (port_range_start, default 50000) are bound. Without the UDP
-    # check, a misconfigured port range would still show "healthy" via
-    # the HTTP probe while voice silently broke (the failure mode that
-    # caused the 2026-05-01 incident, where LiveKit's HTTP was fine but
-    # no UDP socket was ever bound to the expected range).
-    #
-    # UDP-bound detection: /proc/net/udp lists every locally-bound UDP
-    # socket. Each line's second column is the local address in
-    # "ip:port" hex. Port 50000 hex is C350; we grep for ":C350 " to
-    # confirm an LiveKit-internal UDP listener is up.
+    # INS-067 W3 (deferred): a runtime UDP-bound healthcheck would
+    # detect the docker-port-mapping black-hole that caused the
+    # 2026-05-01 incident, but LiveKit doesn't pre-bind the ICE range
+    # — UDP sockets open on-demand per peer connection. At idle,
+    # /proc/net/udp{,6} contain ZERO entries for the port_range. There
+    # is no practical container-side health probe that succeeds at
+    # idle and detects misconfig. The catch-the-misconfig safeguards
+    # are: (1) INS-067 W2's static config-coherence linter (catches
+    # drift at PR time), (2) INS-067 W1's CI smoke (boots the stack
+    # and exercises a real relay allocation against the actual host
+    # port mapping). Filed as INS-067-FUP if a sidecar-based runtime
+    # check is wanted later.
     healthcheck:
-      test:
-        - "CMD-SHELL"
-        - "wget -qO- http://localhost:7880 >/dev/null && (awk '{print $2}' /proc/net/udp /proc/net/udp6 2>/dev/null | grep -qi ':C350$')"
+      test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 5s
     networks:
       - concord
 
