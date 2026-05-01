@@ -174,15 +174,58 @@ export type ExtensionInboundMessage = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the safe `targetOrigin` for a postMessage call to an iframe.
+ *
+ * The browser uses `targetOrigin` to decide whether the receiving
+ * window's origin is the one we expected. Passing "*" is correct ONLY
+ * when we don't care who reads the message. The SDK envelopes carry
+ * Matrix event content (state events, permission errors, identity-bearing
+ * init payloads), so we must scope to the iframe's actual origin.
+ *
+ * Failure mode: the iframe may have `frame.src` unset (newly mounted),
+ * a non-parseable URL, or a `srcdoc`-style frame whose origin is the
+ * shell's. In those cases we fall back to "*" with a warning so the
+ * SDK message still arrives — silently failing to deliver would be
+ * worse than the leak risk. Production runtime-installed extensions
+ * always have a parseable absolute URL via the StaticFiles mount.
+ */
+export function resolvePostTargetOrigin(
+  frame: HTMLIFrameElement | null | undefined,
+): string {
+  const src = frame?.src;
+  if (!src) return "*";
+  try {
+    return new URL(src, typeof window !== "undefined" ? window.location.href : undefined).origin;
+  } catch {
+    if (typeof console !== "undefined" && console.warn) {
+      console.warn(
+        "[concord/sdk] postToFrame: could not parse iframe.src as URL, " +
+          "falling back to targetOrigin '*'. src=",
+        src,
+      );
+    }
+    return "*";
+  }
+}
+
+/**
  * Post a typed shell message to an iframe's contentWindow.
  * No-ops if the iframe or its contentWindow is not available.
+ *
+ * INS-066-FUP-F: tightened from `"*"` to the iframe's actual origin.
+ * For runtime-installed `/ext/{id}/` extensions this is the shell's own
+ * origin (same-origin), so the change is functionally a no-op there.
+ * For hosted `*.concord.app` extensions and any future third-party
+ * catalog hosts it prevents leaking Matrix event content to whatever
+ * arbitrary origin the iframe might be navigated to.
  */
 export function postToFrame(
   frame: HTMLIFrameElement | null | undefined,
   message: ConcordShellMessage,
 ): void {
   if (!frame?.contentWindow) return;
-  frame.contentWindow.postMessage(message, "*");
+  const targetOrigin = resolvePostTargetOrigin(frame);
+  frame.contentWindow.postMessage(message, targetOrigin);
 }
 
 /** Build a concord:init message envelope. */
