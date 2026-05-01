@@ -1,23 +1,33 @@
 /**
- * Concord Shell ↔ Extension postMessage SDK (INS-036 Wave 4).
+ * Concord Shell ↔ Extension postMessage SDK (INS-036 Wave 4 + INS-066 W5/W6).
  *
- * This module defines the outbound message protocol that the Concord shell
- * (ExtensionSurfaceManager) sends to extension iframes. Extensions listen for
- * these messages via window.addEventListener("message", handler) and use the
- * typed payload to drive their UI without any direct access to Concord internals.
+ * This module defines BOTH directions of the postMessage protocol:
+ *   - Outbound (shell → iframe): `concord:*` messages. These tell the
+ *     extension about session/lifecycle events (init, participant
+ *     join/leave, host_transfer, surface_resize, state_event).
+ *   - Inbound  (iframe → shell): `extension:*` messages. These let the
+ *     extension request things from the shell (currently
+ *     extension:send_state_event for emitting Matrix room state).
  *
- * Protocol direction: Concord shell → iframe (window.postMessage).
- * The inbound direction (iframe → shell) is handled by InputRouter (W2).
- *
- * All messages share a common envelope:
+ * Outbound envelope:
  *   { type: "concord:<event>", payload: <typed payload>, version: 1 }
+ * Inbound envelope:
+ *   { type: "extension:<verb>", payload: <typed payload>, version: 1 }
  *
- * Message types:
- *   concord:init             — sent once on iframe mount with full session context
- *   concord:participant_join — a participant joined the session
- *   concord:participant_leave — a participant left the session
- *   concord:host_transfer    — the host seat transferred to another participant
- *   concord:surface_resize   — the surface container was resized
+ * Outbound (shell → iframe) message types:
+ *   concord:init               — sent once on iframe mount with session context
+ *   concord:participant_join   — a participant joined the session
+ *   concord:participant_leave  — a participant left the session
+ *   concord:host_transfer      — the host seat transferred to another participant
+ *   concord:surface_resize     — the surface container was resized
+ *   concord:state_event        — a Matrix room state event was observed and
+ *                                forwarded to the extension (INS-066 W5)
+ *   concord:permission_denied  — the extension's last verb was rejected
+ *                                (INS-066 W6)
+ *
+ * Inbound (iframe → shell) verbs:
+ *   extension:send_state_event — request the shell emit a Matrix state
+ *                                event on behalf of the extension (W6)
  *
  * See docs/extensions/shell-api.md for the full specification.
  */
@@ -77,8 +87,46 @@ export interface ConcordSurfaceResizePayload {
   heightPx: number;
 }
 
+/** A Matrix room state event forwarded to the extension (INS-066 W5).
+ *
+ * The shell observes the Matrix client's incoming events for the active
+ * room and forwards each one as a `concord:state_event` IFF the
+ * extension's manifest permissions include `state_events` or
+ * `matrix.read`. Extensions without those permissions never see this
+ * message — the gate is enforced shell-side, not in the extension. */
+export interface ConcordStateEventPayload {
+  /** Matrix room ID where the event originated. */
+  roomId: string;
+  /** Matrix event type (e.g. `m.room.message`, `com.concord.foo.state`). */
+  eventType: string;
+  /** Opaque event content. Shape depends on `eventType`; the shell forwards
+   *  the raw object without interpretation. */
+  content: Record<string, unknown>;
+  /** Matrix user ID of the event sender. */
+  sender: string;
+  /** Origin server timestamp in milliseconds since epoch. */
+  originServerTs: number;
+  /** Optional state_key for state events. Absent on message events. */
+  stateKey?: string;
+}
+
+/** Sent back to an extension after a denied verb (INS-066 W6). */
+export interface ConcordPermissionDeniedPayload {
+  /** The verb name that was denied (e.g. `extension:send_state_event`). */
+  action: string;
+  /** Human-readable reason. Stable identifiers preferred:
+   *  - "manifest_missing_permission"   — manifest didn't request the perm
+   *  - "session_role_forbidden"        — InputRouter rejected the seat/mode
+   *  - "manifest_unknown"              — shell has no manifest for this ext
+   *  - "invalid_payload"               — payload shape was wrong
+   */
+  reason: string;
+  /** Optional extra context (e.g. the missing permission name). */
+  detail?: string;
+}
+
 // ---------------------------------------------------------------------------
-// Message envelope union
+// Message envelope union (outbound: shell → iframe)
 // ---------------------------------------------------------------------------
 
 export type ConcordShellMessage =
@@ -86,7 +134,40 @@ export type ConcordShellMessage =
   | { type: "concord:participant_join"; payload: ConcordParticipantJoinPayload; version: typeof CONCORD_SDK_VERSION }
   | { type: "concord:participant_leave"; payload: ConcordParticipantLeavePayload; version: typeof CONCORD_SDK_VERSION }
   | { type: "concord:host_transfer"; payload: ConcordHostTransferPayload; version: typeof CONCORD_SDK_VERSION }
-  | { type: "concord:surface_resize"; payload: ConcordSurfaceResizePayload; version: typeof CONCORD_SDK_VERSION };
+  | { type: "concord:surface_resize"; payload: ConcordSurfaceResizePayload; version: typeof CONCORD_SDK_VERSION }
+  | { type: "concord:state_event"; payload: ConcordStateEventPayload; version: typeof CONCORD_SDK_VERSION }
+  | { type: "concord:permission_denied"; payload: ConcordPermissionDeniedPayload; version: typeof CONCORD_SDK_VERSION };
+
+// ---------------------------------------------------------------------------
+// Inbound (iframe → shell) verbs
+// ---------------------------------------------------------------------------
+
+/** Payload for `extension:send_state_event` (INS-066 W6).
+ *
+ * The extension requests that the shell emit a Matrix state event on its
+ * behalf. The shell checks (a) InputRouter session/seat permission for
+ * `send_state_events`, and (b) the manifest declared `state_events` or
+ * `matrix.send` permission. Both gates must pass; otherwise a
+ * `concord:permission_denied` is posted back. */
+export interface ExtensionSendStateEventPayload {
+  /** Optional Matrix room ID. When omitted, the shell uses the active
+   *  room for the current session. Extensions are NOT allowed to send
+   *  to arbitrary rooms — providing a room_id different from the
+   *  current session's room is rejected. */
+  roomId?: string;
+  /** Matrix event type to emit, e.g. `com.concord.orrdia-bridge.queue`. */
+  eventType: string;
+  /** State key. Optional — defaults to empty string. */
+  stateKey?: string;
+  /** Event content. */
+  content: Record<string, unknown>;
+}
+
+export type ExtensionInboundMessage = {
+  type: "extension:send_state_event";
+  payload: ExtensionSendStateEventPayload;
+  version: typeof CONCORD_SDK_VERSION;
+};
 
 // ---------------------------------------------------------------------------
 // Shell-side sender helpers (used by ExtensionSurfaceManager)
@@ -135,6 +216,62 @@ export function buildSurfaceResizeMessage(
   payload: ConcordSurfaceResizePayload,
 ): ConcordShellMessage {
   return { type: "concord:surface_resize", payload, version: CONCORD_SDK_VERSION };
+}
+
+/** Build a concord:state_event message envelope (INS-066 W5). */
+export function buildStateEventMessage(
+  payload: ConcordStateEventPayload,
+): ConcordShellMessage {
+  return { type: "concord:state_event", payload, version: CONCORD_SDK_VERSION };
+}
+
+/** Build a concord:permission_denied message envelope (INS-066 W6). */
+export function buildPermissionDeniedMessage(
+  payload: ConcordPermissionDeniedPayload,
+): ConcordShellMessage {
+  return { type: "concord:permission_denied", payload, version: CONCORD_SDK_VERSION };
+}
+
+// ---------------------------------------------------------------------------
+// Inbound message helpers (used by the shell to validate iframe messages)
+// ---------------------------------------------------------------------------
+
+/** Type guard for inbound `extension:*` verbs (INS-066 W6).
+ *
+ * Used by the ExtensionSurfaceManager message handler to filter the
+ * structured-verb subset of inbound postMessages from a typo'd or
+ * legacy `extension_action` envelope. */
+export function isExtensionInboundMessage(
+  data: unknown,
+): data is ExtensionInboundMessage {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as Record<string, unknown>;
+  return (
+    typeof d.type === "string" &&
+    d.type.startsWith("extension:") &&
+    d.version === CONCORD_SDK_VERSION &&
+    typeof d.payload === "object" &&
+    d.payload !== null
+  );
+}
+
+/** Manifest-permission gate used by both directions (INS-066 W5/W6).
+ *
+ * Returns true when the extension's manifest permissions array contains
+ * any of the listed gate-permissions. The shell uses this to filter
+ * outbound `concord:state_event` (gate: state_events or matrix.read)
+ * and to gate inbound `extension:send_state_event` (gate: state_events
+ * or matrix.send). When the manifest is unknown (no entry in the
+ * installed-extensions registry), this returns false — fail closed. */
+export function manifestAllows(
+  manifestPermissions: readonly string[] | undefined,
+  anyOf: readonly string[],
+): boolean {
+  if (!manifestPermissions) return false;
+  for (const p of anyOf) {
+    if (manifestPermissions.includes(p)) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
