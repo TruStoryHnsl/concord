@@ -21,6 +21,7 @@ import logging
 import time
 from threading import Lock
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -279,6 +280,62 @@ async def _get_oauth_token(provider: str, secrets: dict[str, str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Health probe
+#
+# IMPORTANT: this route MUST be registered BEFORE the main proxy route.
+# FastAPI/Starlette matches in registration order; the main proxy pattern
+# ``{ext_id}/{provider}/{path:path}`` would shadow ``{ext_id}/__healthz/{provider}``
+# if defined first (confirmed with live routing test).
+# ---------------------------------------------------------------------------
+
+
+def _resolve_upstream(provider: str) -> str | None:
+    """Return the base upstream URL for a provider, or None if unknown.
+
+    For providers with a dynamic upstream_builder, returns the static
+    base domain so a HEAD probe has a target (the builder needs secrets,
+    which we don't have here).
+    """
+    cfg = PROVIDERS.get(provider)
+    if not cfg:
+        return None
+    if cfg.get("upstream"):
+        return cfg["upstream"]
+    # sentinel-style: no static upstream, derive base from token_url domain
+    if cfg.get("token_url"):
+        parsed = urlparse(cfg["token_url"])
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return None
+
+
+@router.get("/api/ext-proxy/{ext_id}/__healthz/{provider}")
+async def proxy_healthz(
+    ext_id: str,
+    provider: str,
+    user_id: str = Depends(get_user_id),
+):
+    """Lightweight health probe used by the worldview-map health panel.
+
+    Returns 200 with ``{"ok": true, "status": <upstream_status>}`` if the
+    proxy can reach the upstream base URL.  4xx from the upstream root is
+    treated as reachable (root-level HEAD is commonly rejected with 405;
+    that does not indicate an outage).  Returns 502 on network error, 404
+    for unknown providers.
+    """
+    upstream = _resolve_upstream(provider)
+    if not upstream:
+        raise HTTPException(404, f"unknown provider {provider!r} for {ext_id}")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.head(upstream)
+            # Treat any response (including 4xx) as "reachable"; only 5xx means degraded.
+            # Root-level HEAD on most APIs returns 404 or 405 — not an outage signal.
+            return {"ok": r.status_code < 500, "status": r.status_code, "provider": provider}
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # Proxy
 # ---------------------------------------------------------------------------
 
@@ -304,9 +361,16 @@ async def ext_proxy(
         raise HTTPException(405, f"Method {request.method} not allowed for {provider}")
 
     # Server-side rate cap — defense in depth against misbehaving iframes.
+    # Note: _BUCKETS is process-local; on a multi-worker deploy the effective
+    # rate per source is SOURCE_RATES[provider] * num_workers. Currently a
+    # single uvicorn worker is used (see server/Dockerfile CMD).
     rate = SOURCE_RATES.get(provider, 1.0)
     if not _get_bucket(ext_id, provider, rate).take():
-        raise HTTPException(429, f"{provider}: server-side rate limit exceeded")
+        raise HTTPException(
+            status_code=429,
+            detail=f"{provider}: server-side rate limit exceeded",
+            headers={"Retry-After": str(max(1, int(1 / rate)))},
+        )
 
     secrets = _ext_secrets(ext_id)
 
@@ -367,54 +431,6 @@ async def ext_proxy(
         headers=pass_through,
         media_type=upstream_resp.headers.get("content-type"),
     )
-
-
-# ---------------------------------------------------------------------------
-# Health probe
-# ---------------------------------------------------------------------------
-
-
-def _resolve_upstream(provider: str) -> str | None:
-    """Return the base upstream URL for a provider, or None if unknown.
-
-    For providers with a dynamic upstream_builder, returns the static
-    base domain so a HEAD probe has a target (the builder needs secrets,
-    which we don't have here).
-    """
-    cfg = PROVIDERS.get(provider)
-    if not cfg:
-        return None
-    if cfg.get("upstream"):
-        return cfg["upstream"]
-    # sentinel-style: no static upstream, derive base from token_url domain
-    if cfg.get("token_url"):
-        from urllib.parse import urlparse
-        parsed = urlparse(cfg["token_url"])
-        return f"{parsed.scheme}://{parsed.netloc}"
-    return None
-
-
-@router.get("/api/ext-proxy/{ext_id}/__healthz/{provider}")
-async def proxy_healthz(
-    ext_id: str,
-    provider: str,
-    user_id: str = Depends(get_user_id),
-):
-    """Lightweight health probe used by the worldview-map health panel.
-
-    Returns 200 with ``{"ok": true, "status": <upstream_status>}`` if the
-    proxy can reach the upstream base URL, or 502 with the upstream error
-    otherwise.  Returns 404 for unknown providers.
-    """
-    upstream = _resolve_upstream(provider)
-    if not upstream:
-        raise HTTPException(404, f"unknown provider {provider!r} for {ext_id}")
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.head(upstream)
-            return {"ok": r.status_code < 500, "status": r.status_code, "provider": provider}
-    except Exception as exc:
-        raise HTTPException(502, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
