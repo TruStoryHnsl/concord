@@ -455,15 +455,21 @@ export default function App() {
     );
   }
 
-  if (!serverConnected) {
-    // INS-058 contract (firstLaunch.windows.test.tsx, 2026-05-01): on a
-    // fresh native first-launch with empty serverConfig, ServerPickerScreen
-    // is the first interactive surface — NOT a Welcome gate. The W2-05
-    // Welcome-first routing was reverted here to honor that test contract;
-    // the eventual hollow-UI-with-`+`-tile restructure (per
-    // feedback_ux_hollow_webui_spec.md) supersedes both the modal picker
-    // and the Welcome screen, but until that lands the picker IS the
-    // first surface for the empty-state path.
+  // INS-058 (per feedback_ux_hollow_webui_spec.md, 2026-04-10): every
+  // native build renders the full hollow Concord shell on first launch
+  // — Sources + Servers + Channels + Chat columns all rendered, columns
+  // empty, with the SourcesPanel `+` tile as the universal entry point
+  // for adding a Concord/Matrix instance. No modal gate. No Welcome
+  // gate. ServerPickerScreen and LoginForm still exist for the
+  // web/Docker non-Tauri path (and as flows reachable from the `+`
+  // tile or a logged-out source) but they are NOT first-launch gates
+  // on Tauri.
+  //
+  // Auth-state note: ChatLayout renders even when !isLoggedIn so the
+  // user sees the empty shell + `+` tile immediately. The login flow
+  // is reached AFTER the user picks a source via the `+` tile, so
+  // login is no longer a pre-shell gate.
+  if (!isTauri && !serverConnected) {
     return (
       <>
         <ServerPickerScreen onConnected={() => setServerConnected(true)} />
@@ -473,7 +479,7 @@ export default function App() {
     );
   }
 
-  if (!isLoggedIn) {
+  if (!isTauri && !isLoggedIn) {
     return (
       <>
         <LoginForm />
