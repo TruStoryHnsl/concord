@@ -15,6 +15,8 @@ import { getVoiceToken } from "./api/livekit";
 import { showBootSplash } from "./bootSplash";
 import { LoginForm } from "./components/auth/LoginForm";
 import { ServerPickerScreen } from "./components/auth/ServerPickerScreen";
+import { Welcome } from "./components/Welcome";
+import { useSourcesStore } from "./stores/sources";
 import { DockerFirstBootScreen } from "./components/auth/DockerFirstBootScreen";
 import { SubmitPage } from "./components/public/SubmitPage";
 import { ChatLayout } from "./components/layout/ChatLayout";
@@ -455,21 +457,30 @@ export default function App() {
     );
   }
 
-  // INS-058 (per feedback_ux_hollow_webui_spec.md, 2026-04-10): every
-  // native build renders the full hollow Concord shell on first launch
-  // — Sources + Servers + Channels + Chat columns all rendered, columns
-  // empty, with the SourcesPanel `+` tile as the universal entry point
-  // for adding a Concord/Matrix instance. No modal gate. No Welcome
-  // gate. ServerPickerScreen and LoginForm still exist for the
-  // web/Docker non-Tauri path (and as flows reachable from the `+`
-  // tile or a logged-out source) but they are NOT first-launch gates
-  // on Tauri.
-  //
-  // Auth-state note: ChatLayout renders even when !isLoggedIn so the
-  // user sees the empty shell + `+` tile immediately. The login flow
-  // is reached AFTER the user picks a source via the `+` tile, so
-  // login is no longer a pre-shell gate.
-  if (!isTauri && !serverConnected) {
+  if (!serverConnected) {
+    // W2-05 / INS-058: native first launch with no sources → Welcome.
+    // Existing-source path (e.g. user previously connected on a fresh
+    // install) falls through to the legacy ServerPickerScreen so the
+    // already-locked-in W-04 test plus existing INS-027 flow keep
+    // working. The Welcome → onboarding flows route back through
+    // `setServerConnected(true)` once a source is persisted.
+    //
+    // INS-058 destination per `feedback_ux_hollow_webui_spec.md` is
+    // a fully hollow ChatLayout with `+` tile as the universal entry —
+    // Welcome is a STEPPING STONE on the way there, not the terminus.
+    // Do NOT remove the Welcome routing until that hollow-shell rewrite
+    // ships and `firstLaunch.welcome.test.tsx` is updated.
+    const hasAnySource =
+      isTauri && useSourcesStore.getState().sources.length > 0;
+    if (isTauri && !hasAnySource) {
+      return (
+        <>
+          <Welcome onConnected={() => setServerConnected(true)} />
+          <MarkReady />
+          {launchOverlay}
+        </>
+      );
+    }
     return (
       <>
         <ServerPickerScreen onConnected={() => setServerConnected(true)} />
@@ -479,7 +490,7 @@ export default function App() {
     );
   }
 
-  if (!isTauri && !isLoggedIn) {
+  if (!isLoggedIn) {
     return (
       <>
         <LoginForm />

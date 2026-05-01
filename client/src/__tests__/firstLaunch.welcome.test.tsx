@@ -66,16 +66,7 @@ vi.mock("../api/livekit", () => ({
   getVoiceToken: vi.fn(() => Promise.resolve(null)),
 }));
 
-// SKIPPED 2026-05-01: this file's W2-05 contract (Welcome-as-first-surface)
-// directly contradicts firstLaunch.windows.test.tsx's contract
-// (ServerPickerScreen-as-first-surface). The user chose to honor the
-// Windows test's contract; the App.tsx Welcome-first routing was reverted.
-// This file is preserved for reference — when INS-058's hollow-UI rewrite
-// lands (per feedback_ux_hollow_webui_spec.md), BOTH test files need to be
-// replaced with assertions that the full ChatLayout renders with empty
-// columns and a `+` tile in Sources. Until then, this `.skip` keeps CI
-// honest about what's actually shipping.
-describe.skip("native first launch — Welcome screen (W2-05)", () => {
+describe("native first launch — Welcome screen (W2-05)", () => {
   beforeEach(() => {
     // Stub the v2 Tauri global on the real window — Welcome's empty-
     // state branch only fires on the isTauri path.

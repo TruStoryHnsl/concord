@@ -1,13 +1,11 @@
 /**
- * Windows native first-launch flow — INS-058 hollow-shell contract.
+ * Windows native first-launch flow — Tauri-v2-detection contract.
  *
- * This test asserts the post-INS-058 design (per
- * `feedback_ux_hollow_webui_spec.md`, 2026-04-10): every native build
- * (Windows, macOS, Linux, iOS, Android, Apple TV, Google TV) renders
- * the FULL hollow Concord shell on first launch — Sources + Servers
- * + Channels + Chat columns all rendered, columns empty, with the
- * SourcesPanel `+` tile as the universal entry point for adding a
- * Concord/Matrix instance. NO modal/gate screen.
+ * This test focuses on the Windows-specific concern that originally
+ * motivated PR #36: a fresh Tauri-v2 webview on Windows MUST be
+ * detected via `__TAURI_INTERNALS__` (the v2 key) and NOT via
+ * `__TAURI__` (the v1 key). When detection works, App takes the
+ * native-empty-state branch and renders the W2-05 Welcome screen.
  *
  * What this test verifies:
  *
@@ -20,15 +18,22 @@
  *      fresh.
  *   4. `localStorage` is empty.
  *
- * Under those conditions, `App` MUST render `ChatLayout` as the
- * first interactive surface — NOT `ServerPickerScreen` (gating
- * modal removed by INS-058), NOT `LoginForm` (login happens AFTER
- * the user picks a source via the `+` tile), NOT `DockerFirstBootScreen`
- * (web/Docker path only).
+ * Under those conditions, `App` MUST take the W2-05 native-empty
+ * branch and render `Welcome` as the first interactive surface —
+ * NOT `ServerPickerScreen` (legacy pre-W2-05 gate), NOT `LoginForm`
+ * (login fires after Welcome's CTA → onboarding flow commits a
+ * source), NOT `ChatLayout` (no shell until a source is persisted),
+ * NOT `DockerFirstBootScreen` (web/Docker path only).
  *
- * The `+`-tile-visible coverage lives in the SourcesPanel component
- * tests (since this test mocks ChatLayout to a sentinel and can't
- * peek inside).
+ * The Welcome screen's CTA labels and absence-of-other-surfaces
+ * coverage lives in `firstLaunch.welcome.test.tsx`. This file is
+ * the regression guard for the v2-detection branch specifically;
+ * the welcome test is the design-contract guard.
+ *
+ * INS-058 destination per `feedback_ux_hollow_webui_spec.md` is the
+ * full hollow ChatLayout with `+` tile in Sources. Welcome is the
+ * W2-05 stepping stone; when the hollow rewrite ships, this test
+ * + welcome.test.tsx both need updating.
  *
  * Test mechanics:
  *
@@ -156,6 +161,16 @@ vi.mock("../components/auth/ServerPickerScreen", () => ({
   ),
 }));
 
+// Welcome — the W2-05 native-empty surface. Replace with a sentinel
+// so this test asserts WHICH screen App chose, not Welcome's internals.
+vi.mock("../components/Welcome", () => ({
+  Welcome: ({ onConnected }: { onConnected?: () => void }) => (
+    <div data-testid="welcome-screen" data-has-onconnected={String(!!onConnected)}>
+      Welcome sentinel
+    </div>
+  ),
+}));
+
 // LoginForm should NOT render on first launch. If it ever does, we
 // want the test to see it explicitly.
 vi.mock("../components/auth/LoginForm", () => ({
@@ -214,26 +229,24 @@ describe("first-launch (Windows native): __TAURI_INTERNALS__ + empty serverConfi
     window.localStorage.clear();
   });
 
-  it("renders ChatLayout (hollow shell) as the first interactive surface", async () => {
+  it("takes the W2-05 native-empty branch and renders Welcome as the first interactive surface", async () => {
     const { default: App } = await import("../App");
 
     render(<App />);
 
-    // Wait one microtask for the LaunchAnimation onDone to fire and
-    // unmount the splash overlay.
-    await new Promise((r) => setTimeout(r, 5));
+    // Wait for Welcome to mount (LaunchAnimation onDone fires after
+    // a microtask; the empty-state branch then resolves to Welcome).
+    const welcome = await screen.findByTestId("welcome-screen", {}, { timeout: 3000 });
+    expect(welcome).toBeTruthy();
 
-    // Critical: ChatLayout — the hollow shell — must be the rendered
-    // first screen. The `+` tile inside SourcesPanel is the entry
-    // point for adding a Concord/Matrix source; no modal/gate.
-    expect(screen.getByTestId("chat-layout")).toBeTruthy();
-
-    // Negative space — none of these should render on first launch
-    // for a Tauri build with no persisted server. Under INS-058, the
-    // ServerPickerScreen + LoginForm flows live BEHIND the `+` tile
-    // inside SourcesPanel, not as pre-shell gates.
+    // Negative space — none of these should render on the W2-05
+    // Tauri-v2 native-empty path. ServerPickerScreen is the legacy
+    // pre-W2-05 gate; LoginForm and ChatLayout live downstream of
+    // Welcome's CTA → onboarding flow committing a source;
+    // DockerFirstBootScreen is web/Docker only.
     expect(screen.queryByTestId("server-picker-screen")).toBeNull();
     expect(screen.queryByTestId("login-form")).toBeNull();
+    expect(screen.queryByTestId("chat-layout")).toBeNull();
     expect(screen.queryByTestId("docker-first-boot")).toBeNull();
   });
 });
