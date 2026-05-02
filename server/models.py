@@ -166,6 +166,12 @@ class SoundboardClip(Base):
     __tablename__ = "soundboard_clips"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # INS-073: server_id is now the *originating* server (attribution only).
+    # Clips are visible instance-wide regardless of which server uploaded
+    # them. Kept non-null because every existing clip already has one and
+    # we still want a back-pointer for "who put this in the library".
+    # File storage path remains SOUNDBOARD_DIR/<server_id>/<filename> so
+    # existing on-disk files are reachable without a filesystem migration.
     server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     filename: Mapped[str] = mapped_column(String, nullable=False)  # stored filename on disk
@@ -173,6 +179,19 @@ class SoundboardClip(Base):
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)  # seconds
     keybind: Mapped[str | None] = mapped_column(String, nullable=True)  # e.g. "Alt+1"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # INS-073: Freesound license + attribution metadata. CC-licensed clips
+    # imported from freesound.org MUST persist their original license id
+    # (e.g. "Creative Commons 0", "Attribution 4.0") and the original
+    # uploader's name for compliance with each clip's attribution clause.
+    # These columns are NULL for clips uploaded directly by users (no
+    # third-party license to track). When source != "freesound" or NULL,
+    # the clip is treated as user-original.
+    source: Mapped[str | None] = mapped_column(String, nullable=True)  # "freesound" | None
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True)  # external id, e.g. "12345"
+    license: Mapped[str | None] = mapped_column(String, nullable=True)  # CC license name from Freesound
+    license_url: Mapped[str | None] = mapped_column(String, nullable=True)  # canonical license URL
+    attribution: Mapped[str | None] = mapped_column(String, nullable=True)  # original author/uploader
 
     server: Mapped["Server"] = relationship()
 
