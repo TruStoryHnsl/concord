@@ -152,7 +152,7 @@ services:
       - concord
 
   livekit:
-    image: livekit/livekit-server:v1.8
+    image: livekit/livekit-server:v1.9
     restart: unless-stopped
     dns:
       - 8.8.8.8
