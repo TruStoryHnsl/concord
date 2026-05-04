@@ -114,6 +114,11 @@ services:
       METERED_API_KEY: ${METERED_API_KEY:-}
       ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
       FREESOUND_API_KEY: ${FREESOUND_API_KEY:-}
+      # Optional public-facing base URL override consumed by
+      # routers/wellknown.py. When unset, wellknown derives URLs from
+      # the request's Host header (correct for instances reachable
+      # via multiple vantages — e.g. LAN IP + tunnel hostname).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       INSTANCE_NAME: ${INSTANCE_NAME:-${CONDUWUIT_SERVER_NAME}}
       # INS-050: Pre-populates the domain confirm field in the first-boot Host/Join picker.
       # Defaults to CONDUWUIT_SERVER_NAME if not set explicitly.
