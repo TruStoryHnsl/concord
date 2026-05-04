@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 # No `/api` prefix: the path must live at the exact root
@@ -195,42 +195,66 @@ def _domain_for_server_name(server_name: str) -> str:
     return f"{s}.{CONCORD_DEFAULT_DOMAIN_ROOT}"
 
 
-def _resolve_api_base() -> str:
-    """Derive the canonical Concord API base URL from env.
+def _request_host(request: Request | None) -> str | None:
+    """Return the public host the client used to reach this endpoint.
 
-    Prefers ``PUBLIC_BASE_URL`` (explicit override) if set, else
-    synthesises ``https://<expanded>/api`` from the homeserver name,
-    expanding bare slugs to ``<slug>.<DEFAULT_DOMAIN_ROOT>`` per
-    INS-051. The result never carries a trailing slash because the
-    client's Pydantic wire-model on the other side rejects one (same
-    rule the Matrix spec enforces on homeserver base URLs).
+    Single-instance dev stacks routinely listen on a LAN IP and ALSO
+    answer via a public tunnel hostname (Cloudflare → orrion). The
+    wellknown response must echo URLs reachable from whichever vantage
+    the client used, otherwise externally-reached browsers receive
+    LAN-IP URLs they can't resolve. Caddy preserves the original Host
+    header through ``reverse_proxy`` (no header_up Host override in
+    Caddyfile / Caddyfile.dev), so ``request.headers["host"]`` is the
+    authoritative value here.
+    """
+    if request is None:
+        return None
+    raw = request.headers.get("host", "").strip()
+    if not raw:
+        return None
+    # Strip any port suffix; URL synthesis below assumes default 443.
+    return raw.split(":", 1)[0] or None
+
+
+def _resolve_api_base(request: Request | None = None) -> str:
+    """Derive the canonical Concord API base URL.
+
+    Priority: ``PUBLIC_BASE_URL`` env override > request Host header >
+    ``CONDUWUIT_SERVER_NAME`` slug expansion. Request-host derivation
+    is what makes a single deployment correctly serve both LAN
+    (192.168.1.152) and tunnel (dev.concorrd.com) accesses — env-only
+    derivation pinned URLs to one vantage and broke the other.
     """
     override = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
     if override:
         return f"{override}/api"
+    host = _request_host(request)
+    if host:
+        return f"https://{host}/api"
     server_name = os.environ.get("CONDUWUIT_SERVER_NAME", "").strip()
     if not server_name:
-        # Commercial-scope fallback: rather than shipping a broken
-        # endpoint, return an explicit sentinel. The Caddy route that
-        # proxies this endpoint runs with the same env as concord-api
-        # so this is a configuration bug, not a runtime error.
         server_name = "localhost"
     return f"https://{_domain_for_server_name(server_name)}/api"
 
 
-def _resolve_livekit_url() -> str | None:
-    """Derive the public LiveKit URL from ``LIVEKIT_URL``.
+def _resolve_livekit_url(request: Request | None = None) -> str | None:
+    """Derive the public LiveKit URL clients should signal to.
 
-    The Docker-internal value is ``ws://livekit:7880``, which is NOT
-    what native clients should connect to — they need the public
-    wss:// endpoint routed by Caddy at ``/livekit/``. We synthesise
-    that public URL from ``CONDUWUIT_SERVER_NAME`` so the value is
-    always consistent with how Caddy actually proxies the signaling
-    channel. INS-051: bare-slug server names get expanded under the
-    default domain root (``concordchat.net``). If the homeserver name
-    is missing the caller is misconfigured, so we return ``None`` and
-    the client disables voice rather than connecting to a bogus URL.
+    Same priority chain as ``_resolve_api_base``. Caddy proxies
+    ``/livekit/*`` to the LiveKit container, so the public URL has the
+    same host/scheme as the page itself. Returning ``None`` (config
+    fully missing) tells the client to disable voice.
     """
+    override = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if override:
+        # Replace the http(s) scheme with ws(s) and append /livekit/.
+        ws_override = override.replace("https://", "wss://", 1).replace(
+            "http://", "ws://", 1
+        )
+        return f"{ws_override}/livekit/"
+    host = _request_host(request)
+    if host:
+        return f"wss://{host}/livekit/"
     server_name = os.environ.get("CONDUWUIT_SERVER_NAME", "").strip()
     if not server_name:
         return None
@@ -243,7 +267,7 @@ def _resolve_instance_name() -> str | None:
     return name or None
 
 
-def _resolve_turn_servers() -> list[dict]:
+def _resolve_turn_servers(request: Request | None = None) -> list[dict]:
     """Return unauthenticated STUN/TURN server hints for pre-auth checks.
 
     Only includes STUN URLs (no credentials) so the well-known document
@@ -251,10 +275,16 @@ def _resolve_turn_servers() -> list[dict]:
     are issued per-user via ``POST /api/voice/token``. Clients can use
     these STUN entries in the server-picker screen to verify basic UDP
     connectivity before the user even logs in.
+
+    Host preference mirrors the URL synthesisers above: prefer the
+    request's own host so a single instance reachable via both LAN IP
+    and tunnel hostname returns reachable STUN entries for whichever
+    vantage the client used.
     """
+    request_host = _request_host(request)
     turn_host = os.environ.get("TURN_HOST", "").strip()
     turn_domain = os.environ.get("TURN_DOMAIN", "").strip()
-    host = turn_host or turn_domain
+    host = request_host or turn_host or turn_domain
 
     servers: list[dict] = []
     if host:
@@ -317,7 +347,7 @@ def _advertised_features() -> list[str]:
         "discovery must work before the client has any credentials."
     ),
 )
-async def concord_client_wellknown() -> ConcordClientWellKnown:
+async def concord_client_wellknown(request: Request) -> ConcordClientWellKnown:
     """Serve the Concord-specific client discovery document.
 
     All values are derived from environment variables read at request
@@ -339,11 +369,11 @@ async def concord_client_wellknown() -> ConcordClientWellKnown:
 
     node_view = _public_node_view()
     return ConcordClientWellKnown(
-        api_base=_resolve_api_base(),
-        livekit_url=_resolve_livekit_url(),
+        api_base=_resolve_api_base(request),
+        livekit_url=_resolve_livekit_url(request),
         instance_name=_resolve_instance_name(),
         features=_advertised_features(),
-        turn_servers=_resolve_turn_servers(),
+        turn_servers=_resolve_turn_servers(request),
         node_role=node_view.node_role,
         tunnel_anchor=node_view.tunnel_anchor_enabled,
         branding=_resolve_branding(),
