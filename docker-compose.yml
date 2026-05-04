@@ -147,6 +147,12 @@ services:
         condition: service_healthy
       docker-socket-proxy:
         condition: service_started
+    # LiveKit moved to host networking — reach it via the host gateway
+    # IP, mapped here as the legacy DNS name `livekit` so existing code
+    # paths (LIVEKIT_URL=ws://livekit:7880) keep resolving without a
+    # rewrite. Podman 4+ supports the `host-gateway` magic token.
+    extra_hosts:
+      - "livekit:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\""]
       interval: 10s
@@ -159,16 +165,26 @@ services:
   livekit:
     image: livekit/livekit-server:v1.9
     restart: unless-stopped
+    # network_mode: host is required for ICE to work in LAN+public dual
+    # access deployments. Reasoning: in bridge mode LiveKit announces
+    # only its STUN-detected WAN IP (162.195.121.21) as a host
+    # candidate. LAN clients can't reach that without router NAT
+    # hairpin; and outbound STUN binding requests to coturn's relay
+    # arrive after Docker bridge SNAT with a source IP the client
+    # never added permission for, so coturn drops them. Host
+    # networking lets LiveKit see all interfaces (LAN IP + WAN IP via
+    # use_external_ip), announce both as candidates, and have its
+    # outbound source IP match what the client added permission for.
+    # This is the canonical self-hosted topology in LiveKit's docs.
+    #
+    # Trade-off: no Docker port-isolation for LiveKit. Mitigated by
+    # the host firewall (ufw) gating which ports are externally
+    # reachable. The published `ports:` block was redundant once the
+    # process binds directly on the host — removing it.
+    network_mode: host
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    # See docs/voice/port-coherence.md for the four-file port contract.
-    # The container-side range here (right of `:`) MUST equal
-    # config/livekit.yaml rtc.port_range_start..port_range_end.
-    # CI's config-lint job enforces this on every PR.
-    ports:
-      - "${LIVEKIT_TCP_PORT:-7881}:7881"
-      - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
     volumes:
       - ./config/livekit.yaml:/etc/livekit.yaml:ro
     environment:
@@ -192,8 +208,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
-    networks:
-      - concord
+    # No `networks:` entry — host networking puts the container on the
+    # host's network namespace directly, bypassing the bridge.
 
   web:
     build:
@@ -236,6 +252,11 @@ services:
         condition: service_healthy
       livekit:
         condition: service_healthy
+    # Same rationale as concord-api: LiveKit on host networking,
+    # reach it via the host gateway under the legacy `livekit` DNS
+    # name so Caddyfile reverse_proxy directives keep working.
+    extra_hosts:
+      - "livekit:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
       interval: 30s
@@ -283,6 +304,7 @@ services:
       TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-}
       TURN_LISTEN_IP: ${TURN_LISTEN_IP:-}
       TURN_RELAY_IP: ${TURN_RELAY_IP:-}
+      TURN_ALLOWED_PEER_IPS: ${TURN_ALLOWED_PEER_IPS:-}
       TURN_PUBLIC_PORT: ${TURN_PUBLIC_PORT:-3478}
       TURN_TLS_ENABLED: ${TURN_TLS_ENABLED:-false}
       TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
