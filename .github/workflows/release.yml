@@ -1,19 +1,31 @@
-# Unified desktop release pipeline.
+# Per-platform desktop release pipeline.
 #
-# Fixes the disorganized releases page: when a SemVer tag (vX.Y.Z) is
-# pushed, this fans out parallel builds across Windows / macOS x86_64
-# / macOS aarch64 / Linux and attaches every installable artifact
-# (.msi, .exe, .dmg, .AppImage, .deb, .rpm) to the same release.
+# When a SemVer tag (vX.Y.Z) is pushed, fans out parallel builds
+# across Windows / macOS x86_64 / macOS aarch64 / Linux. Each
+# platform job creates its OWN GitHub Release with a suffix tag
+# (vX.Y.Z-windows, vX.Y.Z-macos-intel, vX.Y.Z-macos-arm64,
+# vX.Y.Z-linux) pointing at the parent commit, and attaches
+# EXACTLY ONE installer asset:
+#   - windows      -> Concord_<ver>_x64-setup.exe (NSIS)
+#   - macos-intel  -> Concord_<ver>_x64.dmg
+#   - macos-arm64  -> Concord_<ver>_aarch64.dmg
+#   - linux        -> concord_<ver>_amd64.AppImage
 #
-# Internal build-dep tags (dendrite-windows-*, tuwunel-windows-*) do
-# NOT match v*.*.* and never trigger this workflow.
+# No sidecar files (.sig, .json, latest.yml, checksums, source
+# archives, debug symbols). Anything required to run the installer
+# must be bundled inside the installer itself.
+#
+# Internal build-dep tags (dendrite-windows-*, tuwunel-windows-*)
+# do NOT match v*.*.* and never trigger this workflow. The parent
+# vX.Y.Z tag itself is NOT promoted to a user-facing release; only
+# the four suffix releases appear on the releases page.
 #
 # Embedded homeserver staging:
 #   - Linux: tuwunel extracted from upstream .deb (mirrors
 #     scripts/build_linux_native.sh).
-#   - macOS x86_64/aarch64: tuwunel built from source on the runner.
-#     Tuwunel ships only Linux artifacts upstream, so we build with
-#     --no-default-features to drop Linux-only io_uring + systemd.
+#   - macOS x86_64/aarch64: tuwunel built from source on the runner
+#     with --no-default-features to drop Linux-only io_uring +
+#     systemd, plus the Linux-default feature set minus those two.
 #   - Windows: dendrite downloaded from the dendrite-windows-vX.Y.Z
 #     internal build-dep release (mirrors windows-build.yml).
 #
@@ -21,13 +33,12 @@
 # only, ship unsigned, accept SmartScreen + Gatekeeper warnings.
 #
 # Injection safety: every untrusted value is routed through env:
-# before any shell substitution, per
-# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
-# The only user-controllable inputs are github.ref_name (a tag,
-# whitelist-validated against a strict SemVer regex before use) and
-# the workflow_dispatch tag input (same validation).
+# before any shell substitution. The only user-controllable inputs
+# are github.ref_name (a tag, whitelist-validated against a strict
+# SemVer regex before use) and the workflow_dispatch tag input
+# (same validation).
 
-name: Release (desktop, all platforms)
+name: Release (desktop, per-platform)
 
 on:
   push:
@@ -36,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Version tag to (re)build (e.g. v0.7.5). Must already exist."
+        description: "Version tag to (re)build (e.g. v0.7.6). Must already exist."
         required: true
 
 permissions:
@@ -47,14 +58,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prepare-release:
-    name: prepare draft release
+  prepare:
+    name: prepare release metadata
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
-      release_id: ${{ steps.create.outputs.release_id }}
+      notes: ${{ steps.notes.outputs.notes }}
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -64,6 +76,7 @@ jobs:
         env:
           DISPATCH_TAG: ${{ github.event.inputs.tag }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -79,7 +92,8 @@ jobs:
           version="${tag#v}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "Resolved tag=${tag} version=${version}"
+          echo "commit_sha=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved tag=${tag} version=${version} sha=${GITHUB_SHA}"
 
       - name: Extract release notes from CHANGELOG.md
         id: notes
@@ -97,7 +111,7 @@ jobs:
             ' CHANGELOG.md > "${notes_file}"
           fi
           if [[ ! -s "${notes_file}" ]]; then
-            printf 'Concord %s desktop release.\n\nInstallers attached for Windows (MSI + NSIS), macOS (Intel + Apple Silicon DMG), and Linux (AppImage, .deb, .rpm).\n' "v${VERSION}" > "${notes_file}"
+            printf 'Concord %s desktop release.\n' "v${VERSION}" > "${notes_file}"
           fi
           {
             echo 'notes<<EOF_NOTES'
@@ -105,74 +119,58 @@ jobs:
             echo 'EOF_NOTES'
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Create or reuse draft release
-        id: create
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.resolve.outputs.tag }}
-          NOTES: ${{ steps.notes.outputs.notes }}
-          COMMIT_SHA: ${{ github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          existing_id="$(gh api "/repos/${GH_REPO}/releases/tags/${TAG}" --jq '.id' 2>/dev/null || echo '')"
-          if [[ -n "${existing_id}" ]]; then
-            echo "Reusing existing release id=${existing_id} for ${TAG}"
-            release_id="${existing_id}"
-            gh api -X PATCH "/repos/${GH_REPO}/releases/${existing_id}" -F draft=true >/dev/null
-          else
-            echo "Creating draft release for ${TAG}"
-            gh release create "${TAG}" \
-              --draft \
-              --title "Concord ${TAG}" \
-              --notes "${NOTES}" \
-              --target "${COMMIT_SHA}"
-            release_id="$(gh api "/repos/${GH_REPO}/releases/tags/${TAG}" --jq '.id')"
-          fi
-          echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
-          echo "Resolved release_id=${release_id}"
-
   build:
     name: build ${{ matrix.platform }}
-    needs: prepare-release
+    needs: prepare
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: linux-x86_64
+          - platform: linux
+            release_suffix: linux
+            release_title_suffix: "Linux"
             os: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
-            tauri_args: "--bundles deb,rpm,appimage"
+            tauri_args: "--bundles appimage"
             stage_homeserver: linux
-          - platform: macos-x86_64
+            installer_glob: "appimage/*.AppImage"
+          - platform: macos-intel
+            release_suffix: macos-intel
+            release_title_suffix: "macOS (Intel)"
             os: macos-13
             rust_target: x86_64-apple-darwin
             tauri_args: "--target x86_64-apple-darwin --bundles dmg"
             stage_homeserver: macos
-          - platform: macos-aarch64
+            installer_glob: "dmg/*.dmg"
+          - platform: macos-arm64
+            release_suffix: macos-arm64
+            release_title_suffix: "macOS (Apple Silicon)"
             os: macos-14
             rust_target: aarch64-apple-darwin
             tauri_args: "--target aarch64-apple-darwin --bundles dmg"
             stage_homeserver: macos
-          - platform: windows-x86_64
+            installer_glob: "dmg/*.dmg"
+          - platform: windows
+            release_suffix: windows
+            release_title_suffix: "Windows"
             os: windows-latest
             rust_target: x86_64-pc-windows-msvc
-            tauri_args: "--bundles msi,nsis"
+            tauri_args: "--bundles nsis"
             stage_homeserver: windows
+            installer_glob: "nsis/*.exe"
     runs-on: ${{ matrix.os }}
     env:
       TUWUNEL_VERSION: "v1.5.1"
       DENDRITE_VERSION: "v0.13.8"
-      VERSION: ${{ needs.prepare-release.outputs.version }}
-      TAG: ${{ needs.prepare-release.outputs.tag }}
-      RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      COMMIT_SHA: ${{ needs.prepare.outputs.commit_sha }}
     steps:
       - name: Check out repository at tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-release.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -206,7 +204,7 @@ jobs:
             cargo-target-${{ matrix.platform }}-
 
       - name: Install Linux build deps
-        if: matrix.platform == 'linux-x86_64'
+        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -348,70 +346,87 @@ jobs:
           # shellcheck disable=SC2086
           cargo tauri build --ci ${TAURI_ARGS}
 
-      - name: Collect bundle artifacts
-        id: collect
+      - name: Pick single installer artifact
+        id: pick
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
           RUST_TARGET: ${{ matrix.rust_target }}
+          INSTALLER_GLOB: ${{ matrix.installer_glob }}
         run: |
           set -euo pipefail
-          staged="${GITHUB_WORKSPACE}/release-staging"
-          mkdir -p "${staged}"
           roots=(
             "src-tauri/target/${RUST_TARGET}/release/bundle"
             "src-tauri/target/release/bundle"
           )
           shopt -s nullglob
+          found=()
           for root in "${roots[@]}"; do
             [[ -d "${root}" ]] || continue
-            for f in "${root}"/msi/*.msi \
-                     "${root}"/nsis/*.exe \
-                     "${root}"/dmg/*.dmg \
-                     "${root}"/appimage/*.AppImage \
-                     "${root}"/deb/*.deb \
-                     "${root}"/rpm/*.rpm; do
+            for f in ${root}/${INSTALLER_GLOB}; do
               [[ -f "${f}" ]] || continue
-              cp -v "${f}" "${staged}/"
+              found+=("${f}")
             done
           done
-          ls -la "${staged}/"
-          if [[ -z "$(ls -A "${staged}")" ]]; then
-            echo "No installable artifacts produced for ${PLATFORM}."
+          if [[ "${#found[@]}" -eq 0 ]]; then
+            echo "No installer matching '${INSTALLER_GLOB}' produced for ${PLATFORM}."
             exit 1
           fi
-          echo "staging_dir=${staged}" >> "${GITHUB_OUTPUT}"
+          if [[ "${#found[@]}" -gt 1 ]]; then
+            echo "Multiple installers matched '${INSTALLER_GLOB}' for ${PLATFORM} - rule 2 violation:"
+            printf '  %s\n' "${found[@]}"
+            exit 1
+          fi
+          installer="${found[0]}"
+          echo "Selected installer: ${installer}"
+          echo "installer_path=${installer}" >> "${GITHUB_OUTPUT}"
+          echo "installer_name=$(basename "${installer}")" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload artifacts to draft release
+      - name: Create per-platform GitHub Release with single asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ env.TAG }}
-          STAGED: ${{ steps.collect.outputs.staging_dir }}
+          PARENT_TAG: ${{ env.TAG }}
+          COMMIT_SHA: ${{ env.COMMIT_SHA }}
+          RELEASE_SUFFIX: ${{ matrix.release_suffix }}
+          TITLE_SUFFIX: ${{ matrix.release_title_suffix }}
+          INSTALLER_PATH: ${{ steps.pick.outputs.installer_path }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
         shell: bash
         run: |
           set -euo pipefail
-          for f in "${STAGED}"/*; do
-            [[ -f "${f}" ]] || continue
-            echo "Uploading $(basename "${f}")"
-            gh release upload "${TAG}" "${f}" --clobber --repo "${GH_REPO}"
-          done
+          platform_tag="${PARENT_TAG}-${RELEASE_SUFFIX}"
+          title="Concord ${PARENT_TAG} - ${TITLE_SUFFIX}"
 
-  publish-release:
-    name: publish release
-    needs: [prepare-release, build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Un-draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          gh api -X PATCH "/repos/${GH_REPO}/releases/${RELEASE_ID}" \
-            -F draft=false \
-            -F make_latest=true \
-            >/dev/null
-          echo "Release id=${RELEASE_ID} published as latest."
+          existing_id="$(gh api "/repos/${GH_REPO}/releases/tags/${platform_tag}" --jq '.id' 2>/dev/null || echo '')"
+          if [[ -n "${existing_id}" ]]; then
+            echo "Found existing release id=${existing_id} for ${platform_tag}; deleting all assets first."
+            gh api "/repos/${GH_REPO}/releases/${existing_id}/assets" --paginate --jq '.[].id' \
+              | while read -r aid; do
+                  [[ -z "${aid}" ]] && continue
+                  echo "Deleting asset id=${aid}"
+                  gh api -X DELETE "/repos/${GH_REPO}/releases/assets/${aid}" >/dev/null
+                done
+            gh api -X PATCH "/repos/${GH_REPO}/releases/${existing_id}" \
+              -F draft=false \
+              -F name="${title}" \
+              -F target_commitish="${COMMIT_SHA}" \
+              >/dev/null
+          else
+            echo "Creating release ${platform_tag} -> ${COMMIT_SHA}"
+            gh release create "${platform_tag}" \
+              --title "${title}" \
+              --notes "${NOTES}" \
+              --target "${COMMIT_SHA}"
+          fi
+
+          echo "Uploading single installer: ${INSTALLER_PATH}"
+          gh release upload "${platform_tag}" "${INSTALLER_PATH}" --clobber --repo "${GH_REPO}"
+
+          # Verify exactly one asset attached.
+          asset_count="$(gh api "/repos/${GH_REPO}/releases/tags/${platform_tag}" --jq '.assets | length')"
+          if [[ "${asset_count}" != "1" ]]; then
+            echo "Release ${platform_tag} has ${asset_count} assets; expected 1."
+            exit 1
+          fi
+          echo "Release ${platform_tag} published with 1 asset."
