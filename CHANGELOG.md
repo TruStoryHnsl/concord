@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-05
+
+### Changed — desktop releases split into one GitHub Release per platform
+- **`.github/workflows/release.yml`** no longer publishes a single combined release with every installer attached. Pushing a SemVer tag (`vX.Y.Z`) now fans out to four parallel platform jobs, and each job creates its own GitHub Release at a suffix tag (`vX.Y.Z-windows`, `vX.Y.Z-macos-intel`, `vX.Y.Z-macos-arm64`, `vX.Y.Z-linux`) pointing at the parent commit. Each release contains EXACTLY ONE installer asset: NSIS `.exe` on Windows, per-arch `.dmg` on macOS, `.AppImage` on Linux. MSI / `.deb` / `.rpm` outputs and the old combined release are gone — anything an installer needs at runtime must be bundled inside the installer itself, no sidecar `.sig` / `.json` / `latest.yml` / checksums files are produced or attached. The parent `vX.Y.Z` tag is not promoted to a user-facing release; only the four platform suffix releases appear on the releases page.
+
 ### Added — Windows native build CI on `windows-latest`
 - **`.github/workflows/windows-build.yml`** runs on every push to `main`, every pull request, and on manual dispatch. Builds the React client, then `cargo tauri build --ci --bundles msi nsis` on a real Windows runner, then uploads `concord-windows-msi` and `concord-windows-nsis` artifacts (14-day retention). The runner caches the cargo registry/index across builds (~95% of cold-build time) and `src-tauri/target/` on a `Cargo.lock`-keyed cache so dep updates blow it cleanly.
 - Linux cross-compile via cargo-xwin remains blocked by libsodium-sys-stable (POSIX-only build deps in iota_stronghold) — the canonical path to a distributable Windows installer is now this CI workflow or a developer running `scripts/build_windows_native.ps1` on a Windows host. `scripts/build_windows_wsl.sh` retained for fast Rust-side iteration but exits with a clear diagnostic on the libsodium failure.
