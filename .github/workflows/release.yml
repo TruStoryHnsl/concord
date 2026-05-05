@@ -1,0 +1,417 @@
+# Unified desktop release pipeline.
+#
+# Fixes the disorganized releases page: when a SemVer tag (vX.Y.Z) is
+# pushed, this fans out parallel builds across Windows / macOS x86_64
+# / macOS aarch64 / Linux and attaches every installable artifact
+# (.msi, .exe, .dmg, .AppImage, .deb, .rpm) to the same release.
+#
+# Internal build-dep tags (dendrite-windows-*, tuwunel-windows-*) do
+# NOT match v*.*.* and never trigger this workflow.
+#
+# Embedded homeserver staging:
+#   - Linux: tuwunel extracted from upstream .deb (mirrors
+#     scripts/build_linux_native.sh).
+#   - macOS x86_64/aarch64: tuwunel built from source on the runner.
+#     Tuwunel ships only Linux artifacts upstream, so we build with
+#     --no-default-features to drop Linux-only io_uring + systemd.
+#   - Windows: dendrite downloaded from the dendrite-windows-vX.Y.Z
+#     internal build-dep release (mirrors windows-build.yml).
+#
+# Code signing: nothing signed. Project owner directive: free path
+# only, ship unsigned, accept SmartScreen + Gatekeeper warnings.
+#
+# Injection safety: every untrusted value is routed through env:
+# before any shell substitution, per
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+# The only user-controllable inputs are github.ref_name (a tag,
+# whitelist-validated against a strict SemVer regex before use) and
+# the workflow_dispatch tag input (same validation).
+
+name: Release (desktop, all platforms)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to (re)build (e.g. v0.7.5). Must already exist."
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: prepare draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve and validate version
+        id: resolve
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${DISPATCH_TAG:-}" ]]; then
+            tag="${DISPATCH_TAG}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$ ]]; then
+            echo "Refusing to build with tag '${tag}' - not a SemVer release tag."
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved tag=${tag} version=${version}"
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v ver="${VERSION}" '
+              $0 ~ "^## \\[" ver "\\]" {flag=1; next}
+              flag && $0 ~ "^## \\[" {exit}
+              flag {print}
+            ' CHANGELOG.md > "${notes_file}"
+          fi
+          if [[ ! -s "${notes_file}" ]]; then
+            printf 'Concord %s desktop release.\n\nInstallers attached for Windows (MSI + NSIS), macOS (Intel + Apple Silicon DMG), and Linux (AppImage, .deb, .rpm).\n' "v${VERSION}" > "${notes_file}"
+          fi
+          {
+            echo 'notes<<EOF_NOTES'
+            cat "${notes_file}"
+            echo 'EOF_NOTES'
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create or reuse draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing_id="$(gh api "/repos/${GH_REPO}/releases/tags/${TAG}" --jq '.id' 2>/dev/null || echo '')"
+          if [[ -n "${existing_id}" ]]; then
+            echo "Reusing existing release id=${existing_id} for ${TAG}"
+            release_id="${existing_id}"
+            gh api -X PATCH "/repos/${GH_REPO}/releases/${existing_id}" -F draft=true >/dev/null
+          else
+            echo "Creating draft release for ${TAG}"
+            gh release create "${TAG}" \
+              --draft \
+              --title "Concord ${TAG}" \
+              --notes "${NOTES}" \
+              --target "${COMMIT_SHA}"
+            release_id="$(gh api "/repos/${GH_REPO}/releases/tags/${TAG}" --jq '.id')"
+          fi
+          echo "release_id=${release_id}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved release_id=${release_id}"
+
+  build:
+    name: build ${{ matrix.platform }}
+    needs: prepare-release
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            tauri_args: "--bundles deb,rpm,appimage"
+            stage_homeserver: linux
+          - platform: macos-x86_64
+            os: macos-13
+            rust_target: x86_64-apple-darwin
+            tauri_args: "--target x86_64-apple-darwin --bundles dmg"
+            stage_homeserver: macos
+          - platform: macos-aarch64
+            os: macos-14
+            rust_target: aarch64-apple-darwin
+            tauri_args: "--target aarch64-apple-darwin --bundles dmg"
+            stage_homeserver: macos
+          - platform: windows-x86_64
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            tauri_args: "--bundles msi,nsis"
+            stage_homeserver: windows
+    runs-on: ${{ matrix.os }}
+    env:
+      TUWUNEL_VERSION: "v1.5.1"
+      DENDRITE_VERSION: "v0.13.8"
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      TAG: ${{ needs.prepare-release.outputs.tag }}
+      RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+    steps:
+      - name: Check out repository at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache cargo registry + git index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-cache-${{ matrix.platform }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-cache-${{ matrix.platform }}-
+
+      - name: Cache Concord cargo target
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target/
+          key: cargo-target-${{ matrix.platform }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-target-${{ matrix.platform }}-
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libjavascriptcoregtk-4.1-dev \
+            patchelf \
+            build-essential \
+            curl \
+            file \
+            wget \
+            xdg-utils
+
+      - name: Sync version into tauri.conf.json
+        env:
+          NEW_VERSION: ${{ env.VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          p = "src-tauri/tauri.conf.json"
+          v = os.environ["NEW_VERSION"]
+          with open(p) as f:
+              conf = json.load(f)
+          conf["version"] = v
+          with open(p, "w") as f:
+              json.dump(conf, f, indent=2)
+              f.write("\n")
+          print(f"tauri.conf.json version -> {v}")
+          PY
+
+      - name: Stage tuwunel (Linux)
+        if: matrix.stage_homeserver == 'linux'
+        env:
+          TUWUNEL_VERSION: ${{ env.TUWUNEL_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="${TUWUNEL_VERSION}-release-all-x86_64-v1-linux-gnu-tuwunel.deb"
+          url="https://github.com/matrix-construct/tuwunel/releases/download/${TUWUNEL_VERSION}/${asset}"
+          dest="src-tauri/resources/tuwunel"
+          mkdir -p "${dest}"
+          tmpd="$(mktemp -d)"
+          echo "Fetching ${url}"
+          curl -sSL -o "${tmpd}/tuwunel.deb" "${url}"
+          dpkg-deb -x "${tmpd}/tuwunel.deb" "${tmpd}/extracted"
+          if [[ -f "${tmpd}/extracted/usr/bin/tuwunel" ]]; then
+            cp "${tmpd}/extracted/usr/bin/tuwunel" "${dest}/tuwunel"
+          else
+            found="$(find "${tmpd}/extracted" -name tuwunel -type f | head -n1)"
+            if [[ -z "${found}" ]]; then
+              echo "Could not locate tuwunel binary inside the .deb."
+              exit 1
+            fi
+            cp "${found}" "${dest}/tuwunel"
+          fi
+          chmod +x "${dest}/tuwunel"
+          ls -la "${dest}/"
+          file "${dest}/tuwunel"
+
+      - name: Stage tuwunel (macOS, build from source)
+        if: matrix.stage_homeserver == 'macos'
+        env:
+          TUWUNEL_VERSION: ${{ env.TUWUNEL_VERSION }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$(mktemp -d)/tuwunel"
+          git clone --depth 1 --branch "${TUWUNEL_VERSION}" \
+            https://github.com/matrix-construct/tuwunel.git "${src}"
+          cd "${src}"
+          cargo build --release \
+            --bin tuwunel \
+            --target "${RUST_TARGET}" \
+            --no-default-features \
+            --features brotli_compression,element_hacks,gzip_compression,jemalloc,jemalloc_conf,media_thumbnail,release_max_log_level,url_preview,zstd_compression
+          built="target/${RUST_TARGET}/release/tuwunel"
+          if [[ ! -f "${built}" ]]; then
+            built="target/release/tuwunel"
+          fi
+          if [[ ! -f "${built}" ]]; then
+            echo "tuwunel binary not found after build"
+            exit 1
+          fi
+          dest="${GITHUB_WORKSPACE}/src-tauri/resources/tuwunel"
+          mkdir -p "${dest}"
+          cp "${built}" "${dest}/tuwunel"
+          chmod +x "${dest}/tuwunel"
+          file "${dest}/tuwunel"
+
+      - name: Stage dendrite (Windows)
+        if: matrix.stage_homeserver == 'windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DENDRITE_VERSION: ${{ env.DENDRITE_VERSION }}
+        shell: pwsh
+        run: |
+          $tag = "dendrite-windows-$env:DENDRITE_VERSION"
+          $dest = "src-tauri/resources/dendrite"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $patterns = @("dendrite.exe", "create-account.exe", "generate-keys.exe")
+          foreach ($pattern in $patterns) {
+            Write-Host "Downloading $pattern from $tag"
+            gh release download $tag --pattern $pattern --dir $dest --repo $env:GH_REPO
+            $exe = Join-Path $dest $pattern
+            if (-not (Test-Path $exe)) {
+              throw "gh release download exited 0 but $exe is not present"
+            }
+            $size = (Get-Item $exe).Length
+            if ($size -lt 1MB) {
+              throw "$pattern is suspiciously small ($size bytes); rejecting"
+            }
+            Write-Host "Staged $exe ($size bytes)"
+          }
+
+      - name: Build React client
+        working-directory: client
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install Tauri CLI v2
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Tauri build
+        working-directory: src-tauri
+        shell: bash
+        env:
+          TAURI_ARGS: ${{ matrix.tauri_args }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          cargo tauri build --ci ${TAURI_ARGS}
+
+      - name: Collect bundle artifacts
+        id: collect
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          staged="${GITHUB_WORKSPACE}/release-staging"
+          mkdir -p "${staged}"
+          roots=(
+            "src-tauri/target/${RUST_TARGET}/release/bundle"
+            "src-tauri/target/release/bundle"
+          )
+          shopt -s nullglob
+          for root in "${roots[@]}"; do
+            [[ -d "${root}" ]] || continue
+            for f in "${root}"/msi/*.msi \
+                     "${root}"/nsis/*.exe \
+                     "${root}"/dmg/*.dmg \
+                     "${root}"/appimage/*.AppImage \
+                     "${root}"/deb/*.deb \
+                     "${root}"/rpm/*.rpm; do
+              [[ -f "${f}" ]] || continue
+              cp -v "${f}" "${staged}/"
+            done
+          done
+          ls -la "${staged}/"
+          if [[ -z "$(ls -A "${staged}")" ]]; then
+            echo "No installable artifacts produced for ${PLATFORM}."
+            exit 1
+          fi
+          echo "staging_dir=${staged}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload artifacts to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ env.TAG }}
+          STAGED: ${{ steps.collect.outputs.staging_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in "${STAGED}"/*; do
+            [[ -f "${f}" ]] || continue
+            echo "Uploading $(basename "${f}")"
+            gh release upload "${TAG}" "${f}" --clobber --repo "${GH_REPO}"
+          done
+
+  publish-release:
+    name: publish release
+    needs: [prepare-release, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Un-draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "/repos/${GH_REPO}/releases/${RELEASE_ID}" \
+            -F draft=false \
+            -F make_latest=true \
+            >/dev/null
+          echo "Release id=${RELEASE_ID} published as latest."
