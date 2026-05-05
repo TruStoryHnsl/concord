@@ -36,9 +36,16 @@ interface VoiceChannelProps {
   roomId: string;
   channelName: string;
   serverId: string;
+  /** Optional override for the in-room "Settings" button. ChatLayout uses
+   *  this on mobile to explicitly drive the overlay view in the same call,
+   *  because relying on the settingsOpen → useEffect → setMobileView path
+   *  alone has been observed to leave the voice user staring at the voice
+   *  controls with no panel ever appearing. Default falls back to opening
+   *  the settings store on the audio tab, which is what desktop wants. */
+  onOpenSettings?: (tab: "audio" | "voice") => void;
 }
 
-export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProps) {
+export function VoiceChannel({ roomId, channelName, serverId, onOpenSettings }: VoiceChannelProps) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const voiceConnected = useVoiceStore((s) => s.connected);
   const voiceChannelId = useVoiceStore((s) => s.channelId);
@@ -231,15 +238,17 @@ export function VoiceChannel({ roomId, channelName, serverId }: VoiceChannelProp
 
   // Connected to this channel — show the room UI
   // LiveKitRoom is provided by App.tsx, so we can use LiveKit hooks directly
-  return <VoiceRoomUI channelName={channelName} serverId={serverId} />;
+  return <VoiceRoomUI channelName={channelName} serverId={serverId} onOpenSettings={onOpenSettings} />;
 }
 
 function VoiceRoomUI({
   channelName,
   serverId,
+  onOpenSettings,
 }: {
   channelName: string;
   serverId: string;
+  onOpenSettings?: (tab: "audio" | "voice") => void;
 }) {
   const participants = useParticipants();
   const { localParticipant } = useLocalParticipant();
@@ -260,7 +269,14 @@ function VoiceRoomUI({
   const [micError, setMicError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
-  const openSettings = useSettingsStore((s) => s.openSettings);
+  const openSettingsStore = useSettingsStore((s) => s.openSettings);
+  const openSettings = useCallback(
+    (tab: "audio" | "voice" = "audio") => {
+      if (onOpenSettings) onOpenSettings(tab);
+      else openSettingsStore(tab);
+    },
+    [onOpenSettings, openSettingsStore],
+  );
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
   const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
   const autoGainControl = useSettingsStore((s) => s.autoGainControl);
