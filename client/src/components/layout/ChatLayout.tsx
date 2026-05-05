@@ -938,6 +938,16 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const scrollStripRef = useRef<HTMLDivElement>(null);
   const tabIndicatorRef = useRef<HTMLDivElement>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Programmatic-scroll guard. When `scrollToPanel` runs (state change,
+  // initial sync, page-tab tap), we must NOT let the resulting scroll
+  // events feed back into `setMobileView` via handleScrollSnap. Without
+  // this, joining a voice room would set mobileView=chat → scrollToPanel
+  // smooth → voice connect reflows ChatLayout (VoiceConnectionBar
+  // appears below it) → mid-scroll snap-type re-snaps to nearest →
+  // handleScrollSnap reads scrollLeft≈0 → setMobileView("sources").
+  // Holds the guard for 500ms after every programmatic scroll, which is
+  // long enough for the smooth animation + any reflow snap to settle.
+  const programmaticScrollUntilRef = useRef(0);
   // INS-047: restore the page-depth view when closing settings/DMs
   const prevPageDepthRef = useRef<MobileView>("chat");
   // INS-045: left-edge tap zone overlay
@@ -945,10 +955,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // INS-046: right-edge tap zone overlay
   const [rightEdgeOverlay, setRightEdgeOverlay] = useState(false);
 
-  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "smooth") => {
+  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "instant") => {
     const strip = scrollStripRef.current;
     if (!strip) return;
     const panelWidth = strip.clientWidth;
+    programmaticScrollUntilRef.current = Date.now() + 500;
     strip.scrollTo({ left: panelIndex * panelWidth, behavior });
   }, []);
 
@@ -964,10 +975,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Debounced scroll handler — updates mobileView when the user finishes
   // scrolling. Uses a 100ms debounce so we don't spam state updates during
-  // the momentum phase.
+  // the momentum phase. Skips the write entirely when the scroll was
+  // programmatic (state-driven), which is what happens on tab taps,
+  // channel selection, voice join, settings open/close, and so on.
   const handleScrollSnap = useCallback(() => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     scrollTimerRef.current = setTimeout(() => {
+      if (Date.now() < programmaticScrollUntilRef.current) return;
       const strip = scrollStripRef.current;
       if (!strip) return;
       const panelWidth = strip.clientWidth;
@@ -982,7 +996,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     }, 100);
   }, [mobileView]);
 
-  // Sync scroll position when mobileView changes from outside (e.g. page tab tap).
+  // Sync scroll position when mobileView changes from outside (e.g. page tab tap,
+  // channel select, settings open/close). Always uses `instant` so external
+  // state changes can't be hijacked by a half-finished smooth scroll being
+  // re-snapped during a layout reflow.
   useEffect(() => {
     const depthIdx = PAGE_DEPTH.indexOf(mobileView);
     if (depthIdx >= 0) scrollToPanel(depthIdx);
@@ -1778,6 +1795,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
             roomId={activeChannelId}
             channelName={activeChannel.name}
             serverId={activeServerId!}
+            onOpenSettings={(tab) => {
+              if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
+              openSettings(tab);
+              setMobileView("settings");
+            }}
           />
         );
       }
