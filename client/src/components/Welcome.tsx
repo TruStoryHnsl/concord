@@ -65,14 +65,14 @@ export function Welcome({ onConnected }: WelcomeProps) {
   return (
     <div
       data-testid="welcome-screen"
-      className="h-full w-full bg-surface mesh-background flex items-center justify-center"
+      className="h-full w-full bg-surface mesh-background flex items-center justify-center overflow-y-auto"
     >
       <div className="max-w-2xl w-full px-8 py-12 flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-3">
-          <h1 className="text-4xl font-bold text-text-primary tracking-tight">
+          <h1 className="text-4xl font-headline font-bold text-on-surface tracking-tight">
             Welcome to Concord
           </h1>
-          <p className="text-text-secondary text-lg text-center max-w-md">
+          <p className="text-on-surface-variant text-lg text-center max-w-md font-body">
             Pick how you want to start. You can add more sources later from
             the Sources rail.
           </p>
@@ -83,12 +83,12 @@ export function Welcome({ onConnected }: WelcomeProps) {
             type="button"
             data-testid="welcome-connect-cta"
             onClick={() => setFlow("connect")}
-            className="group flex flex-col items-start gap-2 p-6 rounded-2xl border border-border-soft bg-surface-elevated hover:border-accent transition-colors text-left"
+            className="group flex flex-col items-start gap-2 p-6 rounded-2xl border border-outline-variant/30 bg-surface-container hover:border-primary hover:bg-surface-container-high transition-colors text-left"
           >
-            <div className="text-xl font-semibold text-text-primary group-hover:text-accent">
+            <div className="text-xl font-headline font-semibold text-on-surface group-hover:text-primary">
               Connect to a Concord
             </div>
-            <div className="text-sm text-text-secondary leading-snug">
+            <div className="text-sm text-on-surface-variant leading-snug font-body">
               Already have a server URL or invite link? Sign in to an
               existing Concord, Matrix, or federated instance.
             </div>
@@ -98,12 +98,12 @@ export function Welcome({ onConnected }: WelcomeProps) {
             type="button"
             data-testid="welcome-host-cta"
             onClick={() => setFlow("host")}
-            className="group flex flex-col items-start gap-2 p-6 rounded-2xl border border-border-soft bg-surface-elevated hover:border-accent transition-colors text-left"
+            className="group flex flex-col items-start gap-2 p-6 rounded-2xl border border-outline-variant/30 bg-surface-container hover:border-primary hover:bg-surface-container-high transition-colors text-left"
           >
-            <div className="text-xl font-semibold text-text-primary group-hover:text-accent">
+            <div className="text-xl font-headline font-semibold text-on-surface group-hover:text-primary">
               Host a new Concord
             </div>
-            <div className="text-sm text-text-secondary leading-snug">
+            <div className="text-sm text-on-surface-variant leading-snug font-body">
               Spin up your own server on this device. You will be the
               owner and admin; invite others by sharing a token.
             </div>

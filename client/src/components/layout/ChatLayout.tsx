@@ -203,6 +203,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   useNotifications();
   const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnostics | null>(null);
   const [roomDiagnosticsLoading, setRoomDiagnosticsLoading] = useState(false);
+  const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
 
   // INS-020 iPad layout — when running on an iPad (native Tauri iOS
   // build or web browser with iPad-class touch screen), force the
@@ -512,57 +513,34 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeServerId, userId, accessToken, dmActive]);
+  // Friendly empty-channel placeholder. The verbose diagnostics block
+  // used to render here directly, which made every empty room look
+  // like an error report. Now the channel just invites the user to
+  // post, and a small wrench button opens the diagnostics in a popup
+  // for the case where the room actually IS broken.
+  const hasDiagnosticsPayload = roomDiagnosticsLoading || !!roomDiagnostics;
   const emptyState = useMemo(() => {
     if (!activeRoomId) return undefined;
-    if (roomDiagnosticsLoading) {
-      return (
-        <div className="max-w-xl px-6 py-5 rounded-lg border border-outline-variant/20 bg-surface-container text-left">
-          <p className="text-sm font-medium text-on-surface">No messages loaded yet</p>
-          <p className="mt-2 text-xs text-on-surface-variant">
-            Inspecting room binding and homeserver history access for {activeRoomId}.
-          </p>
-        </div>
-      );
-    }
-    if (!roomDiagnostics) return undefined;
     return (
-      <div className="max-w-2xl px-6 py-5 rounded-lg border border-outline-variant/20 bg-surface-container text-left">
-        <p className="text-sm font-semibold text-on-surface">Room diagnostics</p>
-        <p className="mt-2 text-xs text-on-surface-variant break-all">
-          room: {roomDiagnostics.room_id}
+      <div className="flex flex-col items-center gap-3 text-center">
+        <p className="text-base text-on-surface font-body">
+          Be the first to say something!
         </p>
-        <p className="mt-1 text-sm text-on-surface-variant">
-          {roomDiagnostics.summary}
-        </p>
-        <p className="mt-2 text-xs text-on-surface-variant">
-          inference: {roomDiagnostics.inference}
-        </p>
-        <div className="mt-3 space-y-2">
-          {roomDiagnostics.steps.map((step) => (
-            <div
-              key={step.step}
-              className="rounded-md border border-outline-variant/15 bg-surface px-3 py-2"
-            >
-              <div className="flex items-center gap-2 text-xs">
-                <span className={step.ok ? "text-[#4ade80]" : "text-[#f87171]"}>
-                  {step.ok ? "OK" : "FAIL"}
-                </span>
-                <span className="font-medium text-on-surface">{step.step}</span>
-                <span className="text-on-surface-variant">
-                  {step.status ?? "no-status"}
-                </span>
-              </div>
-              {step.detail && (
-                <p className="mt-1 text-[11px] text-on-surface-variant break-all">
-                  {step.detail}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
+        {hasDiagnosticsPayload && (
+          <button
+            type="button"
+            onClick={() => setDiagnosticsPopupOpen(true)}
+            title="Show room diagnostics"
+            aria-label="Show room diagnostics"
+            className="btn-press flex items-center gap-1 px-2 py-1 rounded-md text-xs text-on-surface-variant/70 hover:text-on-surface hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm" style={{ fontSize: "14px" }}>build</span>
+            Diagnostics
+          </button>
+        )}
       </div>
     );
-  }, [activeRoomId, roomDiagnostics, roomDiagnosticsLoading]);
+  }, [activeRoomId, hasDiagnosticsPayload]);
   const settingsOpen = useSettingsStore((s) => s.settingsOpen);
   const closeSettings = useSettingsStore((s) => s.closeSettings);
   const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
@@ -962,18 +940,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // INS-047: restore the page-depth view when closing settings/DMs
   const prevPageDepthRef = useRef<MobileView>("chat");
-  // INS-042: pill hide/show on chat scroll
-  const [pillHidden, setPillHidden] = useState(false);
-  const pillLastScrollY = useRef(0);
-  const swipeTouchStartRef = useRef<{ x: number; y: number } | null>(null);
   // INS-045: left-edge tap zone overlay
   const [leftEdgeOverlay, setLeftEdgeOverlay] = useState<"servers" | "sources" | null>(null);
   // INS-046: right-edge tap zone overlay
   const [rightEdgeOverlay, setRightEdgeOverlay] = useState(false);
-
-  // INS-043: When a pill tap directly scrolls via behavior:"instant", suppress
-  // the subsequent useEffect re-trigger so we don't double-animate.
-  const skipNextScrollSyncRef = useRef(false);
 
   const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "smooth") => {
     const strip = scrollStripRef.current;
@@ -998,7 +968,6 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const handleScrollSnap = useCallback(() => {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     scrollTimerRef.current = setTimeout(() => {
-      if (skipNextScrollSyncRef.current) { skipNextScrollSyncRef.current = false; return; }
       const strip = scrollStripRef.current;
       if (!strip) return;
       const panelWidth = strip.clientWidth;
@@ -1013,65 +982,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     }, 100);
   }, [mobileView]);
 
-  // Sync scroll position when mobileView changes from outside (e.g. pill tap).
-  // INS-043: pill taps set skipNextScrollSyncRef to avoid re-animating.
+  // Sync scroll position when mobileView changes from outside (e.g. page tab tap).
   useEffect(() => {
-    if (skipNextScrollSyncRef.current) {
-      skipNextScrollSyncRef.current = false;
-      return;
-    }
     const depthIdx = PAGE_DEPTH.indexOf(mobileView);
     if (depthIdx >= 0) scrollToPanel(depthIdx);
   }, [mobileView, scrollToPanel]);
-
-  // INS-042: hide pill row when scrolling down in chat, show on scroll up / near top.
-  useEffect(() => {
-    if (mobileView !== "chat") {
-      setPillHidden(false);
-      pillLastScrollY.current = 0;
-      return;
-    }
-    const handleScroll = (e: Event) => {
-      const target = e.target as Element;
-      if (!target || !("scrollTop" in target)) return;
-      const scrollTop = (target as Element).scrollTop;
-      if (scrollTop - pillLastScrollY.current > 50) {
-        setPillHidden(true);
-        pillLastScrollY.current = scrollTop;
-      } else if (pillLastScrollY.current - scrollTop > 10 || scrollTop < 100) {
-        setPillHidden(false);
-        pillLastScrollY.current = scrollTop;
-      }
-    };
-    document.addEventListener("scroll", handleScroll, { capture: true });
-    return () => document.removeEventListener("scroll", handleScroll, { capture: true });
-  }, [mobileView]);
-
-  // Swipe-from-bottom-edge to raise pill; swipe down anywhere to hide.
-  // Touch must START in the bottom 20% of the screen to raise the pill —
-  // this prevents chat scroll-up from accidentally triggering it.
-  const handleSwipeStart = useCallback((e: React.TouchEvent) => {
-    const t = e.touches[0];
-    swipeTouchStartRef.current = { x: t.clientX, y: t.clientY };
-  }, []);
-
-  const handleSwipeEnd = useCallback((e: React.TouchEvent) => {
-    if (!swipeTouchStartRef.current) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - swipeTouchStartRef.current.x;
-    const dy = t.clientY - swipeTouchStartRef.current.y;
-    const startY = swipeTouchStartRef.current.y;
-    swipeTouchStartRef.current = null;
-    if (Math.abs(dy) <= Math.abs(dx)) return; // horizontal — ignore
-    if (dy > 60) {
-      // Swipe down → hide pill (works from anywhere)
-      setPillHidden(true);
-    } else if (dy < -60) {
-      // Swipe up → only raise pill if touch started in bottom 20% of screen
-      const screenH = window.innerHeight;
-      if (startY >= screenH * 0.8) setPillHidden(false);
-    }
-  }, []);
 
   // The chain MUST NOT be broken by any new ancestor introducing overflow:
   // visible or removing min-h-0 — that would let MessageInput's auto-grow
@@ -1079,7 +994,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // MessageInput's internal useLayoutEffect caps the textarea at
   // min(viewport*0.4, 8*22px) and switches to internal scroll above that.
   const renderMobileLayout = () => (
-    <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface" onTouchStart={handleSwipeStart} onTouchEnd={handleSwipeEnd}>
+    <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
       {/* Top bar — safe-top lives on the OUTER wrapper so the safe-area
           inset adds transparent padding ABOVE the 48px content bar instead
           of stealing from its interior (which was cutting off icons on
@@ -1256,7 +1171,6 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               <button
                 key={view}
                 onClick={() => {
-                  skipNextScrollSyncRef.current = true;
                   setMobileView(view as MobileView);
                 }}
                 className={`flex-1 flex items-center justify-center gap-1 py-1 text-xs font-label transition-colors ${
@@ -1412,18 +1326,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         )}
       </div>
 
-      {/* Pill collapse toggle — hidden in settings/DMs where the pill isn't shown */}
-      {!(mobileView === "settings" || mobileView === "dms") && <div className="flex justify-end px-3 flex-shrink-0">
-        <button
-          onClick={() => setPillHidden((h) => !h)}
-          aria-label={pillHidden ? "Show navigation" : "Hide navigation"}
-          className="btn-press w-8 h-4 flex items-center justify-center rounded-t-lg bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors"
-        >
-          <span className="material-symbols-outlined text-sm" style={{ fontSize: "14px" }}>
-            {pillHidden ? "expand_less" : "expand_more"}
-          </span>
-        </button>
-      </div>}
+      {/* Pill collapse toggle removed — swipe up from the bottom edge raises
+          the nav, swipe down anywhere hides it. The dedicated arrow tile
+          was a vestigial second affordance that just clipped to the
+          bottom-right of the page. */}
 
       {/* MobilePillRow removed. It implemented tabs via imperative state-
          swapping on useServerStore / useDMStore — each pill click called
@@ -2058,6 +1964,79 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           two-clicks-deep in Settings → Admin → Extensions. */}
       {extensionCatalogOpen && (
         <ExtensionCatalogModal onClose={() => setExtensionCatalogOpen(false)} />
+      )}
+      {/* Room diagnostics popup — opened from the small wrench button
+          in the empty-channel placeholder. The verbose binding /
+          history-access report no longer renders inline; only users
+          who actually want to debug a broken room see it. */}
+      {diagnosticsPopupOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setDiagnosticsPopupOpen(false)}
+        >
+          <div
+            className="relative max-w-2xl w-full max-h-[80vh] overflow-y-auto rounded-2xl border border-outline-variant/30 bg-surface-container shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 flex items-center justify-between px-5 py-3 border-b border-outline-variant/20 bg-surface-container">
+              <h3 className="text-base font-headline font-semibold text-on-surface">Room diagnostics</h3>
+              <button
+                type="button"
+                onClick={() => setDiagnosticsPopupOpen(false)}
+                aria-label="Close diagnostics"
+                className="text-on-surface-variant hover:text-on-surface transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              {roomDiagnosticsLoading && (
+                <div className="text-left">
+                  <p className="text-sm font-medium text-on-surface">No messages loaded yet</p>
+                  <p className="mt-2 text-xs text-on-surface-variant">
+                    Inspecting room binding and homeserver history access for {activeRoomId}.
+                  </p>
+                </div>
+              )}
+              {!roomDiagnosticsLoading && roomDiagnostics && (
+                <div className="text-left">
+                  <p className="text-xs text-on-surface-variant break-all">
+                    room: {roomDiagnostics.room_id}
+                  </p>
+                  <p className="mt-1 text-sm text-on-surface-variant">
+                    {roomDiagnostics.summary}
+                  </p>
+                  <p className="mt-2 text-xs text-on-surface-variant">
+                    inference: {roomDiagnostics.inference}
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {roomDiagnostics.steps.map((step) => (
+                      <div
+                        key={step.step}
+                        className="rounded-md border border-outline-variant/15 bg-surface px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className={step.ok ? "text-[#4ade80]" : "text-[#f87171]"}>
+                            {step.ok ? "OK" : "FAIL"}
+                          </span>
+                          <span className="font-medium text-on-surface">{step.step}</span>
+                          <span className="text-on-surface-variant">
+                            {step.status ?? "no-status"}
+                          </span>
+                        </div>
+                        {step.detail && (
+                          <p className="mt-1 text-[11px] text-on-surface-variant break-all">
+                            {step.detail}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
