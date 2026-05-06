@@ -161,7 +161,11 @@ jobs:
             installer_glob: "nsis/*.exe"
     runs-on: ${{ matrix.os }}
     env:
-      TUWUNEL_VERSION: "v1.5.1"
+      # v1.6.1+ gates RLIMIT_NPROC behind `cfg(all(unix, not(target_os =
+      # "macos")))` and gates `Usage::default()` to non-unix targets — both
+      # of which v1.5.1 referenced unconditionally and broke the macOS source
+      # build (E0599 on `Resource::RLIMIT_NPROC` and `Usage::default()`).
+      TUWUNEL_VERSION: "v1.6.1"
       DENDRITE_VERSION: "v0.13.8"
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ needs.prepare.outputs.tag }}
@@ -398,33 +402,35 @@ jobs:
           platform_tag="${PARENT_TAG}-${RELEASE_SUFFIX}"
           title="Concord ${PARENT_TAG} - ${TITLE_SUFFIX}"
 
-          existing_id="$(gh api "/repos/${GH_REPO}/releases/tags/${platform_tag}" --jq '.id' 2>/dev/null || echo '')"
-          if [[ -n "${existing_id}" ]]; then
-            echo "Found existing release id=${existing_id} for ${platform_tag}; deleting all assets first."
-            gh api "/repos/${GH_REPO}/releases/${existing_id}/assets" --paginate --jq '.[].id' \
-              | while read -r aid; do
-                  [[ -z "${aid}" ]] && continue
-                  echo "Deleting asset id=${aid}"
-                  gh api -X DELETE "/repos/${GH_REPO}/releases/assets/${aid}" >/dev/null
-                done
-            gh api -X PATCH "/repos/${GH_REPO}/releases/${existing_id}" \
-              -F draft=false \
-              -F name="${title}" \
-              -F target_commitish="${COMMIT_SHA}" \
-              >/dev/null
-          else
-            echo "Creating release ${platform_tag} -> ${COMMIT_SHA}"
-            gh release create "${platform_tag}" \
-              --title "${title}" \
-              --notes "${NOTES}" \
-              --target "${COMMIT_SHA}"
+          # Existence check uses `gh release view`. `gh api ... --jq` is a
+          # trap on 404: gh api writes the error JSON body to STDOUT (not
+          # stderr), so `2>/dev/null` does not suppress it. `gh release view`
+          # writes the not-found message to stderr and exits non-zero, so a
+          # plain `if ...; then` distinguishes "exists" from "missing".
+          if gh release view "${platform_tag}" --repo "${GH_REPO}" --json id --jq .id >/dev/null 2>&1; then
+            echo "Existing release ${platform_tag} found; deleting it for a clean re-publish."
+            gh release delete "${platform_tag}" --repo "${GH_REPO}" --yes
           fi
 
-          echo "Uploading single installer: ${INSTALLER_PATH}"
-          gh release upload "${platform_tag}" "${INSTALLER_PATH}" --clobber --repo "${GH_REPO}"
+          echo "Creating release ${platform_tag} -> ${COMMIT_SHA}"
+          gh release create "${platform_tag}" \
+            --repo "${GH_REPO}" \
+            --title "${title}" \
+            --notes "${NOTES}" \
+            --target "${COMMIT_SHA}"
 
-          # Verify exactly one asset attached.
-          asset_count="$(gh api "/repos/${GH_REPO}/releases/tags/${platform_tag}" --jq '.assets | length')"
+          # Upload the single installer. We deliberately do NOT pass
+          # `--clobber`: on Git Bash on windows-latest, gh's clobber path
+          # invokes `gh api /repos/...` internally, and MSYS path-conversion
+          # rewrites the leading slash to `C:/Program Files/Git/repos/...`,
+          # producing "invalid API endpoint" 1-exit. We've just created the
+          # release fresh above, so there is nothing to clobber.
+          echo "Uploading single installer: ${INSTALLER_PATH}"
+          gh release upload "${platform_tag}" "${INSTALLER_PATH}" --repo "${GH_REPO}"
+
+          # Verify exactly one asset attached. `gh release view` instead of
+          # `gh api` for the same path-conversion reason as above.
+          asset_count="$(gh release view "${platform_tag}" --repo "${GH_REPO}" --json assets --jq '.assets | length')"
           if [[ "${asset_count}" != "1" ]]; then
             echo "Release ${platform_tag} has ${asset_count} assets; expected 1."
             exit 1
