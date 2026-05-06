@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-05-05
+
+### Fixed — release pipeline can actually publish per-platform releases
+- **`.github/workflows/release.yml`** had three latent bugs that masked each other in v0.7.6's first run: (1) the existence-check `gh api .../releases/tags/<tag> --jq .id 2>/dev/null` printed the 404 JSON body to STDOUT (gh api routes API errors there, not stderr), so `existing_id` was set to `{"message":"Not Found",…}` on every fresh run and the script tried to DELETE assets at a malformed URL. Replaced with `gh release view --json id --jq .id` which writes errors to stderr and exits non-zero on missing release. (2) `gh release upload --clobber` invokes `gh api /repos/...` internally; on Git Bash on `windows-latest`, MSYS path-conversion rewrites the leading slash to `C:/Program Files/Git/repos/...` and gh exits with "invalid API endpoint". `--clobber` is now dropped (we delete-then-create instead) and the asset-count verification reads through `gh release view` so no shell-converted slash paths remain. (3) On re-publish, the existing release is deleted whole rather than asset-by-asset, removing the second `gh api` call site that hit the same path-conversion trap.
+- **macOS source build of tuwunel pinned to `v1.6.1`** (was `v1.5.1`). `v1.5.1` referenced `Resource::RLIMIT_NPROC` and `Usage::default()` unconditionally, both of which the `nix` crate exposes only on non-macOS Unix. `v1.6.1` cfg-gates them to `cfg(all(unix, not(target_os = "macos")))` and `cfg(not(unix))` respectively, so the macOS x86_64 + arm64 source builds now compile.
+
 ## [0.7.6] - 2026-05-05
 
 ### Changed — desktop releases split into one GitHub Release per platform
