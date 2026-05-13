@@ -37,6 +37,8 @@ import { useExtensionStore } from "../../stores/extension";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
 import { ExtensionCatalogModal } from "../extension/ExtensionCatalogModal";
+import { LocalHostingControl } from "../sources/LocalHostingControl";
+import { HostOnboarding } from "../onboarding/HostOnboarding";
 import { ServerSidebar } from "./ServerSidebar";
 import { Avatar } from "../ui/Avatar";
 import { ChannelSidebar, UserBar } from "./ChannelSidebar";
@@ -2835,6 +2837,7 @@ function AddSourceModal({
     | "matrix"
     | "matrix-auth"
     | "reticulum"
+    | "hosting-bootstrap"
     | "validating"
     | "error";
 
@@ -3059,6 +3062,18 @@ function AddSourceModal({
           <>
             <Header title="Explore Sources" />
             <div className="space-y-2">
+              {/*
+                P0 sprint Issue 3: "Start / Stop local hosting" sits at the
+                top of the pick screen on Tauri builds only. Web builds
+                hide it entirely (web hosts via Docker, outside the app).
+                When the user hasn't bootstrapped an owner account yet,
+                this control delegates to the HostOnboarding wizard via
+                the `hosting-bootstrap` screen below.
+              */}
+              <LocalHostingControl
+                onRequestBootstrap={() => setScreen("hosting-bootstrap")}
+              />
+
               <button
                 onClick={() => setScreen("concord")}
                 className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
@@ -3324,6 +3339,22 @@ function AddSourceModal({
               </button>
             </div>
           </>
+        )}
+
+        {/* ── Screen: hosting-bootstrap (P0 Issue 3) ──
+            Mounts the same HostOnboarding wizard used on first launch when
+            the user picks "Host a new Concord" from the Welcome screen.
+            On completion (onConnected) the wizard has already persisted a
+            SourceRecord with isOwner=true, so we fire onSourceAdded() to
+            close the parent modal and re-render the rest of the app with
+            the new local source visible in the Sources column. */}
+        {screen === "hosting-bootstrap" && (
+          <div className="-m-4 sm:-m-6">
+            <HostOnboarding
+              onCancel={() => setScreen("pick")}
+              onConnected={onSourceAdded}
+            />
+          </div>
         )}
 
         {/* ── Screen: validating ── */}
