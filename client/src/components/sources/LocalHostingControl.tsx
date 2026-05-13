@@ -211,7 +211,7 @@ export function LocalHostingControl({
           >
             Retry
           </button>
-        ) : isRunning ? (
+        ) : isRunning || ui.kind === "stopping" ? (
           <button
             type="button"
             onClick={() => void onStop()}
