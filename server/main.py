@@ -441,8 +441,18 @@ async def _seed_default_server():
     instance_name = settings.get("name", INSTANCE_NAME_DEFAULT)
     server_name = f"{instance_name} Lobby"
 
-    # Define the pre-created channels
-    channel_defs = [
+    # Define the pre-created channels.
+    #
+    # INVARIANT (P0 sprint Issue 4): the clean lobby ships TEXT + VOICE
+    # channels only. NO application/extension channels (Card Game Suite,
+    # Orrdia Bridge, Worldview, etc.) get auto-seeded on first boot —
+    # those install via the Extension Library at the admin's discretion
+    # (see routers/admin_extensions.py). A fresh `docker compose up -d`
+    # MUST produce exactly the 7 channels below; adding an extension
+    # channel here regresses the issue and breaks the "empty lobby on
+    # fresh install" acceptance criterion. Channel additions go through
+    # the Server settings UI after seed — they are not part of the seed.
+    channel_defs: list[tuple[str, str]] = [
         ("welcome", "text"),
         ("general", "text"),
         ("off-topic", "text"),
@@ -451,6 +461,13 @@ async def _seed_default_server():
         ("hangout", "voice"),
         ("music-lounge", "voice"),
     ]
+    # Defense-in-depth: assert no channel_type is anything other than
+    # text/voice. If a future contributor adds an "app" channel here,
+    # this fails fast in CI rather than shipping a regression.
+    assert all(t in ("text", "voice") for _, t in channel_defs), (
+        "lobby seed must only create text + voice channels; "
+        "extensions install at runtime, not at seed time"
+    )
 
     general_room_id = None
 
