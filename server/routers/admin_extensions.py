@@ -72,9 +72,23 @@ router = APIRouter(prefix="/api/admin/extensions", tags=["admin-extensions"])
 # Paths + constants
 # ---------------------------------------------------------------------------
 
+# Remote catalog index for the public Concord extensions registry.
+#
+# The registry is its own repo (separate from the Concord client/server
+# repo) so extension authors can submit PRs without touching core
+# Concord code. Operators who run a private fork of the registry can
+# point at it via the ``CONCORD_EXTENSION_CATALOG_URL`` env var.
+#
+# P0 sprint Issue 4 — fresh installs (web + native) ship with zero
+# baked-in extensions; this URL is the ONLY source from which the
+# Extension Library populates. If the URL is unreachable, the
+# Extension Library renders an empty catalog with a Retry button (the
+# error path in ``admin_get_catalog`` raises 502 and the client UI's
+# `error` state surfaces a retry button — see
+# ``ExtensionLibraryPanel.tsx``).
 DEFAULT_CATALOG_URL = (
-    "https://raw.githubusercontent.com/TruStoryHnsl/"
-    "concord-extensions/main/catalog.json"
+    "https://raw.githubusercontent.com/concord-extensions/"
+    "registry/main/catalog.json"
 )
 
 # Headers that bypass intermediate HTTP caches (raw.githubusercontent.com
