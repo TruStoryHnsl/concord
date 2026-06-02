@@ -1,7 +1,7 @@
 /**
  * Phase 9 — browser-side fingerprint helper.
  *
- * Mirrors `src-tauri/src/servitude/identity.rs::fingerprint_for` so the
+ * Mirrors `native backend` so the
  * docker/web build can display a Phase-2-equivalent short identity for
  * the per-tab ephemeral browser Ed25519 keypair returned by
  * `getBrowserIdentity()`.

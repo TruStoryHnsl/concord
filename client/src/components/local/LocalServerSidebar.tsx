@@ -2,7 +2,7 @@
  * LocalServerSidebar — the server-column for the active local source.
  *
  * Per the 2026-06-01 CONSOLIDATED ARCHITECTURE filing in
- * `instructions_inbox.md`, the local source contains TWO intrinsic
+ * the internal instruction inbox, the local source contains TWO intrinsic
  * default servers — both rendered here as tiles:
  *
  *   1. **Porch** — ephemeral guest doorman. Always labelled "porch"
@@ -12,7 +12,7 @@
  *   2. **Home** — persistent local data layer (channels, voice rooms,
  *      apps, custom UI). Default label `"home"`; renamable via
  *      `home_set_server_name`. Primary-accented tile. Backed today
- *      by the existing porch SQLite (`src-tauri/src/porch/db.rs`);
+ *      by the existing porch SQLite (the native porch database);
  *      the module + file rename from `porch` → `home` is a follow-up
  *      PR (documented in `home_meta` migration v8).
  *

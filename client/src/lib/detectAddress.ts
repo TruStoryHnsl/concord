@@ -168,7 +168,7 @@ function looksLikePeerId(input: string): boolean {
  * Edge cases handled:
  *  - Strips `http://` / `https://` prefixes before testing.
  *  - Strips a trailing path (`example.com/foo` → `example.com`).
- *  - Rejects bare-IPv4 (`192.0.2.10`) — well-known probes against
+ *  - Rejects bare-IPv4 (`192.168.1.10`) — well-known probes against
  *    a numeric host are almost never what the user wants in the
  *    unified flow; they should use the multiaddr or peer-id branch
  *    instead.

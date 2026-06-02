@@ -55,7 +55,7 @@ router = APIRouter(prefix="/api/extensions", tags=["extensions"])
 # ── Permissions registry (W7) ────────────────────────────────────
 # All permissions an installed extension may declare. Manifests
 # requesting permissions outside this set are rejected at install time.
-# Every entry MUST be documented in docs/extensions/permissions.md.
+# Every entry MUST be documented in the extension permissions registry.
 ALLOWED_PERMISSIONS: frozenset[str] = frozenset(
     {
         "state_events",      # read+send Matrix room state for the session room

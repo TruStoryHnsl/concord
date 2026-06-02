@@ -17,7 +17,7 @@
  * those surfaces.
  *
  * Native (Tauri) builds are a no-op: the Rust swarm in
- * `src-tauri/src/servitude/p2p.rs` IS the libp2p layer on native, so
+ * the native P2P backend IS the libp2p layer on native, so
  * spinning up a parallel browser node would be duplicative.
  *
  * Surfaces a coarse status ("idle" → "starting" → "running" / "error")

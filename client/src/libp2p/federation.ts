@@ -4,7 +4,7 @@
  *
  * Speaks `/concord/matrix-federation/1.0.0` over a libp2p stream
  * opened on the browser node. Wire format MUST match the Rust
- * `FederationHandler` in `src-tauri/src/servitude/federation/matrix.rs`:
+ * `FederationHandler` in the native federation backend:
  *
  *   - 4-byte BIG-ENDIAN length prefix.
  *   - JSON envelope body (UTF-8).

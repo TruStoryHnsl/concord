@@ -45,7 +45,7 @@ import { useBrowserLibp2p } from "../../hooks/useBrowserLibp2p";
  * Matrix infrastructure (federation, retention policies, etc.) while
  * the custom `msgtype` lets receivers detect it without inspecting
  * every body. Listeners live in `useMatrixPeerCards` and the
- * deeplink-handler in `src-tauri/src/lib.rs`.
+ * deeplink-handler in the native IPC backend.
  */
 const PEER_CARD_MSGTYPE = "concord.peer_card";
 

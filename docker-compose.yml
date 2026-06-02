@@ -51,35 +51,6 @@ services:
     networks:
       - concord
 
-  # ── Reticulum Transport feature flag (INS-037) ──────────────────────────────
-  #
-  # The Concord Tauri/desktop binary supports an optional `reticulum` Cargo
-  # feature flag that compiles in the ReticulumTransport variant. This flag is
-  # OFF by default; standard builds and this docker-compose stack are unaffected.
-  #
-  # To build with Reticulum transport enabled:
-  #   cargo build --features reticulum
-  #
-  # What it adds: ReticulumTransport struct + TransportRuntime::Reticulum variant
-  # that spawns `rnsd` (the Reticulum Network Stack daemon) as a child process
-  # and manages its lifecycle (start / health-check / graceful stop).
-  #
-  # Runtime dependency: `rnsd` must be installed (pip install rns) or bundled.
-  # The feature flag does NOT automatically bundle rnsd.
-  #
-  # Docker note: if you run a Reticulum-enabled build inside this stack, add the
-  # following to the concord-api service below to allow rnsd TUN/TAP access:
-  #
-  #   cap_add:
-  #     - NET_ADMIN
-  #   # For serial/USB radio interfaces, also add a devices: section:
-  #   # devices:
-  #   #   - /dev/ttyUSB0:/dev/ttyUSB0
-  #
-  # See docs/deployment/README.md § "Reticulum Transport (experimental)" for the
-  # full setup guide and wave-sequencing notes.
-  # ─────────────────────────────────────────────────────────────────────────────
-
   concord-api:
     build: ./server
     restart: unless-stopped
@@ -176,10 +147,9 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    # See docs/voice/port-coherence.md for the four-file port contract.
-    # The container-side range here (right of `:`) MUST equal
-    # config/livekit.yaml rtc.port_range_start..port_range_end.
-    # CI's config-lint job enforces this on every PR.
+      # The container-side range here (right of `:`) MUST equal
+      # config/livekit.yaml rtc.port_range_start..port_range_end and
+      # stay disjoint from config/turnserver.conf relay ports.
     ports:
       - "${LIVEKIT_TCP_PORT:-7881}:7881"
       - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
@@ -255,13 +225,8 @@ services:
       # to https://<CONDUWUIT_SERVER_NAME>. The Caddyfile uses this for
       # the m.homeserver.base_url in /.well-known/matrix/client.
       MATRIX_BASE_URL: ${PUBLIC_BASE_URL:-https://${CONDUWUIT_SERVER_NAME}}
-      # TLS strategy picker — drives the `import tls_mode_<mode>` line
-      # in both Caddyfile and Caddyfile.dev. See .env.example for the
-      # documented matrix. Empty falls back to each Caddyfile's
-      # built-in default. The prod default is `letsencrypt_http01`;
-      # the dev override (docker-compose.dev.yml) substitutes
-      # `internal_longlived` so Caddyfile.dev keeps its historical
-      # Tailscale-friendly behaviour when TLS_MODE is unset in .env.
+      # TLS strategy picker. Empty falls back to the Caddyfile default
+      # of letsencrypt_http01.
       TLS_MODE: ${TLS_MODE:-letsencrypt_http01}
       # Optional ACME contact email. Consumed by the letsencrypt_*
       # TLS_MODE snippets via Caddy's `{$ACME_EMAIL:fallback}` syntax;
@@ -360,8 +325,7 @@ services:
   #   the same TURN_SECRET env var to generate time-limited credentials
   #   per RFC 5389 (see server/routers/voice.py _generate_turn_credentials).
   #
-  # The install script (install.sh) may add --external-ip to the command
-  # list in docker-compose.override.yml for NAT-behind-NAT scenarios.
+  # Operators behind NAT may set TURN_EXTERNAL_IP in .env.
   coturn:
     image: coturn/coturn:4.6
     restart: unless-stopped

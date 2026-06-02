@@ -27,7 +27,7 @@
  * panel). The opt-in design preserves that posture without forcing
  * every cold-start to pay the libp2p tax.
  *
- * Spec pointer: `docs/architecture/p2p-design.md` § Phase 9.
+ * Spec pointer: `the P2P design` § Phase 9.
  */
 
 import type { Libp2p } from "@libp2p/interface";

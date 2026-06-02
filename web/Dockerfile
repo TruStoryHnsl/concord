@@ -10,7 +10,7 @@ RUN npm run build
 #
 # Why a custom build: vanilla caddy:alpine does NOT include the Cloudflare DNS
 # provider module. We need it for Let's Encrypt DNS-01 challenges on origins
-# that aren't reachable from the public internet — e.g. dev.example.com,
+# that aren't reachable from the public internet — e.g. dev.concorrd.com,
 # whose A record points at a Tailscale IP. HTTP-01 ACME can't reach the
 # origin in that topology, so DNS-01 (which proves control via DNS TXT
 # records rather than HTTP) is the only viable path. Production deployments

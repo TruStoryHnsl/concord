@@ -92,9 +92,8 @@ INSTANCE_SETTINGS_FILE = DATA_DIR / "instance.json"
 # homeserver. When the token is empty (the default), the mirror is
 # skipped silently and bug reports are stored only in the local DB.
 # Operators roll the token by generating a new PAT, updating the env
-# var, and restarting concord-api — there is no in-process cache to
-# invalidate. See `docs/deployment/github_bug_report_token.md` for
-# the full rotation runbook and threat model.
+# var, and restarting concord-api; there is no in-process cache to
+# invalidate.
 GITHUB_BUG_REPORT_TOKEN = os.getenv("GITHUB_BUG_REPORT_TOKEN", "")
 GITHUB_BUG_REPORT_REPO = os.getenv("GITHUB_BUG_REPORT_REPO", "TruStoryHnsl/concord")
 

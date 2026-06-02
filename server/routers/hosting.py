@@ -43,7 +43,7 @@ router = APIRouter(prefix="/api/hosting", tags=["hosting"])
 #: Docker compose sets this to ``web_first`` for the concord-api
 #: container so the docker stack is guaranteed to come up with the
 #: full web stack regardless of any other state. Mirror of
-#: ``PROFILE_ENV_VAR`` in ``src-tauri/src/servitude/config.rs``.
+#: ``PROFILE_ENV_VAR`` in `the native hosting profile backend`.
 PROFILE_ENV_VAR = "CONCORD_PROFILE"
 
 #: The compose service name (set by ``docker-compose.yml``'s ``concord-api``
@@ -123,7 +123,7 @@ def _current_profile_from_env() -> Literal["p2p_only", "web_first"]:
     touched the Settings toggle.
 
     Mirror of ``Profile::from_env`` in
-    ``src-tauri/src/servitude/config.rs``. Kept duplicated rather
+    `the native hosting profile backend`. Kept duplicated rather
     than via an RPC into the Tauri sidecar because the backend can
     answer this from its own environment more cheaply, and the
     Rust-side toggle path persists through to disk which is what

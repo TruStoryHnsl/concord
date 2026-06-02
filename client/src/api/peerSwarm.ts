@@ -2,7 +2,7 @@
  * Peer swarm API wrapper (Phase 3 — libp2p swarm status).
  *
  * Thin wrapper around the `peer_swarm_status` Tauri command exposed by
- * `src-tauri/src/lib.rs`. The Rust side runs a libp2p swarm whose
+ * the native IPC backend. The Rust side runs a libp2p swarm whose
  * `PeerId` derives from the same Ed25519 seed backing the Phase 2
  * `peer_identity` fingerprint, and a background mirror task keeps a
  * snapshot of the swarm's broadcast-channel state (peer count, local
@@ -19,7 +19,7 @@
 
 /**
  * Public-only swarm status shape consumed by TS-land. Mirrors the
- * `SwarmStatus` struct in `src-tauri/src/lib.rs`. There is NO
+ * `SwarmStatus` struct in the native IPC backend. There is NO
  * private-key / seed field and there must never be one — the libp2p
  * secret key never crosses the IPC boundary.
  */

@@ -59,7 +59,7 @@ const PROVENANCE_META: Record<
 };
 
 /** Maximum display-name length the backend accepts. Mirrors
- *  `MAX_DISPLAY_NAME_LEN` in `src-tauri/src/porch/users.rs`. Surfaced
+ *  `MAX_DISPLAY_NAME_LEN` in the native user backend. Surfaced
  *  client-side as an HTML `maxLength` so users don't get a confusing
  *  IPC error mid-typing. */
 const MAX_DISPLAY_NAME_LEN = 64;

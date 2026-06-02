@@ -3223,7 +3223,7 @@ export function AddSourceModal({
             phase-specific subtitle so the user knows which protocol
             is being probed; everything else gets the generic
             "Connecting…". The BringingUpSplash is mandatory — never
-            invent a new spinner here (see CLAUDE.md). */}
+            invent a new spinner here (see the project loading-animation rule). */}
         {screen === "validating" && (
           <BringingUpSplash
             size="compact"

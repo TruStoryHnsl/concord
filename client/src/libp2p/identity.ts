@@ -8,7 +8,7 @@
  * libp2p Noise handshakes and surface a stable PeerId to the rest of
  * the swarm for the lifetime of the page.
  *
- * Spec pointer: `docs/architecture/p2p-design.md` § Phase 9 —
+ * Spec pointer: `the P2P design` § Phase 9 —
  * "Browser sessions create their own ephemeral libp2p identity
  * (per-tab keypair)."
  *
