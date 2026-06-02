@@ -1,0 +1,109 @@
+services:
+  # concord-api with live reload on Python source changes.
+  #
+  # Bind-mounts ./server into /app so edits on the host (via Syncthing)
+  # propagate into the container, then runs uvicorn with --reload so
+  # the worker restarts on any .py change under /app. The existing
+  # ./data and ./config mounts from the base compose are preserved
+  # because Compose merges volume lists across override files.
+  #
+  # Without this override, changing a Python file requires a full
+  # `docker compose build concord-api && docker compose up -d
+  # concord-api` cycle (~15 seconds). With it, uvicorn's file-watcher
+  # reloads the app in about a second and the next request hits the
+  # new code.
+  concord-api:
+    volumes:
+      - ./server:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app
+
+  # Vite dev server with HMR.
+  #
+  # Source is bind-mounted (ro) for live editing.
+  #
+  # package.json and package-lock.json are ALSO bind-mounted so the container
+  # sees the current host state of dependencies. Combined with the named
+  # node_modules volume and the runtime `npm ci` in Dockerfile.dev, this
+  # means dependency changes on the host are picked up on container restart
+  # — no image rebuild needed.
+  vite-dev:
+    build:
+      context: .
+      dockerfile: web/Dockerfile.dev
+    volumes:
+      # Mount the whole client/ directory as a single bind. Per-file
+      # binds (the previous layout) pin an inode; git operations on
+      # the host — merge, checkout, cherry-pick — replace files with
+      # fresh inodes, silently breaking the mount inside the running
+      # container. The symptom is "my edits don't show up in the dev
+      # server" followed by hours of debugging. A directory bind
+      # resolves names through the host's dirent tree at read time,
+      # so inode churn is invisible to the container.
+      - ./client:/app:ro
+      # Named volume overlays /app/node_modules so the container's
+      # own node_modules (populated by `npm ci` on first run) is used
+      # instead of whatever is on the host. Must come AFTER the
+      # parent /app bind so compose layers it on top.
+      - concord-vite-node-modules:/app/node_modules
+    networks:
+      - concord
+
+  # Override web to use dev Caddyfile (proxies to vite-dev instead of serving
+  # the baked-in /srv/html static bundle).
+  #
+  # Caddyfile.dev is already visible inside the container via the base
+  # compose's `./config:/etc/concord-config:ro` mount, so we just point
+  # Caddy at it instead of bind-mounting a single file (which would pin a
+  # specific inode and break on rewrite — same reasoning as the volume
+  # comment in docker-compose.yml).
+  web:
+    command: caddy run --config /etc/concord-config/Caddyfile.dev --adapter caddyfile
+    # Publish 443 on the host for Tailscale-reachable dev origins.
+    #
+    # The base compose maps 8080→8080 (HTTP only). For dev deployments that
+    # serve over TLS to Tailscale peers (the dev origin's A record is a
+    # 100.x Tailscale IP), the browser dials https://host:443. Without
+    # this mapping nothing listens on 443 and the browser sees
+    # "connection refused".
+    #
+    # 443 binds to 0.0.0.0 by default, which means it's exposed on every
+    # host interface — both ens18 (LAN/WAN) and tailscale0. Tailscale-only
+    # isolation comes from the fact that no router port-forward exists on
+    # 443 → dev-host; the LAN-side listener is only reachable from the LAN
+    # itself, and there's no internet path to it. The Tailscale peer path
+    # is the intended consumer.
+    #
+    # Caddy fronts 443 directly here — no sslh mux in front. DNS-01 ACME
+    # via Cloudflare means LE never needs to reach 443 from the public
+    # internet to issue/renew the cert, so Tailscale-only origins work
+    # cleanly.
+    ports:
+      # Map host 443 -> container 8443. The dev Caddyfile global block pins
+      # `https_port 8443` (legacy from rootless-docker compat where Caddy
+      # couldn't bind ports < 1024). Browsers dial the dev origin on
+      # 443 over the Tailscale interface; Docker forwards to Caddy's
+      # actual HTTPS listener inside the container.
+      - "${BIND_HOST:-0.0.0.0}:443:8443"
+    environment:
+      # Override the prod-default TLS_MODE so the dev stack falls back
+      # to internal_longlived when the operator leaves TLS_MODE empty
+      # in .env. ACME_EMAIL / CLOUDFLARE_API_TOKEN are inherited from
+      # the base compose's web env block. See .env.example for the
+      # operator-facing TLS_MODE matrix.
+      TLS_MODE: ${TLS_MODE:-internal_longlived}
+    depends_on:
+      conduwuit:
+        condition: service_started
+      concord-api:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+      vite-dev:
+        condition: service_started
+
+volumes:
+  concord-vite-node-modules:
+
+networks:
+  concord:
+    driver: bridge

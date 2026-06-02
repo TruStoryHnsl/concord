@@ -1,0 +1,753 @@
+@import "tailwindcss";
+@import "./styles/tv.css";
+
+@theme {
+  /* ── Surface Hierarchy (Bronze Teal — default theme) ── */
+  --color-surface: #0e0d0b;
+  --color-surface-container-low: #14130f;
+  --color-surface-container: #1b1915;
+  --color-surface-container-high: #221f1a;
+  --color-surface-container-highest: #2a2620;
+  --color-surface-variant: #2a2620;
+  --color-surface-bright: #322d26;
+  --color-surface-dim: #0e0d0b;
+  --color-surface-tint: #a5823f;
+
+  /* ── On-Surface (Text/Content) ── */
+  --color-on-surface: #f9f9fd;
+  --color-on-surface-variant: #aaabaf;
+
+  /* ── Brand (Concord — reference tokens, see branding/BRAND.md).
+         Not aliased to --color-primary because the existing Electric
+         Indigo identity is load-bearing across the chat UI. Use
+         text-brand-primary / bg-brand-primary explicitly where the
+         brand mark should appear (e.g., login welcome overlay). ── */
+  --color-brand-primary: #08C838;   /* Mesh Emerald */
+  --color-brand-highlight: #08B838; /* Mesh Leaf */
+  --color-brand-accent: #088838;    /* Mesh Pine */
+  --color-brand-deep: #087838;      /* Mesh Root */
+  --color-brand-shadow: #085828;    /* Mesh Soil */
+
+  /* ── Primary (Bronze) ── */
+  --color-primary: #a5823f;
+  --color-primary-dim: #7a5e2a;
+  --color-primary-container: #4a3812;
+
+  /* ── On-Primary ── */
+  --color-on-primary: #1b1308;
+
+  /* ── Secondary (Teal) ── */
+  --color-secondary: #408c96;
+  --color-secondary-dim: #2c6a73;
+  --color-secondary-container: #143a40;
+
+  /* ── Logo base colours ──
+   * The Concord brand mark (`<ConcordLogo />` and the `#boot-splash`
+   * inline halves in index.html) is rendered as two CSS-mask layers
+   * tinted by these variables. They are intentionally aliased to
+   * the current theme's primary + secondary so the logo reflects
+   * whichever palette is active.
+   *
+   * A future theme picker will swap `--color-primary` /
+   * `--color-secondary` (these aliases follow automatically), OR can
+   * override `--color-logo-primary` / `--color-logo-secondary`
+   * directly to give the logo a distinct accent pair that differs
+   * from the surrounding UI chrome.
+   *
+   * Keep as `var(...)` references so the alias chain stays live —
+   * a flat hex copy would break theme-picker propagation. */
+  --color-logo-primary: var(--color-primary);
+  --color-logo-secondary: var(--color-secondary);
+
+  /* ── On-Secondary ── */
+  --color-on-secondary: #04161a;
+  --color-on-secondary-container: #b7e3e9;
+
+  /* ── Tertiary ── */
+  --color-tertiary: #d6b86b;
+
+  /* ── Error ── */
+  --color-error: #ff716c;
+  --color-error-dim: #d7383b;
+  --color-error-container: #9f0519;
+  --color-on-error-container: #ffa8a3;
+
+  /* ── Outline ── */
+  --color-outline: #747579;
+  --color-outline-variant: #46484b;
+
+  /* ── Typography ── */
+  --font-headline: "Space Grotesk", sans-serif;
+  --font-body: "Manrope", sans-serif;
+  --font-label: "Manrope", sans-serif;
+}
+
+:root[data-theme="kinetic-node"] {
+  --color-surface: #0c0e11;
+  --color-surface-container-low: #111417;
+  --color-surface-container: #171a1d;
+  --color-surface-container-high: #1d2024;
+  --color-surface-container-highest: #23262a;
+  --color-surface-variant: #23262a;
+  --color-surface-bright: #292c31;
+  --color-surface-dim: #0c0e11;
+  --color-surface-tint: #a4a5ff;
+  --color-primary: #a4a5ff;
+  --color-primary-dim: #5e5eff;
+  --color-primary-container: #9496ff;
+  --color-on-primary: #1300a3;
+  --color-secondary: #afefdd;
+  --color-secondary-dim: #a1e1cf;
+  --color-secondary-container: #0b5345;
+  --color-on-secondary: #195c4e;
+  --color-on-secondary-container: #a1e1cf;
+  --color-tertiary: #98ffd9;
+  --color-logo-primary: var(--color-primary);
+  --color-logo-secondary: var(--color-secondary);
+}
+
+:root[data-theme="verdant-signal"] {
+  --color-surface: #0b1110;
+  --color-surface-container-low: #111917;
+  --color-surface-container: #17211f;
+  --color-surface-container-high: #1d2a27;
+  --color-surface-container-highest: #243330;
+  --color-surface-variant: #243330;
+  --color-surface-bright: #2b3c38;
+  --color-surface-dim: #0b1110;
+  --color-surface-tint: #7de0b7;
+  --color-primary: #7de0b7;
+  --color-primary-dim: #49b78b;
+  --color-primary-container: #1f5a47;
+  --color-on-primary: #06271c;
+  --color-secondary: #8bc8ff;
+  --color-secondary-dim: #5d9ed7;
+  --color-secondary-container: #174163;
+  --color-on-secondary: #08263d;
+  --color-on-secondary-container: #c7e4ff;
+  --color-tertiary: #f6d777;
+  --color-logo-primary: var(--color-primary);
+  --color-logo-secondary: var(--color-secondary);
+}
+
+:root[data-theme="ember-circuit"] {
+  --color-surface: #120f0d;
+  --color-surface-container-low: #1a1512;
+  --color-surface-container: #231c18;
+  --color-surface-container-high: #2b231e;
+  --color-surface-container-highest: #342b25;
+  --color-surface-variant: #342b25;
+  --color-surface-bright: #40342d;
+  --color-surface-dim: #120f0d;
+  --color-surface-tint: #ff9a6b;
+  --color-primary: #ff9a6b;
+  --color-primary-dim: #e06938;
+  --color-primary-container: #6b2f14;
+  --color-on-primary: #351303;
+  --color-secondary: #ffd66e;
+  --color-secondary-dim: #ddb34f;
+  --color-secondary-container: #5d470f;
+  --color-on-secondary: #302300;
+  --color-on-secondary-container: #ffe7a5;
+  --color-tertiary: #7fdfc9;
+  --color-logo-primary: var(--color-primary);
+  --color-logo-secondary: var(--color-secondary);
+}
+
+:root[data-theme="arctic-current"] {
+  --color-surface: #0c1115;
+  --color-surface-container-low: #12181d;
+  --color-surface-container: #182027;
+  --color-surface-container-high: #1f2931;
+  --color-surface-container-highest: #27323b;
+  --color-surface-variant: #27323b;
+  --color-surface-bright: #313e48;
+  --color-surface-dim: #0c1115;
+  --color-surface-tint: #7bc8ff;
+  --color-primary: #7bc8ff;
+  --color-primary-dim: #4b99d4;
+  --color-primary-container: #194766;
+  --color-on-primary: #072436;
+  --color-secondary: #91f0d0;
+  --color-secondary-dim: #62c6a7;
+  --color-secondary-container: #1a5747;
+  --color-on-secondary: #09291f;
+  --color-on-secondary-container: #c7f8e7;
+  --color-tertiary: #f3c978;
+  --color-logo-primary: var(--color-primary);
+  --color-logo-secondary: var(--color-secondary);
+}
+
+/* ── Bronze Teal — the new default theme. ──
+ * Sourced from the splash render pipeline:
+ *   primary    #a5823f  (warm bronze)
+ *   secondary  #408c96  (cool teal)
+ * Surfaces use a warm-tinted near-black so the bronze reads as
+ * inviting metal rather than orange-on-black. Tertiary picks up the
+ * bronze→amber edge for accents that need a third hue. */
+:root[data-theme="bronze-teal"] {
+  --color-surface: #0e0d0b;
+  --color-surface-container-low: #14130f;
+  --color-surface-container: #1b1915;
+  --color-surface-container-high: #221f1a;
+  --color-surface-container-highest: #2a2620;
+  --color-surface-variant: #2a2620;
+  --color-surface-bright: #322d26;
+  --color-surface-dim: #0e0d0b;
+  --color-surface-tint: #a5823f;
+  --color-primary: #a5823f;
+  --color-primary-dim: #7a5e2a;
+  --color-primary-container: #4a3812;
+  --color-on-primary: #1b1308;
+  --color-secondary: #408c96;
+  --color-secondary-dim: #2c6a73;
+  --color-secondary-container: #143a40;
+  --color-on-secondary: #04161a;
+  --color-on-secondary-container: #b7e3e9;
+  --color-tertiary: #d6b86b;
+  --color-logo-primary: var(--color-primary);
+  --color-logo-secondary: var(--color-secondary);
+}
+
+/* ── Base ── */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Chat body text size ──
+ * User-configurable via Settings → Appearance. `App.tsx` mirrors the
+ * `chatFontSize` Zustand setting into this CSS variable on every change,
+ * so the size updates live without re-rendering the message tree.
+ *
+ * Only `.concord-message-body` (below) consumes this variable — UI
+ * chrome (sidebars, buttons, headings, code blocks) deliberately does
+ * NOT scale. Default 14px matches the legacy `text-sm` MessageContent
+ * used to apply directly, so zero-preference render is visually
+ * identical to the pre-feature state.
+ */
+:root {
+  --concord-chat-font-size: 14px;
+}
+
+/* ── Viewport Height Chain (INS-020) ──
+ * The chain html → body → #root must ALL have explicit height so
+ * Tailwind's h-full (height: 100%) in ChatLayout resolves against
+ * the actual viewport. Without this, iOS WKWebView's content may
+ * collapse or not fill the safe-area viewport. dvh (dynamic viewport
+ * height) handles iOS's retractable URL bar + home indicator correctly.
+ */
+html {
+  height: 100%;
+}
+/* In browsers (Safari, Chrome) 100dvh tracks the dynamic viewport
+ * and prevents the layout from collapsing when the URL bar retracts.
+ * In Tauri iOS, the WKWebView is safe-area-constrained but 100dvh
+ * reports the full screen height — the mismatch pushes the bottom
+ * nav bar off-screen. Skip dvh in the native shell; height:100%
+ * already resolves correctly against the webview bounds. */
+@supports (height: 100dvh) {
+  html:not(.tauri) { min-height: 100dvh; }
+}
+#root {
+  height: 100%;
+}
+
+
+/* ── Mobile Layout Fixes ──
+ * overflow-x:hidden prevents stray wide content from scrolling the
+ * entire viewport horizontally. touch-action:manipulation allows both
+ * horizontal AND vertical panning (needed for the scroll-snap page
+ * strip in ChatLayout) while disabling the 300ms double-tap-to-zoom
+ * delay. The old pan-y restriction blocked scroll-snap from working
+ * because the CSS spec intersects touch-action values across the
+ * ancestor chain.
+ */
+@media (max-width: 768px) {
+  html, body, #root {
+    overflow-x: hidden;
+    max-width: 100vw;
+    touch-action: manipulation;
+  }
+
+  /* The horizontal scroll-snap strip (sources/servers/channels/chat)
+   * paints a native horizontal scrollbar at the bottom of every
+   * mobile page. It tracks the panel position and runs flush with
+   * the chat-tab purple locator bar above it, which reads as a
+   * visual duplicate. Hide every scrollbar inside the mobile
+   * viewport — the snap UX uses swipe gestures and the page-tab
+   * indicator already shows position. WebKit / Blink want
+   * ::-webkit-scrollbar; Firefox uses scrollbar-width:none. */
+  *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  * { scrollbar-width: none; -ms-overflow-style: none; }
+}
+
+body {
+  height: 100%;
+  font-family: "Manrope", sans-serif;
+  background-color: #0c0e11;
+  color: #f9f9fd;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Re-enable text selection for content areas */
+.selectable,
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Prevent iOS Safari auto-zoom on input/select focus.
+   Safari zooms when font-size < 16px; enforce 16px minimum without
+   altering visual size (inheriting em units still scale normally via
+   Tailwind utilities that override this with explicit rem values). */
+input,
+textarea,
+select {
+  font-size: max(16px, 1em);
+}
+
+/* ── Material Symbols ── */
+.material-symbols-outlined {
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+/* ── Animations ── */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes nodePulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(164, 165, 255, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(164, 165, 255, 0.6), 0 0 32px rgba(164, 165, 255, 0.2); }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* ── Button Press Feedback ── */
+.btn-press {
+  transition: transform 100ms ease, background-color 150ms ease, color 150ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-press:active {
+  transform: scale(0.93);
+}
+
+@media (pointer: coarse) {
+  button:active, a:active, [role="button"]:active {
+    opacity: 0.8;
+    transform: scale(0.97);
+    transition: transform 60ms ease, opacity 60ms ease;
+  }
+}
+
+/* ── Glassmorphism ── */
+.glass-panel {
+  background: rgba(35, 38, 42, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(70, 72, 75, 0.3);
+}
+
+/* ── Primary Gradient CTA ── */
+.primary-glow {
+  background: linear-gradient(135deg, #a4a5ff, #9496ff);
+}
+
+/* ── Mesh Background Pattern ── */
+.mesh-background {
+  position: relative;
+}
+.mesh-background::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(164, 165, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Skeleton Loader ── */
+.skeleton-shimmer {
+  background: linear-gradient(90deg, rgba(35,38,42,0.6) 25%, rgba(55,58,62,0.6) 50%, rgba(35,38,42,0.6) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Node Pulse ── */
+.node-pulse {
+  animation: nodePulse 2s ease-in-out infinite;
+}
+
+/* ── Safe Area Utilities ── */
+.safe-bottom {
+  /* max() floor so the bottom gap never collapses on viewports with no
+     safe-area inset (e.g. desktop, where env() resolves to 0). This rule is
+     intentionally UNLAYERED so it still wins over Tailwind's layered
+     pb-*/py-*/p-* utilities and applies uniformly. Previously this was
+     `env(safe-area-inset-bottom, 0px)` alone, which silently zeroed the
+     bottom padding of every .safe-bottom element on desktop and slammed
+     content flush to the container bottom edge (Explore Sources modal,
+     VoiceConnectionBar). 0.75rem matches the floor used inline in
+     PlaceVoiceBanner.tsx. */
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* ── Mobile Sidebar Drawer ── */
+.drawer-open {
+  transform: translateX(0);
+  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.drawer-closed {
+  transform: translateX(-100%);
+  transition: transform 200ms cubic-bezier(0.4, 0, 1, 1);
+}
+.drawer-backdrop {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: opacity 250ms ease;
+}
+
+/* ── Voice Controls Mobile ── */
+.voice-controls-mobile {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── Ghost Border (accessibility fallback) ── */
+.ghost-border {
+  border: 1px solid rgba(70, 72, 75, 0.15);
+}
+
+/* === T003+T004+T005: mobile shell + nav + wrap globals === */
+
+/* T004: text wrap globals — applied to message bodies and any tagged container */
+.concord-message-body,
+.concord-message-body * {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/* Chat body font-size — honors Settings → Appearance via the
+ * `--concord-chat-font-size` CSS variable that the effect in `App.tsx`
+ * mirrors from the persisted `chatFontSize` Zustand setting. Nested
+ * elements with explicit Tailwind text-* classes (headings text-xl/lg,
+ * code blocks text-sm, etc.) retain their intentional sizing via
+ * Tailwind's utilities layer.
+ */
+.concord-message-body {
+  font-size: var(--concord-chat-font-size);
+}
+
+/* Markdown elements that can't word-wrap (tables, fenced code) must scroll
+ * inside their own box rather than push the chat layout sideways. The chat
+ * scroll container clips horizontal overflow at the parent level — without
+ * this, wide tables would just be cropped and unreadable. */
+.concord-message-body table,
+.concord-message-body pre {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* T004: ensure long unbroken usernames/server names can break on mobile */
+@media (max-width: 480px) {
+  .concord-break-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+/* T005: Mobile bottom navigation — floating glass nav */
+.concord-mobile-nav-wrap {
+  /* container so the nav floats above the safe-area inset */
+  pointer-events: none;
+  background: #0c0e11;
+}
+.concord-mobile-nav-wrap > * {
+  pointer-events: auto;
+}
+.concord-mobile-nav {
+  /* 5 equal cells; relative for indicator positioning */
+  padding: 0.375rem;
+  background: rgba(23, 26, 29, 0.72);
+  border: 1px solid rgba(164, 165, 255, 0.12);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(164, 165, 255, 0.04);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+/* Sliding pill indicator: width is 1/5 (one cell) minus the 0.375rem padding on
+   each side; we slide via translateX in 100% increments of its own width. */
+.concord-mobile-nav-indicator {
+  width: calc((100% - 0.75rem) / 5);
+  border-radius: 0.85rem;
+  background: linear-gradient(
+    135deg,
+    rgba(164, 165, 255, 0.22),
+    rgba(148, 150, 255, 0.10)
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(164, 165, 255, 0.32),
+    0 0 18px rgba(164, 165, 255, 0.18);
+  transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Center "Chat" tab — primary glow on the icon when active */
+.concord-mobile-nav-center-glow {
+  color: var(--color-primary);
+  text-shadow:
+    0 0 12px rgba(164, 165, 255, 0.6),
+    0 0 24px rgba(164, 165, 255, 0.35);
+}
+/* Tap target hint for coarse pointers */
+@media (pointer: coarse) {
+  .concord-mobile-nav button {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* ── INS-016: Mobile Pill Row + Dashboard Sheet ── */
+.concord-mobile-pill-row {
+  /* INS-020: solid opaque background instead of glass-panel translucency.
+     On iOS WKWebView, backdrop-filter picked up the native UIView's gray
+     background through the semi-transparent surface, creating a visible
+     gray box over the pills. Opaque background eliminates the issue. */
+  background: #171a1d;
+  border: 1px solid rgba(164, 165, 255, 0.12);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(164, 165, 255, 0.04);
+}
+.concord-mobile-pill {
+  /* capsule pill look — icon-only, labelled via aria-label */
+  min-height: 44px; /* iOS HIG minimum tap target */
+}
+.concord-mobile-pill-active {
+  background: linear-gradient(
+    135deg,
+    rgba(164, 165, 255, 0.22),
+    rgba(148, 150, 255, 0.10)
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(164, 165, 255, 0.32),
+    0 0 14px rgba(164, 165, 255, 0.18);
+}
+@media (pointer: coarse) {
+  .concord-mobile-pill {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Slide-up sheet — shares the INS-001 easing with the existing nav. */
+.concord-sheet-root {
+  /* Always mounted; visibility flips on a delay when closing so the slide
+     animation can play out before we remove the sheet from the hit area. */
+  visibility: hidden;
+  transition: visibility 0s linear 300ms;
+}
+.concord-sheet-root-open {
+  visibility: visible;
+  transition: visibility 0s linear 0s;
+}
+.concord-sheet-backdrop {
+  opacity: 0;
+  transition: opacity 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.concord-sheet-backdrop-open {
+  opacity: 1;
+}
+.concord-sheet-panel {
+  transform: translateY(100%);
+  transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+.concord-sheet-panel-open {
+  transform: translateY(0);
+}
+
+/* ── INS-020 iPad + Google TV adaptive layout ─────────────────────────
+ *
+ * These rules add tablet and TV breakpoints WITHOUT touching the phone
+ * layout (<768px stays byte-identical) or the existing desktop layout
+ * (≥1024px with a fine pointer still uses the current 3-column shell).
+ *
+ * Breakpoints:
+ *   - 768-1023px, touch-only  → iPad portrait mode. Sidebar collapses
+ *     into a persistent narrow rail instead of a drawer; main content
+ *     fills the remaining width.
+ *   - ≥1024px, touch-only    → iPad landscape / large Android tablet.
+ *     Full 3-column layout but with larger tap targets and wider
+ *     comfortable padding.
+ *
+ * No component re-layout — these rules target the existing Tailwind
+ * classes and custom `.concord-*` classes already in the sidebar /
+ * main view so a follow-up task can make the relevant components
+ * responsive without touching any React code.
+ *
+ * TV mode:
+ *   - `[data-tv="true"]` on <html> enables high-contrast focus rings
+ *     (the default Tailwind outline is invisible at 10 ft viewing
+ *     distance). The React root sets this attribute when
+ *     `usePlatform().isTV` is true.
+ */
+
+@media (min-width: 768px) and (max-width: 1023.98px) and (pointer: coarse) {
+  /* iPad portrait — persistent narrow sidebar rail instead of a drawer. */
+  :root {
+    --concord-ipad-rail-width: 72px;
+  }
+}
+
+@media (min-width: 1024px) and (pointer: coarse) {
+  /* iPad landscape — more generous padding than desktop mouse mode. */
+  :root {
+    --concord-ipad-content-pad: 1rem;
+  }
+}
+
+/* TV focus ring — visible from 10 feet away on a 1080p+ display. The
+ * high-contrast outline only applies when the root element is tagged
+ * as a TV device (set by the App shell from `usePlatform().isTV`). */
+html[data-tv="true"] *:focus-visible {
+  outline: 4px solid var(--color-primary, #7c4dff);
+  outline-offset: 4px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 6px rgba(124, 77, 255, 0.35);
+}
+
+/* TV-mode scaled focusable tiles — the DPAD-driven roving tabindex
+ * in useDpadNav() targets `[data-focusable]` elements; bump their
+ * transform scale slightly on focus so the active tile is obvious
+ * from across the room. */
+html[data-tv="true"] [data-focusable="true"]:focus-visible {
+  transform: scale(1.05);
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* =================================================================
+ * TV-mode 10-foot UI overrides
+ *
+ * Applied when the React root sets `data-tv="true"` on <html>
+ * (via the isTV flag from usePlatform()). These rules adapt the
+ * existing chat UI for a 1080p/4K display viewed from 8-12 feet.
+ * ================================================================= */
+
+/* Base font size bump — 24px makes body text readable from 10 ft. */
+html[data-tv="true"] {
+  font-size: 24px;
+}
+
+/* Sidebar icons need to be bigger for 10-ft visibility. */
+html[data-tv="true"] .concord-server-icon,
+html[data-tv="true"] .concord-sidebar-icon {
+  width: 56px;
+  height: 56px;
+  font-size: 28px;
+}
+
+/* Interactive elements need generous hit targets for focus-ring
+ * visibility (the Siri Remote moves focus between elements, so
+ * the focus ring IS the interaction affordance). */
+html[data-tv="true"] button,
+html[data-tv="true"] a,
+html[data-tv="true"] [role="button"],
+html[data-tv="true"] input,
+html[data-tv="true"] select,
+html[data-tv="true"] textarea {
+  min-height: 48px;
+  min-width: 48px;
+}
+
+/* Message list needs more breathing room. */
+html[data-tv="true"] .concord-message-body {
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+/* Hide features that are unavailable or nonsensical on TV:
+ *   - File upload (no filesystem picker on tvOS)
+ *   - Camera controls (no camera on Apple TV)
+ *   - Drag handles (no touch on TV) */
+html[data-tv="true"] .concord-file-upload-btn,
+html[data-tv="true"] .concord-camera-btn,
+html[data-tv="true"] .concord-drag-handle,
+html[data-tv="true"] [data-tv-hidden="true"] {
+  display: none !important;
+}
+
+/* Server sidebar — wider rail + more spacing between icon tiles
+ * for comfortable DPAD navigation at 10-foot distance. */
+html[data-tv="true"] .w-16 {
+  width: 5.5rem; /* 88px vs default 64px */
+}
+html[data-tv="true"] .concord-server-icon {
+  margin-block: 0.25rem;
+}
+
+/* Channel list items — taller for DPAD focus targets. */
+html[data-tv="true"] [data-focus-group="channels"] {
+  min-height: 3.5rem; /* 56px */
+  padding-block: 0.75rem;
+  font-size: 1rem;
+}
+
+/* Message input area — hidden on TV (no on-screen keyboard).
+ * A companion "TV mode" banner replaces it in ChatLayout. */
+html[data-tv="true"] .concord-tv-input-hidden {
+  display: none !important;
+}
+
+/* TV mode read-only banner — shown instead of the message input. */
+html[data-tv="true"] .concord-tv-readonly-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: var(--color-surface-container-low);
+  color: var(--color-on-surface-variant);
+  font-size: 0.875rem;
+  border-top: 1px solid var(--color-outline-variant);
+}

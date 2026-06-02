@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      The mask halves (`/logo-upper.png`, `/logo-lower.png`) used to be
+      preloaded here because the splash painted them inline before
+      React mounted. They're no longer on the first-paint path — the
+      splash is now the boot-splash.mp4 video — so the browser was
+      flagging them as "preloaded but not used within a few seconds."
+      They're still consumed by `<ConcordLogo />` (sidebar, source
+      tiles) but on demand at React mount time. Each half is ~6KB, so
+      lazy-loading is cheap.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, minimum-scale=0.1" />
+    <meta name="theme-color" content="#0c0e11" />
+    <!-- Concord launch buffer (INS-023): paint the dark theme and a
+         real splash immediately so hard refreshes show the branded
+         loading state before React and the bundle have finished
+         booting. The React-side <LaunchAnimation/> takes over and
+         fades this bootstrap layer out after mount. -->
+    <style>
+      /*
+       * Boot-splash theme colour fallbacks.
+       *
+       * The real `--color-logo-primary` / `--color-logo-secondary`
+       * variables are defined in `src/index.css`. If that stylesheet
+       * has already been fetched by the browser cache these override
+       * the literals below; if it's still in flight we fall back to
+       * the Kinetic Node (default) brand colours so the splash never
+       * paints invisible.
+       *
+       * Defined on :root so both the inline SVG strokes (via a CSS
+       * custom property on the stroke attribute) and the node dots
+       * (background / box-shadow) pick them up through the cascade
+       * with no re-paint when index.css finally resolves.
+       */
+      :root {
+        --splash-logo-primary: var(--color-logo-primary, #a5823f);
+        --splash-logo-secondary: var(--color-logo-secondary, #408c96);
+      }
+      html, body { background: #0c0e11; color: #f4f4f7; margin: 0; }
+      html { color-scheme: dark; }
+      body { min-height: 100vh; }
+      #boot-splash {
+        /*
+         * Opaque backdrop — splash owns its own dark rectangle so
+         * on refresh the browser paints splash bg + animation in
+         * one paint pass.
+         *
+         * Isolated into its own GPU compositor layer (will-change +
+         * contain + transform:translateZ) so work happening in the
+         * React tree below — auth restore, store subscriptions,
+         * StrictMode double-mount, document.documentElement
+         * attribute sets — cannot invalidate the splash's paint
+         * layer and interrupt the animated WebP mid-loop. The
+         * splash decodes once at mount and loops untouched until
+         * display:none retires it.
+         */
+        position: fixed;
+        inset: 0;
+        z-index: 9998;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        background: #0c0e11;
+        color: #f4f4f7;
+        pointer-events: none;
+        will-change: opacity;
+        contain: strict;
+        transform: translateZ(0);
+      }
+      .boot-splash-anim {
+        /* Promoted so the decoded video frames live on the GPU
+         * and survive any paint invalidation in the parent chain. */
+        will-change: transform;
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        width: 192px;
+        height: 192px;
+        display: block;
+        image-rendering: auto;
+      }
+      #boot-splash[data-state="visible"] {
+        opacity: 1;
+        transition: none;
+      }
+      /*
+       * Handoff: fade out AND (after the fade completes) remove the
+       * boot-splash layer from the paint entirely so there's no
+       * window where both the pre-React boot mark and the React
+       * LaunchAnimation mark render at the same pixel. The React
+       * layer mounts with its own opacity=1 during the same tick the
+       * boot layer starts its 320ms opacity transition — without
+       * display:none afterwards, a second mark would linger in the
+       * compositor as an invisible but still-rendered element and
+       * re-appear during any layer re-composition. See
+       * bootSplash.ts for the JS side that applies the
+       * `.boot-splash-retired` class once the transition ends.
+       */
+      #boot-splash[data-state="handoff"] {
+        opacity: 0;
+        transition: opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #boot-splash[data-state="handoff"].boot-splash-retired {
+        display: none;
+      }
+      #boot-splash-logo {
+        position: relative;
+        width: 204px;
+        height: 204px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        filter: drop-shadow(0 20px 42px rgba(0, 0, 0, 0.35));
+      }
+      /*
+       * System fonts only for splash text. When brand/status
+       * referenced Google Fonts ("Space Grotesk"/"Manrope"), the
+       * splash rendered in system-ui fallback first, then ~500ms
+       * later the Google stylesheet resolved and swapped the fonts.
+       * The swap changed text metrics, the flex column reflowed,
+       * the img above shifted, and the browser visibly restarted
+       * the WebP animation on the repaint. system-ui renders from
+       * the first frame and never swaps — no reflow, no restart.
+       */
+      #boot-splash-brand {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 1.25rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        line-height: 1.3;
+      }
+      #boot-splash-status {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 0.8125rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #c4c5d0;
+        line-height: 1.3;
+      }
+    </style>
+    <!-- Tag <html> before first paint so CSS can branch on native vs. web.
+         Tauri v2 exposes `__TAURI_INTERNALS__` at document-start;
+         the legacy `__TAURI__` key is a v1 holdover that does NOT
+         exist in v2 and was the source of the 2026-04-10 detection
+         bug. See `client/src/api/serverUrl.ts` for the full story. -->
+    <script>if(window.__TAURI_INTERNALS__)document.documentElement.classList.add('tauri')</script>
+    <!-- Kill any leftover service worker from a previous deploy the
+         moment this page parses, before React or the old SW's own
+         activate handler can trigger a reload. This fires earlier
+         than main.tsx's register() call and handles the case where
+         a browser has a stuck SW that keeps reloading the page. -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          for (var i = 0; i < regs.length; i++) {
+            regs[i].unregister();
+          }
+        }).catch(function() {});
+      }
+    </script>
+    <!-- Block pinch-zoom-IN on WebKit/iOS/Orion.
+         viewport maximum-scale=1.0 is ignored by Safari/Orion, so two layers:
+         1. gesturechange (WebKit-specific): scale>1 = zoom-in, block it.
+            scale<1 = zoom-out, allow as recovery gesture.
+         2. touchmove fallback for non-WebKit (Chrome/Android). -->
+    <script>
+      (function(){
+        // Layer 1: WebKit gesture events (Safari, Orion, iOS Chrome)
+        document.addEventListener('gesturestart',function(e){e.preventDefault();},{passive:false});
+        document.addEventListener('gesturechange',function(e){
+          if(e.scale>1)e.preventDefault(); // zoom-in — block
+          // zoom-out (scale<1) — allowed
+        },{passive:false});
+        // Layer 2: touchmove fallback
+        var startDist=0;
+        function dist(a,b){return Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);}
+        document.addEventListener('touchstart',function(e){
+          if(e.touches.length===2)startDist=dist(e.touches[0],e.touches[1]);
+        },{passive:true});
+        document.addEventListener('touchmove',function(e){
+          if(e.touches.length===2){
+            var d=dist(e.touches[0],e.touches[1]);
+            if(d>startDist)e.preventDefault();
+          }
+        },{passive:false});
+      })();
+    </script>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Concord" />
+    <title>Concord</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
+      Plain <link rel="stylesheet">, NOT the preload-then-swap trick.
+      The Tauri v2 CSP (default-src 'self') blocks inline event-handler
+      attributes (onload="this.rel='stylesheet'"), so the preload was
+      fetched but never promoted to a stylesheet — leaving Material
+      Symbols ligatures rendering as raw text ("volume_up", "settings",
+      "person_add", "tune", "play_arrow") on the Windows native build.
+      Empirically observed on a Windows 11 test rig (2026-04-27) from a
+      CI-built MSI; see INS-060.
+    -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@300..800&family=Space+Grotesk:wght@300..700&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+  </head>
+  <body>
+    <div id="boot-splash" data-state="visible" aria-hidden="true">
+      <div id="boot-splash-logo">
+        <!--
+          Hand-crafted Blender animation. Loops continuously — the
+          splash is a cyclical animation and the user wants it to
+          keep playing as long as we're still loading, not freeze on
+          the last frame. The mp4 is authored to seam cleanly.
+        -->
+        <video
+          id="boot-splash-anim"
+          class="boot-splash-anim"
+          src="/boot-splash.mp4"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="auto"
+          aria-hidden="true"
+        ></video>
+      </div>
+      <div id="boot-splash-brand">Concord</div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

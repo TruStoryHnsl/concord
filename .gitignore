@@ -1,0 +1,143 @@
+# Environment secrets
+.env
+.env.backup
+.env.production
+.env.*.local
+
+# INS-024 Discord bridge runtime secrets — template versions
+# (`config/discord-bridge.env.example` and
+# `config/mautrix-discord/config.yaml`) ARE committed. The real files
+# below hold bot tokens and AS registration tokens and must never be
+# committed. See `server/services/bridge_config.py` for the atomic
+# write path that generates registration.yaml on every "Enable" or
+# "Rotate" admin action.
+config/discord-bridge.env
+config/discord-voice-bridge/rooms.json
+config/turn-certs/
+config/mautrix-discord/registration.yaml
+config/mautrix-discord/config-runtime.yaml
+config/mautrix-discord/bot-token
+
+# Docker volume data
+data/
+
+# Node
+node_modules/
+
+# Client build output
+client/dist/
+client/downloads/
+
+# Desktop app
+desktop/node_modules/
+desktop/dist/
+
+# iOS/native smoke-build artifacts
+dist/
+
+# Python
+__pycache__/
+*.pyc
+server/.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Build caches
+.vite/
+.build-cache/
+
+# Extensions (nested repos, managed separately — worldview scaffold is tracked)
+# Note: git gitignore does not allow re-including files under an ignored directory
+# using !ext/worldview/ unless the parent is first un-ignored. We use git add -f
+# for the initial scaffold commit; subsequent edits to ext/worldview are tracked normally.
+ext/*
+!ext/worldview
+
+# OS
+.DS_Store
+*.log
+
+# Claude Code local config
+.claude/
+
+# Workflow / tooling state (develop_feature MCP tool)
+.orrch/
+
+# Codex IDE backup snapshots
+.codex-backups/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Temp files
+.orrtemp
+
+# AI / workflow files (kept locally, not tracked)
+CLAUDE.md
+GEMINI.md
+agents.md
+AGENTS.md
+fb2p.md
+scratchpad.md
+TODO.md
+notes.md
+instructions_inbox.md
+naming-brainstorm.md
+SELF_CONTAINMENT_REPORT.md
+DEVLOG.md
+PROVENANCE_REPORT.md
+
+# Syncthing folder ignore patterns (local only)
+.stignore
+.stfolder
+.bugfix-ledger.md
+.bugfix-analysis.md
+entities.json
+
+# Splash render pipeline outputs (Blender exports + comparison frames)
+splash/
+splash_*.webp
+splash_*.avif
+splash_compare.*
+splash_compare_*.webp
+concord-splash.webm
+concord-splash.mkv
+concord-splash.mp4
+concord-splashscreen.fbx
+0001-*.webm
+0001-*.mkv
+splash[0-9]*-[0-9]*.mp4
+0001-*.mp4
+
+# Screenshots and ad-hoc captures (root-level)
+/*.png
+
+# Backup env / config files
+.env.backup-*
+config/**/*.bak
+
+# Worktree directories
+.worktrees/
+
+# Build artifacts directory (local only)
+artifacts/
+
+# Splash render sequence frames
+splash[0-9]*.mp4
+
+# Discord bridge compiled/runtime binaries (not committed)
+src-tauri/resources/discord_bridge/
+
+# YAML scratch
+format-panel-open.yml
+
+# tuwunel.toml is generated at runtime from tuwunel.toml.template. It is
+# rewritten every time the admin UI updates federation settings or bridges.
+# The committed template contains federation defaults only — never tokens.
+config/tuwunel.toml
+
+# Local mempalace tooling — personal memory-system config, never in the public repo.
+/mempalace.yaml
+/.mempalace-aliases

@@ -1,0 +1,121 @@
+import { useEffect, useState } from "react";
+import { useAuthStore } from "../../stores/auth";
+import { getServerUrl } from "../../api/serverUrl";
+import { servitudeStatus, isTauri, type ServitudeState } from "../../api/servitude";
+import { AdminTab } from "./AdminTab";
+import { DataExportSection } from "./DataExportSection";
+import { DeploymentProfileSection } from "./DeploymentProfileSection";
+import { InstanceNameSection } from "./InstanceNameSection";
+import { VisibilitySection } from "./VisibilitySection";
+
+export type HostingStatus = "loading" | "running" | "stopped" | "error";
+
+function statusColor(status: HostingStatus): string {
+  switch (status) {
+    case "running": return "bg-green-500";
+    case "stopped": return "bg-orange-400";
+    case "error": return "bg-red-500";
+    default: return "bg-outline-variant/40 animate-pulse";
+  }
+}
+
+function statusLabel(status: HostingStatus): string {
+  switch (status) {
+    case "running": return "Instance online";
+    case "stopped": return "Server offline";
+    case "error": return "Server error";
+    default: return "Checking…";
+  }
+}
+
+export function useHostingStatus(): HostingStatus {
+  const [status, setStatus] = useState<HostingStatus>("loading");
+  const accessToken = useAuthStore((s) => s.accessToken);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function check() {
+      try {
+        if (isTauri()) {
+          // Native: query embedded servitude lifecycle state.
+          const res = await servitudeStatus();
+          if (cancelled) return;
+          const state: ServitudeState = res.state;
+          if (Object.keys(res.degraded_transports).length > 0) {
+            setStatus("error");
+          } else if (state === "running") {
+            setStatus("running");
+          } else {
+            setStatus("stopped");
+          }
+        } else {
+          // Web/Docker: if /api/health responds, the server is running.
+          // We're already talking to it (the page loaded), so this should
+          // always be green unless the API goes down mid-session.
+          const base = getServerUrl().replace(/\/$/, "");
+          const res = await fetch(`${base}/api/health`, { cache: "no-store" });
+          if (cancelled) return;
+          setStatus(res.ok ? "running" : "error");
+        }
+      } catch {
+        if (!cancelled) setStatus("error");
+      }
+    }
+
+    check();
+    const interval = setInterval(check, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [accessToken]);
+
+  return status;
+}
+
+export function HostingTab() {
+  const hostingStatus = useHostingStatus();
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Status banner */}
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-container">
+        <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusColor(hostingStatus)}`} />
+        <span className="text-sm font-headline font-semibold text-on-surface">
+          {statusLabel(hostingStatus)}
+        </span>
+      </div>
+
+      <AdminTab />
+
+      {/* Vanity instance name — replaces "local" on the source-rail
+          home tile and propagates into the libp2p Identify protocol
+          so peers can confirm they reached the right device. */}
+      <InstanceNameSection />
+
+      {/*
+        Deployment profile (Phase 7 — native default profile). Relocated
+        2026-05-30 from ProfileTab — operator-facing hosting concern, not
+        user profile. Renders the native/web toggle and the Phase-0
+        hosting status summary when the operator flips to web_first.
+      */}
+      <DeploymentProfileSection />
+
+      {/*
+        F-VIS — per-server mesh-hop visibility slider. Lets the
+        operator decide how far across the mesh each server they host
+        is advertised. Defaults: porch = 1 (direct paired only), home
+        = 0 (owner only until opt-in). Architecture B from the
+        2026-06-01 RFC-resolution filing.
+      */}
+      <VisibilitySection />
+
+      {/*
+        F1c — encrypted HOME-server data export to a trusted outside
+        instance. Lives under Hosting because the operator-facing
+        decision is "which trusted machine keeps a copy of my home
+        server's data and runs analyses on it?" — that's a hosting
+        concern, not a user-profile one.
+      */}
+      <DataExportSection />
+    </div>
+  );
+}

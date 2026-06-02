@@ -1,0 +1,3270 @@
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import type { IPublicRoomsChunkRoom } from "matrix-js-sdk";
+import {
+  useMatrixSync,
+  useRoomMessages,
+  useSendMessage,
+  useDeleteMessage,
+  useEditMessage,
+  useSendFile,
+  useSendReaction,
+  useRemoveReaction,
+} from "../../hooks/useMatrix";
+import type { ChatMessage } from "../../hooks/useMatrix";
+import { useTypingUsers, useSendTyping } from "../../hooks/useTyping";
+import { useAuthStore } from "../../stores/auth";
+import { useServerStore } from "../../stores/server";
+import { usePlatform } from "../../hooks/usePlatform";
+import { useDpadNav } from "../../hooks/useDpadNav";
+import { useSendReadReceipt } from "../../hooks/useUnreadCounts";
+import { useNotifications } from "../../hooks/useNotifications";
+import { useSettingsStore } from "../../stores/settings";
+import { useVoiceStore } from "../../stores/voice";
+import { useHostingStatus } from "../settings/HostingTab";
+import { SectionBoundary } from "./SectionBoundary";
+import { SourcesPanel } from "./SourcesPanel";
+import { BringingUpSplash } from "../BringingUpSplash";
+import { HelpModal, OnboardingGuide, RulesGate } from "./OnboardingViews";
+import { AccountSheet, DesktopAccountButton } from "./AccountUI";
+import {
+  HostingStatusButton,
+  TopBarIconButton,
+  TopBarMoreMenu,
+} from "./TopBarMenu";
+import {
+  sourceMatchesMatrixDomain,
+  useSourcesStore,
+  type ConcordSource,
+} from "../../stores/sources";
+import { useDMStore } from "../../stores/dm";
+import { useToastStore } from "../../stores/toast";
+import { useDisplayName } from "../../hooks/useDisplayName";
+import { useExtension } from "../../hooks/useExtension";
+import { useExtensionRoomBridge } from "../../hooks/useExtensionBridge";
+import { useExtensionStore } from "../../stores/extension";
+import ExtensionEmbed from "../extension/ExtensionEmbed";
+import ExtensionMenu from "../extension/ExtensionMenu";
+import { ExtensionCatalogModal } from "../extension/ExtensionCatalogModal";
+import { LocalHostingControl } from "../sources/LocalHostingControl";
+import { PeerCardScanner } from "../peers/PeerCardScanner";
+import { ServerSidebar } from "./ServerSidebar";
+import { ChannelSidebar, UserBar } from "./ChannelSidebar";
+import { LocalServerSidebar } from "../local/LocalServerSidebar";
+import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
+import { LocalChatPane } from "../local/LocalChatPane";
+import { usePorchStore } from "../../stores/porchStore";
+import { useInstanceNameStore } from "../../stores/instanceName";
+import { useHomeServerNameStore } from "../../stores/homeServerName";
+import { DMSidebar } from "../dm/DMSidebar";
+import { ExploreModal } from "../server/ExploreModal";
+import { MessageList } from "../chat/MessageList";
+import { MessageInput } from "../chat/MessageInput";
+import { TypingIndicator } from "../chat/TypingIndicator";
+import { VoiceChannel } from "../voice/VoiceChannel";
+import { PlaceVoiceBanner } from "../voice/PlaceVoiceBanner";
+import { SettingsPanel } from "../settings/SettingsModal";
+// ServerSettingsPanel is now folded into the unified SettingsPanel (INS-012)
+import { BugReportModal } from "../BugReportModal";
+import { StatsModal } from "../StatsModal";
+import { SourceBrandIcon, inferSourceBrand } from "../sources/sourceBrand";
+import {
+  getRoomDiagnostics,
+  getServerRules,
+  type RoomDiagnostics,
+} from "../../api/concord";
+import {
+  buildMatrixSourceDraft,
+  clearPendingSourceSso,
+  clearPendingSourceSsoQueryParams,
+  hasPendingSourceSsoCallback,
+  readPendingSourceSso,
+  upsertMatrixSourceRecord,
+  writePendingSourceSso,
+  type MatrixSourceDraft,
+} from "../sources/matrixSourceAuth";
+import { useFormatStore } from "../../stores/format";
+import { useBootReadyStore } from "../../stores/bootReady";
+
+/** localStorage key for tracking rules acceptance per server per user. */
+function rulesAcceptedKey(userId: string, serverId: string) {
+  return `concord_rules_accepted:${userId}:${serverId}`;
+}
+
+type MobileView = "sources" | "servers" | "channels" | "chat" | "dms" | "settings";
+
+/** A parallel browse tab — each tab has its own independent navigation state. */
+interface BrowseTab {
+  id: string;
+  pageView: "sources" | "servers" | "channels" | "chat";
+  /** Saved server/channel selection for this tab (persisted while tab is inactive). */
+  serverId: string | null;
+  channelId: string | null;
+  dmActive: boolean;
+  dmRoomId: string | null;
+}
+
+/** Generate a short unique tab ID. */
+function newTabId(): string {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+/** True when running inside a Tauri native shell (iOS, Android, desktop).
+ *  `__TAURI_INTERNALS__` is the canonical Tauri v2 global — see the
+ *  comment in `client/src/api/serverUrl.ts` for the full history. */
+// const isNativeApp =
+//   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+function lastChannelStorageKey(userId: string | null): string {
+  return userId ? `concord_last_channel:${userId}` : "concord_last_channel";
+}
+
+/**
+ * ChatLayout — the top-level shell.
+ *
+ * `onAddSource` is the callback that fires when the user taps the `+` tile
+ * on the SourcesPanel (empty state or add-another button). App.tsx holds
+ * the modal state and passes this down; when clicked it opens the combined
+ * "pick an instance + authenticate" wizard. Optional so the component still
+ * renders in any test/story that doesn't supply it.
+ */
+export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
+  const syncing = useMatrixSync();
+  const voiceConnected = useVoiceStore((s) => s.connected);
+  const voiceMicGranted = useVoiceStore((s) => s.micGranted);
+  const voiceChannelType = useVoiceStore((s) => s.channelType);
+  const voiceConnectionState = useVoiceStore((s) => s.connectionState);
+  // INS-048: Hardware state — set by VoiceChannel when mic/camera change
+  const micActive = useVoiceStore((s) => s.micActive);
+  const cameraActive = useVoiceStore((s) => s.cameraActive);
+  const client = useAuthStore((s) => s.client);
+  const userId = useAuthStore((s) => s.userId);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const logout = useAuthStore((s) => s.logout);
+  const loadServers = useServerStore((s) => s.loadServers);
+  const activeChannelId = useServerStore((s) => s.activeChannelId);
+  const servers = useServerStore((s) => s.servers);
+  const activeServerId = useServerStore((s) => s.activeServerId);
+  const deleteChannelStore = useServerStore((s) => s.deleteChannel);
+  const setActiveChannelId = (roomId: string) =>
+    useServerStore.setState({ activeChannelId: roomId });
+
+  // DM state
+  const dmActive = useDMStore((s) => s.dmActive);
+  const activeDMRoomId = useDMStore((s) => s.activeDMRoomId);
+  const dmConversation = useDMStore((s) => s.activeConversation)();
+  const loadConversations = useDMStore((s) => s.loadConversations);
+
+  // Format state — only the panel-close action is referenced here, to
+  // reset any open popover when the active room changes. The format
+  // BUTTON in the top bar was removed (non-functional placeholder),
+  // but MessageInput / MessageList / useResolvedFormat still consume
+  // draftFormat from the store, so the rest of the format pipeline
+  // stays intact.
+  const setFormatPanelOpen = useFormatStore((s) => s.setFormatPanelOpen);
+
+  // The active room — either a server channel or a DM room
+  const activeRoomId = dmActive ? activeDMRoomId : activeChannelId;
+
+  const { messages, isPaginating, hasMore, loadMore } = useRoomMessages(activeRoomId);
+  const sendMessage = useSendMessage(activeRoomId);
+  const deleteMessage = useDeleteMessage(activeRoomId);
+  const editMessage = useEditMessage(activeRoomId);
+  const { sendFile, uploading } = useSendFile(activeRoomId);
+  const sendReaction = useSendReaction(activeRoomId);
+  const removeReaction = useRemoveReaction(activeRoomId);
+  const typingUsers = useTypingUsers(activeRoomId);
+  const { onKeystroke, onStopTyping } = useSendTyping(activeRoomId);
+  useNotifications();
+  const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnostics | null>(null);
+  const [roomDiagnosticsLoading, setRoomDiagnosticsLoading] = useState(false);
+  const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
+
+  // INS-020 iPad layout — when running on an iPad (native Tauri iOS
+  // build or web browser with iPad-class touch screen), force the
+  // three-pane desktop layout regardless of the CSS `md:` breakpoint.
+  // The existing Tailwind `hidden md:block` / `md:hidden` split already
+  // handles web browsers correctly because iPad portrait is >=768px,
+  // but native Tauri iOS reports a webview viewport that can drift
+  // below the `md:` threshold during split view / slide over, which
+  // would otherwise flip the shell to the phone layout mid-session.
+  // Explicit `isIPad` + a prefersTabletLayout signal keeps the layout
+  // stable regardless of transient viewport width changes.
+  const platform = usePlatform();
+  const prefersTabletLayout = platform.isIPad;
+  const isTV = platform.isTV;
+
+  // TV DPAD navigation — top-level handler for back/escape and
+  // cross-group navigation. Sub-components (ServerSidebar,
+  // ChannelSidebar) register their own group-scoped handlers.
+  useDpadNav({ enabled: platform.isTV, group: "main" });
+
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [showBugReport, setShowBugReport] = useState(false);
+  const [statsTarget, setStatsTarget] = useState<{ type: "user" } | { type: "server"; serverId: string } | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [placeBannerDismissed, setPlaceBannerDismissed] = useState(false);
+  // INS-070 — admin gate + Extension Library modal visibility.
+  const [isInstanceAdmin, setIsInstanceAdmin] = useState(false);
+  const [extensionCatalogOpen, setExtensionCatalogOpen] = useState(false);
+  useEffect(() => {
+    if (!accessToken) {
+      setIsInstanceAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { checkAdmin } = await import("../../api/concord");
+        const result = await checkAdmin(accessToken);
+        if (!cancelled) setIsInstanceAdmin(result.is_admin);
+      } catch {
+        if (!cancelled) setIsInstanceAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  // INS-044: Multi-tab browse. Each BrowseTab has its own page-depth
+  // position (sources → servers → channels → chat). Overlay views
+  // (dms, settings, actions) are NOT per-tab — they are shared overlays
+  // that render on top of the active tab.
+  const [tabState, setTabState] = useState<{ tabs: BrowseTab[]; activeId: string }>(() => {
+    const firstId = newTabId();
+    return {
+      tabs: [{ id: firstId, pageView: "sources", serverId: null, channelId: null, dmActive: false, dmRoomId: null }],
+      activeId: firstId,
+    };
+  });
+
+  // Shared overlay state — not per-tab.
+  // Overlay views (dms, settings) cover the whole screen on top of
+  // whichever browse tab is active. Switching to a page-depth view clears
+  // the overlay, restoring the active tab's content.
+  const [overlayView, setOverlayView] = useState<"dms" | "settings" | null>(null);
+
+  // Convenience accessors
+  const tabs = tabState.tabs;
+  const activeTabIdVal = tabState.activeId;
+  const activeTab = tabs.find((t) => t.id === activeTabIdVal) ?? tabs[0];
+
+  // The "mobileView" seen by the rest of ChatLayout:
+  //   - If an overlay is active, that overlay is the view.
+  //   - Otherwise, the active tab's pageView is the view.
+  const mobileView: MobileView = overlayView ?? activeTab.pageView;
+
+  // setMobileView — compatibility shim so all the existing code keeps working.
+  // Page-depth views update the active tab's position; overlay views update
+  // the shared overlay. Switching to a page-depth view clears any overlay.
+  const setMobileView = useCallback((view: MobileView) => {
+    if (view === "dms" || view === "settings") {
+      setOverlayView(view);
+    } else {
+      setOverlayView(null);
+      setTabState((prev) => ({
+        ...prev,
+        tabs: prev.tabs.map((t) =>
+          t.id === prev.activeId
+            ? { ...t, pageView: view as BrowseTab["pageView"] }
+            : t,
+        ),
+      }));
+    }
+  }, []);
+
+  // Mobile account sheet (T003)
+  const [accountSheetOpen, setAccountSheetOpen] = useState(false);
+  const [desktopAccountPopoverOpen, setDesktopAccountPopoverOpen] = useState(false);
+  const desktopAccountRef = useRef<HTMLDivElement>(null);
+  // INS-016: Dashboard sheet state — setters are still called by desktop
+  // quick-action handlers (they close the old sheet). The value isn't
+  // read because mobile's ActionsPanel replaced the sheet overlay.
+  // const [, setDashboardSheetOpen] = useState(false); // TODO: unused, remove if truly not needed
+  // INS-020: Add-source flow modal. The `onAddSource` prop is an
+  // App.tsx escape hatch so the hollow-shell boot can open this
+  // modal from outside; internally, tiles call `setAddSourceOpen`.
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
+  // Pending initial-screen request from the Connections tab (or any
+  // other deep-link surface). Cleared when the modal mounts so a later
+  // open without a request defaults back to "pick".
+  const [addSourceInitialScreen, setAddSourceInitialScreen] = useState<
+    string | null
+  >(null);
+  const openAddSource = useCallback(() => {
+    setAddSourceOpen(true);
+    onAddSource?.();
+  }, [onAddSource]);
+  useEffect(() => {
+    if (hasPendingSourceSsoCallback()) {
+      setAddSourceOpen(true);
+    }
+  }, []);
+
+  // Settings panel's Connections tab can request the Add-Source modal
+  // (e.g. "Connect another Concord instance"). Consume and open the
+  // modal whenever a pending request shows up. The requested screen is
+  // forwarded to the modal as its initial state so e.g. "pair-peer"
+  // deep-links straight into the scanner UI.
+  const pendingAddSourceScreen = useSettingsStore((s) => s.pendingAddSourceScreen);
+  const consumeAddSourceRequest = useSettingsStore((s) => s.consumeAddSourceRequest);
+  useEffect(() => {
+    if (pendingAddSourceScreen !== null) {
+      const requested = consumeAddSourceRequest();
+      setAddSourceInitialScreen(requested);
+      setAddSourceOpen(true);
+      onAddSource?.();
+    }
+  }, [pendingAddSourceScreen, consumeAddSourceRequest, onAddSource]);
+  // Explore modal state. Hoisted from ServerSidebar to ChatLayout
+  // so the SourcesPanel — which now owns the Explore tile per the
+  // 2026-04-11 spec — can open the modal from inside the Sources
+  // column. ServerSidebar's own Explore button is removed in the
+  // desktop render path; mobile still owns its own button.
+  const [exploreOpen, setExploreOpen] = useState(false);
+  const openExplore = useCallback(() => setExploreOpen(true), []);
+  const closeExplore = useCallback(() => setExploreOpen(false), []);
+
+  // Source browser — opened when the user clicks a source tile.
+  const [sourceBrowserSourceId, setSourceBrowserSourceId] = useState<string | null>(null);
+  const sources = useSourcesStore((s) => s.sources);
+  const openSourceBrowser = useCallback(
+    (sourceId: string) => {
+      setSourceBrowserSourceId(sourceId);
+    },
+    [],
+  );
+
+  // Local source — when active, ChatLayout renders the porch through
+  // its existing server/channel/message panes (same visual primitives
+  // as Matrix, Discord, Mozilla, Concord federation sources). The
+  // data backing the panes is `usePorchStore`, not matrix-js-sdk —
+  // honest source-kind-aware composition rather than a Matrix shim.
+  //
+  // See:
+  //   - client/src/components/local/LocalServerSidebar.tsx
+  //   - client/src/components/local/LocalChannelSidebar.tsx
+  //   - client/src/components/local/LocalChatPane.tsx
+  const [localActive, setLocalActive] = useState(false);
+  const porchSelectedChannel = usePorchStore((s) =>
+    s.channels.find((c) => c.id === s.selectedChannelId) ?? null,
+  );
+  const porchVanityName = useInstanceNameStore((s) => s.name);
+  const porchLabel = porchVanityName.trim() || "porch";
+  const loadPorchChannels = usePorchStore((s) => s.loadChannels);
+  // F1b-IMPL — hydrate the persistent home-server name on first
+  // ChatLayout mount so the home tile in LocalServerSidebar renders
+  // the user-set label from first paint. `load()` is idempotent and
+  // a no-op on web (no persistent SQLite layer there).
+  const loadHomeServerName = useHomeServerNameStore((s) => s.load);
+  useEffect(() => {
+    void loadHomeServerName();
+  }, [loadHomeServerName]);
+  const openLocal = useCallback(() => {
+    // Activate the local source. Clear DM + Matrix server selection
+    // so the existing panes don't try to render a stale Matrix room
+    // beneath the porch surface. The Matrix tiles still highlight when
+    // tapped — see the Matrix-tile click handlers in ServerSidebar /
+    // SourcesPanel, which clear `localActive` via the effects below.
+    setLocalActive(true);
+    useDMStore.getState().setDMActive(false);
+    useServerStore.setState({ activeServerId: null, activeChannelId: null });
+    // Kick a channel-list load so the channel column populates as soon
+    // as the user lands. `loadChannels` is idempotent + safe on web.
+    void loadPorchChannels();
+  }, [loadPorchChannels]);
+
+  // Clear localActive whenever a Matrix source / DM / server becomes
+  // active — keeps the porch tile and Matrix tiles mutually exclusive
+  // in the active-source semantics.
+  useEffect(() => {
+    if (activeServerId || activeChannelId || dmActive) {
+      setLocalActive(false);
+    }
+  }, [activeServerId, activeChannelId, dmActive]);
+
+  // Auto-activate the porch on first ChatLayout mount when nothing
+  // else is selected — the porch IS the device's default surface, so
+  // requiring the user to click the home tile just to see it is wrong.
+  // Skips when any external source / DM is already active (returning
+  // visitors keep their last selection) and skips on web (the porch
+  // doesn't exist there).
+  const autoActivatedRef = useRef(false);
+  useEffect(() => {
+    if (autoActivatedRef.current) return;
+    const isNativeApp =
+      typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (!isNativeApp) return;
+    if (activeServerId || activeChannelId || dmActive) return;
+    autoActivatedRef.current = true;
+    openLocal();
+  }, [activeServerId, activeChannelId, dmActive, openLocal]);
+
+  // Resizable channel sidebar (desktop only)
+  const SIDEBAR_MIN = 160;
+  const SIDEBAR_MAX = 400;
+  const SIDEBAR_DEFAULT = 224;
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem("concord_sidebar_width");
+      if (saved) return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(saved)));
+    } catch {}
+    return SIDEBAR_DEFAULT;
+  });
+  const isDragging = useRef(false);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX;
+      const newWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startWidth + delta));
+      setSidebarWidth(newWidth);
+    };
+
+    const onUp = () => {
+      isDragging.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
+  }, [sidebarWidth]);
+
+  useEffect(() => { setEditingMessage(null); setFormatPanelOpen(false); }, [activeRoomId, setFormatPanelOpen]);
+
+  // TASK 26: Track the most recently-active channel so the "Reconnect to
+  // last channel" quick action can restore it after the user has navigated
+  // away (DMs, settings, another server). Persisted in localStorage so it
+  // survives reloads. Only server channels are tracked — DMs reconnect via
+  // their own store already.
+  useEffect(() => {
+    if (!dmActive && activeServerId && activeChannelId) {
+      try {
+        localStorage.setItem(
+          lastChannelStorageKey(userId),
+          JSON.stringify({ serverId: activeServerId, roomId: activeChannelId }),
+        );
+      } catch {}
+    }
+  }, [dmActive, activeServerId, activeChannelId, userId]);
+
+  const activeServer = useMemo(
+    () => servers.find((s) => s.id === activeServerId),
+    [servers, activeServerId],
+  );
+  const activeChannel = useMemo(
+    () => activeServer?.channels.find((c) => c.matrix_room_id === activeChannelId),
+    [activeServer, activeChannelId],
+  );
+  const isVoiceChannel = activeChannel?.channel_type === "voice";
+  const isAppChannel = activeChannel?.channel_type === "app";
+  const showPlaceBanner = voiceConnected && voiceChannelType === "place" && !placeBannerDismissed;
+  const isOwner = activeServer?.owner_id === userId;
+
+  // Rules gate state — tracks rules_text for the active server and whether
+  // the current user has accepted it. Acceptance is persisted in localStorage
+  // keyed by (userId, serverId) so it survives page reloads.
+  const [activeServerRulesText, setActiveServerRulesText] = useState<string | null>(null);
+  const [rulesAccepted, setRulesAccepted] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (!activeServerId || !userId || !accessToken || dmActive) {
+      setActiveServerRulesText(null);
+      setRulesAccepted(true);
+      return;
+    }
+    // Use rules_text already in the store if present; otherwise fetch.
+    const storedRules = activeServer?.rules_text ?? undefined;
+    const resolve = (rulesText: string | null | undefined) => {
+      if (!rulesText) {
+        setActiveServerRulesText(null);
+        setRulesAccepted(true);
+        return;
+      }
+      setActiveServerRulesText(rulesText);
+      const accepted = localStorage.getItem(rulesAcceptedKey(userId, activeServerId)) === "1";
+      setRulesAccepted(accepted);
+    };
+    if (storedRules !== undefined) {
+      resolve(storedRules);
+    } else {
+      getServerRules(activeServerId, accessToken)
+        .then((data) => resolve(data.rules_text))
+        .catch(() => resolve(null));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeServerId, userId, accessToken, dmActive]);
+  // Friendly empty-channel placeholder. The verbose diagnostics block
+  // used to render here directly, which made every empty room look
+  // like an error report. Now the channel just invites the user to
+  // post, and a small wrench button opens the diagnostics in a popup
+  // for the case where the room actually IS broken.
+  const hasDiagnosticsPayload = roomDiagnosticsLoading || !!roomDiagnostics;
+  const emptyState = useMemo(() => {
+    if (!activeRoomId) return undefined;
+    return (
+      <div className="flex flex-col items-center gap-3 text-center">
+        <p className="text-base text-on-surface font-body">
+          Be the first to say something!
+        </p>
+        {hasDiagnosticsPayload && (
+          <button
+            type="button"
+            onClick={() => setDiagnosticsPopupOpen(true)}
+            title="Show room diagnostics"
+            aria-label="Show room diagnostics"
+            className="btn-press flex items-center gap-1 px-2 py-1 rounded-md text-xs text-on-surface-variant/70 hover:text-on-surface hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm" style={{ fontSize: "14px" }}>build</span>
+            Diagnostics
+          </button>
+        )}
+      </div>
+    );
+  }, [activeRoomId, hasDiagnosticsPayload]);
+  const settingsOpen = useSettingsStore((s) => s.settingsOpen);
+  const closeSettings = useSettingsStore((s) => s.closeSettings);
+  const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
+  const closeServerSettings = useSettingsStore((s) => s.closeServerSettings);
+  const openSettings = useSettingsStore((s) => s.openSettings);
+  const hostingStatus = useHostingStatus();
+
+  useEffect(() => {
+    if (!desktopAccountPopoverOpen) return;
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (
+        desktopAccountRef.current &&
+        !desktopAccountRef.current.contains(event.target as Node)
+      ) {
+        setDesktopAccountPopoverOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDesktopAccountPopoverOpen(false);
+    };
+    document.addEventListener("mousedown", handleDocumentClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [desktopAccountPopoverOpen]);
+
+  // TV capability banner state — shown when a TV user selects a voice channel
+  const [tvBannerDismissed, setTvBannerDismissed] = useState(false);
+
+  // TASK T2: DPAD navigation for TV builds. When isTV is true, the hook
+  // registers a keydown listener that takes over arrow keys for spatial
+  // focus navigation across the three-pane layout. onBack navigates up
+  // through the pane hierarchy (chat → channels → servers).
+  const handleTvBack = useCallback(() => {
+    if (mobileView === "chat") setMobileView("channels");
+    else if (mobileView === "channels") setMobileView("servers");
+    else if (mobileView === "settings") { closeSettings(); closeServerSettings(); setMobileView(prevPageDepthRef.current); }
+    else if (mobileView === "dms") setMobileView(prevPageDepthRef.current);
+  }, [mobileView, closeSettings, closeServerSettings]);
+
+  useDpadNav({
+    enabled: isTV,
+    group: "tv-main",
+    onBack: handleTvBack,
+  });
+
+  // Gate read receipts on the user actually looking at chat.
+  //
+  // On DESKTOP every panel is visible at once — sidebar + channel list +
+  // chat all on screen — so "is the chat panel visible" is just "are we
+  // not in a settings overlay". The previous `mobileView === "chat"`
+  // check was treating desktop like mobile and gating false whenever the
+  // active tab's pageView happened not to be "chat" (which is the
+  // initial-load state for newly added tabs). That bailed out of the
+  // receipt-sender entirely, so the badge count never decremented — the
+  // exact "always says the same thing" bug.
+  //
+  // On MOBILE only one panel is on screen at a time, so we still gate
+  // on `mobileView === "chat"`.
+  const chatVisible =
+    (!platform.isMobile || mobileView === "chat") &&
+    !settingsOpen &&
+    !serverSettingsId;
+  useSendReadReceipt(activeRoomId, chatVisible);
+
+  const memberCount = useMemo(() => {
+    if (!client || !activeRoomId) return 0;
+    const room = client.getRoom(activeRoomId);
+    if (!room) return 0;
+    return room.getJoinedMemberCount();
+  }, [client, activeRoomId, syncing]);
+
+  // Extension system
+  const { activeExtension, isHost: isExtensionHost, startExtension, stopExtension } = useExtension(activeRoomId);
+  const extensionMenuOpen = useExtensionStore((s) => s.menuOpen);
+  const setExtensionMenuOpen = useExtensionStore((s) => s.setMenuOpen);
+  const extensionCatalog = useExtensionStore((s) => s.catalog);
+
+  // INS-066-FUP-A: bridge between matrix-js-sdk client + room store and the
+  // <ExtensionEmbed/> SDK ports. This is the call-site wiring W5/W6 deferred —
+  // without it, `subscribeRoomEvents` + `onSendStateEvent` are undefined and
+  // the SDK channels graceful no-op. With it, real Matrix events round-trip
+  // through the iframe boundary.
+  const extensionBridge = useExtensionRoomBridge(client, activeChannelId);
+
+  // Extension / chat vertical split resize (desktop)
+  // The legacy "extension on top, chat below" vertical split state
+  // (extMediaPercent + isExtDragging + extContainerRef) was removed
+  // in v0.7.2 when extensions moved to their own app channels — they
+  // render full-pane now, no chat strip below.
+  const extensionBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Sidebar collapse when extension is active
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // handleExtResizeStart was the drag handler for the extension/chat
+  // vertical split that used to live inside text channels. v0.7.2
+  // moved extensions to their own app channels (full-pane, no
+  // chat-below split), so the resize is no longer reachable. Removed
+  // along with the JSX that consumed it.
+
+  // Reset place banner dismiss state when voice disconnects
+  useEffect(() => {
+    if (!voiceConnected) setPlaceBannerDismissed(false);
+  }, [voiceConnected]);
+
+  // Auto-collapse sidebar when extension becomes active, restore when it stops
+  const extensionIsActive = !!activeExtension;
+  useEffect(() => {
+    if (extensionIsActive && !dmActive) {
+      setSidebarCollapsed(true);
+    } else {
+      setSidebarCollapsed(false);
+    }
+  }, [extensionIsActive, dmActive]);
+
+  const loadMembers = useServerStore((s) => s.loadMembers);
+  const [serversLoaded, setServersLoaded] = useState(false);
+
+  // Tell the launch splash that the logged-in shell is ready to be
+  // shown to the user. Fires AFTER the initial server/conversation/
+  // catalog data has resolved, so the splash doesn't dismiss into
+  // a half-loaded ChatLayout where channel tiles and messages are
+  // still popping in. requestAnimationFrame defers the flag to
+  // after-paint so the next frame the user sees is the real UI,
+  // not an empty shell.
+  const markAppReady = useBootReadyStore((s) => s.markAppReady);
+  useEffect(() => {
+    if (!serversLoaded) return;
+    const id = requestAnimationFrame(() => markAppReady());
+    return () => cancelAnimationFrame(id);
+  }, [serversLoaded, markAppReady]);
+
+
+  const startupRestoreHandled = useRef<string | null>(null);
+  const origSetActiveChannel = useServerStore((s) => s.setActiveChannel);
+  const setActiveServer = useServerStore((s) => s.setActiveServer);
+  const setActiveDM = useDMStore((s) => s.setActiveDM);
+  const addToast = useToastStore((s) => s.addToast);
+  const setDMActive = useDMStore((s) => s.setDMActive);
+
+  const loadCatalog = useExtensionStore((s) => s.loadCatalog);
+
+  useEffect(() => {
+    if (!accessToken || serversLoaded) return;
+    let cancelled = false;
+    Promise.allSettled([
+      loadServers(accessToken),
+      loadConversations(accessToken),
+      loadCatalog(accessToken),
+    ]).finally(() => {
+      if (!cancelled) setServersLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, serversLoaded, loadServers, loadConversations, loadCatalog]);
+
+  useEffect(() => {
+    if (!accessToken || !activeRoomId || messages.length > 0) {
+      setRoomDiagnostics(null);
+      setRoomDiagnosticsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRoomDiagnosticsLoading(true);
+    getRoomDiagnostics(activeRoomId, accessToken)
+      .then((diag) => {
+        if (!cancelled) setRoomDiagnostics(diag);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setRoomDiagnostics({
+            room_id: activeRoomId,
+            user_id: userId ?? "",
+            binding: { kind: "unknown" },
+            inference: "diagnostic_request_failed",
+            summary: err instanceof Error ? err.message : "Room diagnostics failed",
+            steps: [],
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRoomDiagnosticsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, activeRoomId, messages.length, userId]);
+
+  useEffect(() => {
+    if (!serversLoaded || !userId) return;
+    if (startupRestoreHandled.current === userId) return;
+
+    try {
+      const raw = localStorage.getItem(lastChannelStorageKey(userId));
+      if (!raw) {
+        startupRestoreHandled.current = userId;
+        return;
+      }
+      const parsed = JSON.parse(raw) as { serverId?: string; roomId?: string };
+      const server = servers.find((s) => s.id === parsed.serverId);
+      const channel = server?.channels.find((c) => c.matrix_room_id === parsed.roomId);
+      if (!server || !channel) return;
+      startupRestoreHandled.current = userId;
+      setDMActive(false);
+      setActiveServer(server.id);
+      origSetActiveChannel(channel.matrix_room_id);
+    } catch {
+      startupRestoreHandled.current = userId;
+    }
+  }, [serversLoaded, userId, servers, setDMActive, setActiveServer, origSetActiveChannel]);
+
+  useEffect(() => {
+    if (accessToken && activeServerId) {
+      loadMembers(activeServerId, accessToken);
+    }
+  }, [accessToken, activeServerId, loadMembers]);
+
+  // When selecting a channel on mobile, auto-switch to chat view
+  const handleMobileChannelSelect = useCallback((roomId: string) => {
+    origSetActiveChannel(roomId);
+    setMobileView("chat");
+  }, [origSetActiveChannel]);
+
+  // When selecting a DM on mobile, switch to chat view
+  const handleMobileDMSelect = useCallback((roomId: string) => {
+    setActiveDM(roomId);
+    setMobileView("chat");
+  }, [setActiveDM]);
+
+  /* ── TASK 26: Mobile dashboard quick actions ── */
+
+  // TODO: Mobile action handlers scaffolding (not yet wired to any UI element).
+  // Uncomment when implementing the corresponding mobile action flows.
+
+  // When app settings or server settings is opened, switch to the mobile
+  // settings view. Without the serverSettingsId branch, tapping the gear
+  // icon in ChannelSidebar's server header on mobile would silently update
+  // the store but leave mobileView on "channels", so nothing visible would
+  // happen and server owners on mobile had no path to manage their server.
+  useEffect(() => {
+    if (settingsOpen || serverSettingsId) {
+      if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
+      setMobileView("settings");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen, serverSettingsId]);
+
+  useEffect(() => {
+    if (settingsOpen || serverSettingsId) {
+      setDesktopAccountPopoverOpen(false);
+    }
+  }, [settingsOpen, serverSettingsId]);
+
+  // Desktop layout.
+  //
+  // Structure (2026-04-11 user spec):
+  //
+  //   ┌──────────────────────────────────────────┬─┬──────────────────────┐
+  //   │ LEFT STACK (flex-col, flex-shrink-0)    │ │ MAIN CONTENT (flex-1)│
+  //   │ ┌─────────┬───────┬───────┐             │ │                      │
+  //   │ │ Sources │ Srvr  │ Chan. │             │ │ Chat pane /          │
+  //   │ │ panel   │ rail  │ side- │             │ │ empty state          │
+  //   │ │ (+ tile,│       │ bar   │             │ │                      │
+  //   │ │ Explore │       │       │             │ │                      │
+  //   │ │ at btm) │       │       │             │ │                      │
+  //   │ ├─────────┴───────┴───────┤             │ │                      │
+  //   │ │  UserBar (only if logged in)          │ │                      │
+  //   │ └───────────────────────────────────────┘ │                      │
+  //   └──────────────────────────────────────────┴─┴──────────────────────┘
+  //                                              ^
+  //                                              └ resize handle
+  //
+  // Rules baked into this layout:
+  //
+  //   1. ALWAYS render the full multi-pane shell, even with zero sources.
+  //      The previous "if (hasNoSources) return <SourcesPanel/>" early
+  //      return was a mobile-only behavior that leaked into desktop and
+  //      hid every other panel — fixed.
+  //   2. Sources column = full SourcesPanel component (NOT the narrow
+  //      icon column). Has its own + tile and now also owns the Explore
+  //      affordance via the `onExplore` callback.
+  //   3. Explore moved out of ServerSidebar into the Sources column
+  //      footer. ChatLayout owns the modal state.
+  //   4. UserBar renders ONLY when `userId` is set (logged in). On a
+  //      cold launch where the user hasn't authenticated yet, the
+  //      bottom of the left stack is empty.
+  //   5. UserBar is INSIDE the left stack, not outside it. Its width is
+  //      automatically the sum of the three columns above it (plus the
+  //      Sources column when native), so it stops cleanly at the resize
+  //      handle / main pane boundary instead of spanning the whole
+  //      window. Regression from the reintegration merge, restored.
+  const renderDesktopLayout = () => {
+    const showSidebar = !sidebarCollapsed;
+
+    return (
+      <div className="h-full w-full min-h-0 min-w-0 relative flex overflow-hidden bg-surface text-on-surface">
+        {/* LEFT STACK — sidebar columns. Collapses to zero width when hidden. */}
+        {showSidebar && (
+          <div className="flex h-full min-h-0 flex-shrink-0 bg-surface">
+            <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
+              <div className="flex min-h-0 flex-1">
+                <div className="w-[41px] mr-[2px] flex-shrink-0">
+                  <SectionBoundary>
+                    <SourcesPanel
+                      onAddSource={openAddSource}
+                      onSourceOpen={openSourceBrowser}
+                      onLocalOpen={openLocal}
+                      onExplore={openExplore}
+                    />
+                  </SectionBoundary>
+                </div>
+
+                <SectionBoundary>
+                  {localActive ? <LocalServerSidebar /> : <ServerSidebar />}
+                </SectionBoundary>
+
+                {/* Channel / DM sidebar */}
+                <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
+                  <SectionBoundary>
+                    {localActive ? (
+                      <LocalChannelSidebar />
+                    ) : dmActive ? (
+                      <DMSidebar />
+                    ) : (
+                      <ChannelSidebar onServerTitleClick={() => {
+                        if (activeServerId) setStatsTarget({ type: "server", serverId: activeServerId });
+                      }} />
+                    )}
+                  </SectionBoundary>
+                </div>
+              </div>
+
+              {userId && (
+                <SectionBoundary>
+                  <UserBar userId={userId} logout={logout} />
+                </SectionBoundary>
+              )}
+            </div>
+
+            {/* Resize handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              className="w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors flex-shrink-0"
+            />
+          </div>
+        )}
+
+        {/* Main content */}
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          {renderMainContent()}
+        </div>
+
+        {/* Settings full-screen overlay — always mounts the normal layout underneath
+            so returning from settings resumes exactly where you left off. */}
+        {settingsOpen && (
+          <div className="absolute inset-0 z-20 flex flex-col bg-surface">
+            <div className="h-12 flex items-center px-3 gap-2 bg-surface-container-low flex-shrink-0">
+              <button
+                onClick={() => { closeServerSettings(); closeSettings(); }}
+                className="btn-press flex items-center justify-center w-9 h-9 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+                aria-label="Back"
+              >
+                <span className="material-symbols-outlined text-xl">arrow_back</span>
+              </button>
+              <h2 className="font-headline font-semibold">Settings</h2>
+            </div>
+            <SettingsPanel />
+          </div>
+        )}
+
+        {/* Explore modal — opened from the Sources column's bottom tile. */}
+        <ExploreModal isOpen={exploreOpen} onClose={closeExplore} />
+      </div>
+    );
+  };
+
+  // Mobile layout with bottom nav.
+  //
+  // INS-010 / INS-003 reflow chain (audited 2026-04-08 after INS-011/016/017
+  // top-bar + pill rework):
+  //
+  //   root  flex-col min-h-0 overflow-hidden                      (this div)
+  //     ├── top bar             flex-shrink-0                     (INS-011 icons)
+  //     ├── middle content      flex-1 min-h-0 overflow-hidden    (view router)
+  //     │     └── chat branch   flex flex-col min-h-0             (line 448)
+  //     │           ├── MessageList    flex-1 overflow-y-auto
+  //     │           └── MessageInput   form `flex-shrink-0`
+  //     ├── MobilePillRow       flex-shrink-0  (INS-016 pills)
+  //     └── MobileDashboardSheet  absolute-positioned overlay
+  //
+  // ── Scroll-snap page navigation (INS-020) ──
+  // All three page-depth views are rendered as side-by-side panels in a
+  // horizontal scroll-snap container. The browser handles swipe physics,
+  // momentum, and snap-to-nearest. We sync `mobileView` state from the
+  // scroll position so the top bar and pills reflect the visible panel.
+  const scrollStripRef = useRef<HTMLDivElement>(null);
+  const tabIndicatorRef = useRef<HTMLDivElement>(null);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Programmatic-scroll guard. When `scrollToPanel` runs (state change,
+  // initial sync, page-tab tap), we must NOT let the resulting scroll
+  // events feed back into `setMobileView` via handleScrollSnap. Without
+  // this, joining a voice room would set mobileView=chat → scrollToPanel
+  // smooth → voice connect reflows ChatLayout (VoiceConnectionBar
+  // appears below it) → mid-scroll snap-type re-snaps to nearest →
+  // handleScrollSnap reads scrollLeft≈0 → setMobileView("sources").
+  // Holds the guard for 500ms after every programmatic scroll, which is
+  // long enough for the smooth animation + any reflow snap to settle.
+  const programmaticScrollUntilRef = useRef(0);
+  // INS-047: restore the page-depth view when closing settings/DMs
+  const prevPageDepthRef = useRef<MobileView>("chat");
+  // INS-045: left-edge tap zone overlay
+  const [leftEdgeOverlay, setLeftEdgeOverlay] = useState<"servers" | "sources" | null>(null);
+  // INS-046: right-edge tap zone overlay
+  const [rightEdgeOverlay, setRightEdgeOverlay] = useState(false);
+
+  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "instant") => {
+    const strip = scrollStripRef.current;
+    if (!strip) return;
+    const panelWidth = strip.clientWidth;
+    programmaticScrollUntilRef.current = Date.now() + 500;
+    strip.scrollTo({ left: panelIndex * panelWidth, behavior });
+  }, []);
+
+  const handleScrollLive = useCallback(() => {
+    const strip = scrollStripRef.current;
+    const indicator = tabIndicatorRef.current;
+    if (!strip || !indicator) return;
+    const panelWidth = strip.clientWidth;
+    if (!panelWidth) return;
+    const pos = strip.scrollLeft / panelWidth;
+    indicator.style.transform = `translateX(${pos * 100}%)`;
+  }, []);
+
+  // Debounced scroll handler — updates mobileView when the user finishes
+  // scrolling. Uses a 100ms debounce so we don't spam state updates during
+  // the momentum phase. Skips the write entirely when the scroll was
+  // programmatic (state-driven), which is what happens on tab taps,
+  // channel selection, voice join, settings open/close, and so on.
+  const handleScrollSnap = useCallback(() => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      if (Date.now() < programmaticScrollUntilRef.current) return;
+      const strip = scrollStripRef.current;
+      if (!strip) return;
+      const panelWidth = strip.clientWidth;
+      if (panelWidth === 0) return;
+      const panelIndex = Math.round(strip.scrollLeft / panelWidth);
+      const clamped = Math.max(0, Math.min(panelIndex, PAGE_DEPTH.length - 1));
+      const target = PAGE_DEPTH[clamped];
+      if (target && target !== mobileView) {
+        setMobileView(target);
+        useDMStore.getState().setDMActive(false);
+      }
+    }, 100);
+  }, [mobileView]);
+
+  // Sync scroll position when mobileView changes from outside (e.g. page tab tap,
+  // channel select, settings open/close). Always uses `instant` so external
+  // state changes can't be hijacked by a half-finished smooth scroll being
+  // re-snapped during a layout reflow.
+  useEffect(() => {
+    const depthIdx = PAGE_DEPTH.indexOf(mobileView);
+    if (depthIdx >= 0) scrollToPanel(depthIdx);
+  }, [mobileView, scrollToPanel]);
+
+  // The chain MUST NOT be broken by any new ancestor introducing overflow:
+  // visible or removing min-h-0 — that would let MessageInput's auto-grow
+  // textarea push the MessageList out of view instead of reflowing it.
+  // MessageInput's internal useLayoutEffect caps the textarea at
+  // min(viewport*0.4, 8*22px) and switches to internal scroll above that.
+  const renderMobileLayout = () => (
+    <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
+      {/* Top bar — safe-top lives on the OUTER wrapper so the safe-area
+          inset adds transparent padding ABOVE the 48px content bar instead
+          of stealing from its interior (which was cutting off icons on
+          notch-equipped iPhones). */}
+      <div className="bg-surface-container-low safe-top flex-shrink-0">
+      <div className="h-12 flex items-center px-3 gap-2">
+        <div className="flex-1 min-w-0 flex items-center">
+        {mobileView === "chat" && dmActive && dmConversation ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setMobileView("dms")}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
+            <DMHeaderName userId={dmConversation.other_user_id} />
+          </div>
+        ) : mobileView === "chat" && activeChannel ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setMobileView("channels")}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold truncate text-on-surface">
+              {isVoiceChannel ? (
+                <span className="material-symbols-outlined text-base align-middle mr-1">volume_up</span>
+              ) : (
+                <span className="text-on-surface-variant mr-1">#</span>
+              )}
+              {activeChannel.name}
+            </h2>
+            {voiceConnected && voiceChannelType === "place" && placeBannerDismissed && (
+              <button
+                type="button"
+                onClick={() => setPlaceBannerDismissed(false)}
+                className="flex items-center gap-0.5 text-primary text-xs px-1.5 py-0.5 rounded-lg bg-primary/15 hover:bg-primary/25 transition-colors ml-1"
+                title="Restore voice banner"
+              >
+                <span>◈</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+              </button>
+            )}
+            {memberCount > 0 && (
+              <span className="text-xs text-on-surface-variant font-label">
+                {memberCount}
+              </span>
+            )}
+          </div>
+        ) : mobileView === "dms" ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <h2 className="font-headline font-bold text-lg text-primary">Messages</h2>
+          </div>
+        ) : mobileView === "channels" && activeServer ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setMobileView("servers")}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold truncate">{activeServer.name}</h2>
+          </div>
+        ) : mobileView === "settings" ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => { closeSettings(); closeServerSettings(); setMobileView(prevPageDepthRef.current); }}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold">Settings</h2>
+          </div>
+        ) : (
+          <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
+        )}
+        </div>
+        {/* INS-048: Hardware state indicator — shown when voice is active */}
+        {voiceConnected && (micActive || cameraActive) && (
+          <div
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full flex-shrink-0 ${
+              voiceConnectionState !== "connected" ? "ring-2 ring-blue-400" : ""
+            }`}
+            aria-label="Hardware capture active"
+          >
+            {micActive && (
+              <span
+                className="w-2 h-2 rounded-full bg-orange-400 flex-shrink-0"
+                title="Microphone active"
+              />
+            )}
+            {cameraActive && (
+              <span
+                className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"
+                title="Camera active"
+              />
+            )}
+          </div>
+        )}
+        {/* Top-bar right cluster: DMs + hosting status + wrench menu + account.
+            Format button removed — non-functional placeholder.
+            Logout removed — surface is in Settings → Profile only, so a
+            destructive action isn't a tap-target neighbour of routine
+            navigation. */}
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          {/* DMs moved here from the removed MobilePillRow (INS-044).
+             Toggles between the active page-depth view and the DMs
+             overlay; the active state is visually reflected. */}
+          <TopBarIconButton
+            icon="chat_bubble"
+            label="Direct messages"
+            className={mobileView === "dms" ? "bg-primary/20 border border-primary/40" : ""}
+            onClick={() => {
+              if (mobileView === "dms") {
+                useDMStore.getState().setDMActive(false);
+                setMobileView(prevPageDepthRef.current);
+              } else {
+                if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
+                useDMStore.getState().setDMActive(true);
+                setMobileView("dms");
+              }
+            }}
+          />
+          <HostingStatusButton
+            status={hostingStatus}
+            onClick={() => {
+              if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
+              openSettings("hosting");
+              setMobileView("settings");
+            }}
+          />
+          <TopBarMoreMenu
+            voiceMicActive={voiceConnected && voiceMicGranted}
+            onHelp={() => setShowHelp(true)}
+            onStats={() => setStatsTarget({ type: "user" })}
+            onBug={() => setShowBugReport(true)}
+            onSettings={() => {
+              if (mobileView === "settings" || settingsOpen || serverSettingsId) {
+                closeServerSettings();
+                closeSettings();
+                setMobileView(prevPageDepthRef.current);
+                return;
+              }
+              if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
+              openSettings();
+              setMobileView("settings");
+            }}
+            onExtensionLibrary={
+              isInstanceAdmin ? () => setExtensionCatalogOpen(true) : undefined
+            }
+          />
+        </div>
+        {/* T003: Account button — visible on every mobile view */}
+        <button
+          onClick={() => setAccountSheetOpen(true)}
+          aria-label="Account"
+          className="btn-press flex items-center justify-center w-11 h-11 -mr-2 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+          title="Account"
+        >
+          <span className="material-symbols-outlined text-xl">account_circle</span>
+        </button>
+      </div>
+      </div>
+
+      {/* Panel navigation tabs — mouse/keyboard nav between page-depth panels */}
+      {PAGE_DEPTH.includes(mobileView as MobileView) && (
+        <div className="relative flex items-stretch bg-surface-container-low flex-shrink-0 border-b border-outline-variant/10">
+          {PAGE_DEPTH.map((view) => {
+            const meta = PAGE_PILL_META[view];
+            const isActive = mobileView === view;
+            return (
+              <button
+                key={view}
+                onClick={() => {
+                  setMobileView(view as MobileView);
+                }}
+                className={`flex-1 flex items-center justify-center gap-1 py-1 text-xs font-label transition-colors ${
+                  isActive ? "text-on-surface font-medium" : "text-on-surface-variant hover:text-on-surface"
+                }`}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>{meta.icon}</span>
+                {meta.label}
+              </button>
+            );
+          })}
+          {/* Live sliding underline — moves continuously with scroll position */}
+          <div
+            ref={tabIndicatorRef}
+            className="absolute bottom-0 h-0.5 bg-primary rounded-t-full pointer-events-none"
+            style={{ width: `${100 / PAGE_DEPTH.length}%`, willChange: "transform", transform: `translateX(${PAGE_DEPTH.indexOf(mobileView) * 100}%)` }}
+          />
+        </div>
+      )}
+
+      {/* Main content area — scroll strip is ALWAYS mounted; settings/DMs are absolute overlays */}
+      <div className="flex-1 min-h-0 overflow-hidden relative">
+        {/* Page-depth scroll strip — always mounted so scroll position is preserved across settings/DMs */}
+        <div
+          ref={scrollStripRef}
+          className="h-full flex overflow-x-auto overflow-y-hidden overscroll-x-auto"
+          style={{
+            scrollSnapType: "x mandatory",
+            scrollBehavior: "smooth",
+            WebkitOverflowScrolling: "touch",
+          }}
+          onScroll={() => { handleScrollLive(); handleScrollSnap(); }}
+        >
+          {/* Panel: Sources */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <SourcesPanel
+              mobile
+              onAddSource={openAddSource}
+              onSourceSelect={() => scrollToPanel(1)}
+              onExplore={openExplore}
+              onSourceOpen={openSourceBrowser}
+              onLocalOpen={() => {
+                openLocal();
+                scrollToPanel(1);
+              }}
+            />
+
+          </div>
+          {/* Panel: Servers */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <SectionBoundary>
+              {localActive ? (
+                <LocalServerSidebar
+                  mobile
+                  onServerSelect={() => setMobileView("channels")}
+                />
+              ) : (
+                <ServerSidebar mobile onServerSelect={() => setMobileView("channels")} />
+              )}
+            </SectionBoundary>
+          </div>
+          {/* Panel: Channels */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <SectionBoundary>
+              {localActive ? (
+                <LocalChannelSidebar
+                  mobile
+                  onChannelSelect={() => setMobileView("chat")}
+                />
+              ) : (
+                <ChannelSidebar mobile onChannelSelect={(chId) => { handleMobileChannelSelect(chId); setMobileView("chat"); }} />
+              )}
+            </SectionBoundary>
+          </div>
+          {/* Panel: Chat */}
+          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+            <div className="h-full flex flex-col min-h-0">
+              {showPlaceBanner && (
+                <PlaceVoiceBanner
+                  participants={[]}
+                  onLeave={() => { useVoiceStore.getState().disconnect(); }}
+                  onMute={() => {}}
+                  onToggleCamera={() => {}}
+                  onVideoClick={() => {}}
+                  onDismiss={() => setPlaceBannerDismissed(true)}
+                />
+              )}
+              {renderChatContent()}
+            </div>
+          </div>
+        </div>
+
+        {/* DMs overlay — absolute so the strip keeps its scroll position */}
+        {mobileView === "dms" && (
+          <div className="absolute inset-0 z-10 bg-surface">
+            <SectionBoundary>
+              <DMSidebar mobile onDMSelect={handleMobileDMSelect} />
+            </SectionBoundary>
+          </div>
+        )}
+
+        {/* Settings overlay — absolute so the strip keeps its scroll position */}
+        {mobileView === "settings" && (
+          <div className="absolute inset-0 z-10 bg-surface flex flex-col min-h-0">
+            <SettingsPanel />
+          </div>
+        )}
+
+        {/* INS-045: Left-edge tap zone — shows previous panel as tile overlay */}
+        {!(mobileView === "dms" || mobileView === "settings") && mobileView !== "sources" && mobileView !== "servers" && (
+          <div
+            className="absolute left-0 top-0 w-6 h-full z-10"
+            onPointerDown={() => {
+              const prevIdx = PAGE_DEPTH.indexOf(mobileView) - 1;
+              if (prevIdx >= 0) {
+                const prev = PAGE_DEPTH[prevIdx];
+                setLeftEdgeOverlay(prev === "sources" ? "sources" : "servers");
+              }
+            }}
+          />
+        )}
+        {leftEdgeOverlay && (
+          <div
+            className="absolute inset-0 z-20 flex items-center"
+            onPointerDown={() => setLeftEdgeOverlay(null)}
+          >
+            <div className="ml-2 rounded-2xl bg-surface-container shadow-xl border border-outline-variant/20 p-4 animate-[fadeSlideUp_0.15s_ease-out]">
+              <button
+                className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
+                onPointerDown={(e) => { e.stopPropagation(); setLeftEdgeOverlay(null); setMobileView(leftEdgeOverlay); }}
+              >
+                <span className="material-symbols-outlined text-lg">{leftEdgeOverlay === "sources" ? "hub" : "dns"}</span>
+                {leftEdgeOverlay === "sources" ? "Sources" : "Servers"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* INS-046: Right-edge tap zone — contextual shortcut tiles */}
+        {!(mobileView === "dms" || mobileView === "settings") && mobileView !== "chat" && (
+          <div
+            className="absolute right-0 top-0 w-6 h-full z-10"
+            onPointerDown={() => setRightEdgeOverlay(true)}
+          />
+        )}
+        {rightEdgeOverlay && (
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-end"
+            onPointerDown={() => setRightEdgeOverlay(false)}
+          >
+            <div className="mr-2 rounded-2xl bg-surface-container shadow-xl border border-outline-variant/20 p-4 animate-[fadeSlideUp_0.15s_ease-out] flex flex-col gap-2">
+              {mobileView === "servers" && (
+                <button
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
+                  onPointerDown={(e) => { e.stopPropagation(); setRightEdgeOverlay(false); setMobileView("channels"); }}
+                >
+                  <span className="material-symbols-outlined text-lg">tag</span>
+                  Channels
+                </button>
+              )}
+              {mobileView === "channels" && (
+                <button
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
+                  onPointerDown={(e) => { e.stopPropagation(); setRightEdgeOverlay(false); setMobileView("chat"); }}
+                >
+                  <span className="material-symbols-outlined text-lg">forum</span>
+                  Chat
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Pill collapse toggle removed — swipe up from the bottom edge raises
+          the nav, swipe down anywhere hides it. The dedicated arrow tile
+          was a vestigial second affordance that just clipped to the
+          bottom-right of the page. */}
+
+      {/* MobilePillRow removed. It implemented tabs via imperative state-
+         swapping on useServerStore / useDMStore — each pill click called
+         setState() to restore a saved snapshot. That's not "parallel
+         displays"; it's a state-mutating nav that loses React-internal
+         state (scroll positions, expanded folders, chat compose drafts)
+         on every switch. Real per-tab persistence would require
+         mounting one subtree per tab (each with store-scoping), which
+         is a separate architectural project. Per the user's call, the
+         illusion goes away rather than stay in. The horizontal scroll
+         strip above (sources/servers/channels/chat) remains because
+         IT really is parallel — all four panels are mounted
+         simultaneously and scroll position picks which is visible.
+         DMs moved to the top bar (see TopBarIconButton with chat_bubble
+         above) so this row isn't replaced with a smaller version of
+         itself. */}
+
+      {/* Mobile extension menu overlay */}
+      {extensionMenuOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center md:hidden">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setExtensionMenuOpen(false)} />
+          <div className="relative w-full mx-3 mb-3 rounded-2xl bg-surface-container border border-outline-variant/20 shadow-xl overflow-hidden safe-bottom">
+            <div className="px-4 py-3 border-b border-outline-variant/20 flex items-center justify-between">
+              <h3 className="text-sm font-headline font-semibold text-on-surface">Extensions</h3>
+              <button onClick={() => setExtensionMenuOpen(false)} className="text-on-surface-variant">
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            </div>
+            <div className="p-2 max-h-[50vh] overflow-y-auto">
+              {useExtensionStore.getState().catalog.map((ext) => {
+                const isActive = activeExtension?.extensionId === ext.id;
+                return (
+                  <div key={ext.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-surface-container-high/60 transition-colors">
+                    <span className="material-symbols-outlined text-xl text-on-surface-variant flex-shrink-0">{ext.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-label font-medium text-on-surface">{ext.name}</div>
+                      <div className="text-xs text-on-surface-variant font-label">{isActive ? `Active — hosted by ${ext.name}` : ext.description}</div>
+                    </div>
+                    {isActive ? (
+                      isExtensionHost && (
+                        <button onClick={() => { stopExtension(); setExtensionMenuOpen(false); }} className="px-2 py-1 rounded-lg text-xs font-label text-error hover:bg-error/10 transition-colors">Stop</button>
+                      )
+                    ) : (
+                      <button onClick={() => { startExtension(ext.id); setExtensionMenuOpen(false); }} className="px-2.5 py-1 rounded-lg text-xs font-label font-medium text-on-primary bg-primary hover:brightness-110 transition-all">Start</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* INS-020: Quick Actions sheet — search bar + action grid. */}
+      {/* QuickActionsSheet removed — replaced by ActionsPanel (full-screen view) */}
+
+    </div>
+  );
+
+  // Shared main content renderer (desktop)
+  const renderMainContent = () => {
+    const showInlineAccountBanner = Boolean(userId && sidebarCollapsed);
+
+    return (
+      <>
+        {/* Channel / DM header */}
+        <div className="h-12 flex items-center px-4 bg-surface-container-low flex-shrink-0 gap-2">
+          <div className="flex-1 min-w-0 flex items-center">
+            {localActive ? (
+              // Local porch header — same shape as the Matrix channel
+              // header (hashmark icon + channel name) so the visual
+              // primitive is identical.
+              <div className="flex items-center gap-3 min-w-0">
+                <h2
+                  data-testid="local-chat-header"
+                  className="font-headline font-semibold truncate"
+                >
+                  <span className="text-on-surface-variant mr-1">#</span>
+                  {porchSelectedChannel?.name ?? porchLabel}
+                </h2>
+                {showInlineAccountBanner && (
+                  <DesktopAccountButton
+                    desktopAccountRef={desktopAccountRef}
+                    open={desktopAccountPopoverOpen}
+                    userId={userId}
+                    accessToken={accessToken}
+                    onToggle={() => setDesktopAccountPopoverOpen((open) => !open)}
+                    onClose={() => setDesktopAccountPopoverOpen(false)}
+                    onOpenSettings={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      openSettings("profile");
+                    }}
+                    onOpenStats={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      setStatsTarget({ type: "user" });
+                    }}
+                  />
+                )}
+              </div>
+            ) : dmActive && dmConversation ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
+                <DMHeaderName userId={dmConversation.other_user_id} />
+                {showInlineAccountBanner && (
+                  <DesktopAccountButton
+                    desktopAccountRef={desktopAccountRef}
+                    open={desktopAccountPopoverOpen}
+                    userId={userId}
+                    accessToken={accessToken}
+                    onToggle={() => setDesktopAccountPopoverOpen((open) => !open)}
+                    onClose={() => setDesktopAccountPopoverOpen(false)}
+                    onOpenSettings={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      openSettings("profile");
+                    }}
+                    onOpenStats={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      setStatsTarget({ type: "user" });
+                    }}
+                  />
+                )}
+              </div>
+            ) : activeChannel ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <h2 className="font-headline font-semibold truncate">
+                  {isVoiceChannel ? (
+                    <span className="material-symbols-outlined text-base align-middle mr-1">volume_up</span>
+                  ) : (
+                    <span className="text-on-surface-variant mr-1">#</span>
+                  )}
+                  {activeChannel.name}
+                </h2>
+                {voiceConnected && voiceChannelType === "place" && placeBannerDismissed && (
+                  <button
+                    type="button"
+                    onClick={() => setPlaceBannerDismissed(false)}
+                    className="flex items-center gap-0.5 text-primary text-xs px-1.5 py-0.5 rounded-lg bg-primary/15 hover:bg-primary/25 transition-colors ml-1"
+                    title="Restore voice banner"
+                  >
+                    <span>◈</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                  </button>
+                )}
+                {memberCount > 0 && (
+                  <span className="text-xs text-on-surface-variant font-label">
+                    {memberCount} {memberCount === 1 ? "member" : "members"}
+                  </span>
+                )}
+                {showInlineAccountBanner && (
+                  <DesktopAccountButton
+                    desktopAccountRef={desktopAccountRef}
+                    open={desktopAccountPopoverOpen}
+                    userId={userId}
+                    accessToken={accessToken}
+                    onToggle={() => setDesktopAccountPopoverOpen((open) => !open)}
+                    onClose={() => setDesktopAccountPopoverOpen(false)}
+                    onOpenSettings={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      openSettings("profile");
+                    }}
+                    onOpenStats={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      setStatsTarget({ type: "user" });
+                    }}
+                  />
+                )}
+              </div>
+            ) : activeChannelId ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-[#5865F2] material-symbols-outlined text-base">hub</span>
+                <h2 className="font-headline font-semibold truncate">
+                  {client?.getRoom(activeChannelId)?.name ?? activeChannelId}
+                </h2>
+                {showInlineAccountBanner && (
+                  <DesktopAccountButton
+                    desktopAccountRef={desktopAccountRef}
+                    open={desktopAccountPopoverOpen}
+                    userId={userId}
+                    accessToken={accessToken}
+                    onToggle={() => setDesktopAccountPopoverOpen((open) => !open)}
+                    onClose={() => setDesktopAccountPopoverOpen(false)}
+                    onOpenSettings={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      openSettings("profile");
+                    }}
+                    onOpenStats={() => {
+                      setDesktopAccountPopoverOpen(false);
+                      setStatsTarget({ type: "user" });
+                    }}
+                  />
+                )}
+              </div>
+            ) : (
+              <span className="text-on-surface-variant font-body">
+                {!syncing || !serversLoaded ? (
+                  <span className="flex items-center gap-2">
+                    <BringingUpSplash size="inline" />
+                    {!syncing ? "Connecting..." : "Loading servers..."}
+                  </span>
+                ) : servers.length === 0 ? (
+                  "Welcome — join or create a server to get started"
+                ) : (
+                  "Select a channel"
+                )}
+              </span>
+            )}
+            {!dmActive && !activeChannelId && showInlineAccountBanner && (
+              <DesktopAccountButton
+                desktopAccountRef={desktopAccountRef}
+                open={desktopAccountPopoverOpen}
+                userId={userId}
+                accessToken={accessToken}
+                onToggle={() => setDesktopAccountPopoverOpen((open) => !open)}
+                onClose={() => setDesktopAccountPopoverOpen(false)}
+                onOpenSettings={() => {
+                  setDesktopAccountPopoverOpen(false);
+                  openSettings("profile");
+                }}
+                onOpenStats={() => {
+                  setDesktopAccountPopoverOpen(false);
+                  setStatsTarget({ type: "user" });
+                }}
+              />
+            )}
+          </div>
+          {/* INS-011: Top-bar utility icons (desktop). Mirrors the mobile
+              top-bar icons so bug report / stats / help are reachable from
+              the same place on every viewport. The ConnectedHostLabel to
+              their left shows which Concord instance this session is
+              talking to — sourced from the INS-027 serverConfig store
+              on native builds, falls back to window.location.hostname
+              on the web. */}
+          {/* Format button removed — non-functional placeholder.
+              Logout removed — lives in Settings → Profile only. */}
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            <HostingStatusButton status={hostingStatus} onClick={() => openSettings("hosting")} />
+            <TopBarMoreMenu
+              voiceMicActive={voiceConnected && voiceMicGranted}
+              showExtension={!!(activeChannel && !isVoiceChannel && !isAppChannel)}
+              onExtension={() => setExtensionMenuOpen(!extensionMenuOpen)}
+              onHelp={() => setShowHelp(true)}
+              onStats={() => setStatsTarget({ type: "user" })}
+              onBug={() => setShowBugReport(true)}
+              onSettings={() => openSettings()}
+              onExtensionLibrary={
+                isInstanceAdmin ? () => setExtensionCatalogOpen(true) : undefined
+              }
+            />
+            <TopBarIconButton
+              icon={sidebarCollapsed ? "left_panel_open" : "left_panel_close"}
+              label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              onClick={() => setSidebarCollapsed((c) => !c)}
+            />
+          </div>
+        </div>
+
+        {showPlaceBanner && (
+          <PlaceVoiceBanner
+            participants={[]}
+            onLeave={() => { useVoiceStore.getState().disconnect(); }}
+            onMute={() => {}}
+            onToggleCamera={() => {}}
+            onVideoClick={() => {}}
+            onDismiss={() => setPlaceBannerDismissed(true)}
+          />
+        )}
+
+        {/* v0.7.2: extensions no longer embed inside text channels.
+           They run as their own app channels (channel_type="app"),
+           created on demand from the Applications-section launcher
+           in ChannelSidebar (POST /servers/<id>/extensions/<id>/start)
+           and torn down via the in-pane Stop button (DELETE /channels/<id>).
+           The legacy "media top, chat bottom" split — backed by the
+           useExtension(activeRoomId) hook reading m.room.extension state
+           events — has been removed; text channels are pure chat now. */}
+        {renderChatContent()}
+      </>
+    );
+  };
+
+  // Shared chat/voice content
+  const renderChatContent = () => {
+    // Local porch chat — reuses MessageList + MessageInput so the
+    // visual surface matches every other server source.
+    if (localActive) {
+      return <LocalChatPane />;
+    }
+    // DM chat
+    if (dmActive && activeDMRoomId && dmConversation) {
+      return (
+        <>
+          <MessageList
+            messages={messages}
+            isPaginating={isPaginating}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            currentUserId={userId}
+            isServerOwner={false}
+            onDelete={deleteMessage}
+            onStartEdit={setEditingMessage}
+            onReact={sendReaction}
+            onRemoveReaction={removeReaction}
+            emptyState={emptyState}
+          />
+          <TypingIndicator typingUsers={typingUsers} />
+          {platform.isTV ? (
+            <div className="concord-tv-readonly-banner flex-shrink-0">
+              <span className="material-symbols-outlined text-base">tv</span>
+              <span className="font-body">Read-only on TV — use a phone or desktop to send messages</span>
+            </div>
+          ) : (
+            <MessageInput
+              onSend={sendMessage}
+              onSubmitEdit={editMessage}
+              onSendFile={sendFile}
+              uploading={uploading}
+              editingMessage={editingMessage}
+              onCancelEdit={() => setEditingMessage(null)}
+              onKeystroke={onKeystroke}
+              onStopTyping={onStopTyping}
+              roomName={dmConversation.other_user_id.split(":")[0].replace("@", "")}
+            />
+          )}
+        </>
+      );
+    }
+
+    // Loose joined Matrix room — active channel ID is set but the room
+    // isn't part of any loaded server/space yet. Render full chat so the
+    // user can see and send messages immediately after linking.
+    if (activeChannelId && !activeChannel) {
+      const room = client?.getRoom(activeChannelId);
+      const roomName = room?.name ?? activeChannelId;
+      const roomReady = !!room;
+      return (
+        <div className="flex-1 flex flex-col min-h-0">
+          {!roomReady && (
+            <div className="px-4 py-3 bg-primary/10 border-b border-primary/20 flex items-center gap-2 flex-shrink-0">
+              <BringingUpSplash size="inline" />
+              <span className="text-sm text-on-surface-variant">Loading room…</span>
+            </div>
+          )}
+          <MessageList
+            messages={messages}
+            isPaginating={isPaginating}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            currentUserId={userId}
+            isServerOwner={false}
+            onDelete={deleteMessage}
+            onStartEdit={setEditingMessage}
+            onReact={sendReaction}
+            onRemoveReaction={removeReaction}
+            emptyState={emptyState}
+          />
+          <TypingIndicator typingUsers={typingUsers} />
+          <MessageInput
+            onSend={sendMessage}
+            onSubmitEdit={editMessage}
+            onSendFile={sendFile}
+            uploading={uploading}
+            editingMessage={editingMessage}
+            onCancelEdit={() => setEditingMessage(null)}
+            onKeystroke={onKeystroke}
+            onStopTyping={onStopTyping}
+            roomName={roomName}
+          />
+        </div>
+      );
+    }
+
+    // App channel — renders the linked extension full-screen, no chat UI.
+    // Stop button at the top deletes this app channel server-side
+    // (DELETE /servers/<id>/channels/<id> — any member can stop an
+    // app channel they or anyone else started, see servers.delete_channel
+    // docstring). On success we route the user back to the server's
+    // first text channel so they don't end up staring at a 404.
+    if (activeChannelId && activeChannel && isAppChannel) {
+      const appExt = activeChannel.extension_id
+        ? extensionCatalog.find((e) => e.id === activeChannel.extension_id)
+        : null;
+      const handleStopAppChannel = async () => {
+        if (!accessToken || !activeServerId || !activeChannel) return;
+        try {
+          await deleteChannelStore(activeServerId, activeChannel.id, accessToken);
+          // Hop back to the server's first non-app channel so we don't
+          // sit on a deleted-channel ID.
+          const survivor = servers
+            .find((s) => s.id === activeServerId)
+            ?.channels.find((c) => c.id !== activeChannel.id && c.channel_type !== "app");
+          if (survivor) setActiveChannelId(survivor.matrix_room_id);
+        } catch (err) {
+          addToast(
+            err instanceof Error ? err.message : "Failed to stop application",
+            "error",
+          );
+        }
+      };
+      if (appExt) {
+        return (
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="h-10 flex items-center justify-between px-3 bg-surface-container-low border-b border-outline-variant/20 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="material-symbols-outlined text-base text-primary">extension</span>
+                <span className="text-sm font-headline font-semibold truncate text-on-surface">
+                  {appExt.name}
+                </span>
+                <span className="text-xs text-on-surface-variant font-label truncate">
+                  · running on {activeChannel.name}
+                </span>
+              </div>
+              <button
+                onClick={() => void handleStopAppChannel()}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-label text-error hover:bg-error/10 transition-colors flex-shrink-0"
+                title="Stop application and delete this channel"
+              >
+                <span className="material-symbols-outlined text-sm">stop_circle</span>
+                Stop
+              </button>
+            </div>
+            <ExtensionEmbed
+              url={appExt.url}
+              extensionName={appExt.name}
+              hostUserId={userId ?? ""}
+              isHost={false}
+              onStop={handleStopAppChannel}
+              // INS-066-FUP-A: wire SDK channels to live matrix-js-sdk room.
+              // `manifestPermissions` gates concord:state_event delivery
+              // and extension:send_state_event acceptance fail-closed —
+              // legacy static-catalog entries surface as `[]`, so they
+              // can neither receive nor send state events without an
+              // explicit manifest declaration. `roomId` + bridge come
+              // from the active matrix room; if either is missing the
+              // shell silently degrades to no-op (graceful path tested
+              // in state_event_roundtrip).
+              manifestPermissions={appExt.permissions ?? []}
+              {...(activeChannelId ? { roomId: activeChannelId } : {})}
+              {...(extensionBridge
+                ? {
+                    subscribeRoomEvents: extensionBridge.subscribeRoomEvents,
+                    onSendStateEvent: extensionBridge.onSendStateEvent,
+                  }
+                : {})}
+            />
+          </div>
+        );
+      }
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center space-y-2">
+            <span className="material-symbols-outlined text-3xl text-on-surface-variant">extension_off</span>
+            <p className="text-on-surface-variant text-sm font-body">Extension not found in catalog</p>
+            <p className="text-on-surface-variant/50 text-xs font-label">
+              The extension installed for this channel is unavailable.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Server channel chat
+    if (activeChannelId && activeChannel) {
+      // Rules gate — shown to members who haven't accepted the server rules.
+      // Only blocks text channels; voice channels are never gated.
+      if (!isVoiceChannel && activeServerRulesText && !rulesAccepted) {
+        return (
+          <RulesGate
+            rulesText={activeServerRulesText}
+            onAccept={() => {
+              if (userId && activeServerId) {
+                localStorage.setItem(rulesAcceptedKey(userId, activeServerId), "1");
+              }
+              setRulesAccepted(true);
+            }}
+          />
+        );
+      }
+
+      if (isVoiceChannel) {
+        return (
+          <VoiceChannel
+            roomId={activeChannelId}
+            channelName={activeChannel.name}
+            serverId={activeServerId!}
+            onOpenSettings={(tab) => {
+              if (PAGE_DEPTH.includes(mobileView)) prevPageDepthRef.current = mobileView;
+              openSettings(tab);
+              setMobileView("settings");
+            }}
+          />
+        );
+      }
+      return (
+        <>
+          <MessageList
+            messages={messages}
+            isPaginating={isPaginating}
+            hasMore={hasMore}
+            onLoadMore={loadMore}
+            currentUserId={userId}
+            isServerOwner={isOwner}
+            onDelete={deleteMessage}
+            onStartEdit={setEditingMessage}
+            onReact={sendReaction}
+            onRemoveReaction={removeReaction}
+            emptyState={emptyState}
+          />
+          <TypingIndicator typingUsers={typingUsers} />
+          {platform.isTV ? (
+            <div className="concord-tv-readonly-banner flex-shrink-0">
+              <span className="material-symbols-outlined text-base">tv</span>
+              <span className="font-body">Read-only on TV — use a phone or desktop to send messages</span>
+            </div>
+          ) : (
+            <MessageInput
+              onSend={sendMessage}
+              onSubmitEdit={editMessage}
+              onSendFile={activeServer?.media_uploads_enabled !== false ? sendFile : undefined}
+              uploading={uploading}
+              editingMessage={editingMessage}
+              onCancelEdit={() => setEditingMessage(null)}
+              onKeystroke={onKeystroke}
+              onStopTyping={onStopTyping}
+              roomName={activeChannel.name}
+            />
+          )}
+        </>
+      );
+    }
+
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        {!syncing || !serversLoaded ? (
+          <BringingUpSplash
+            size="compact"
+            status={!syncing ? "Connecting…" : "Loading your servers…"}
+          />
+        ) : servers.length === 0 ? (
+          <OnboardingGuide />
+        ) : (
+          <div className="text-center space-y-2">
+            <p className="text-on-surface-variant font-body">Select a channel to start chatting</p>
+            <p className="text-on-surface-variant/50 text-sm font-label">
+              Pick a text or voice channel from the sidebar
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // TV layout — three-pane desktop layout with DPAD focus attributes.
+  // Uses the same three-pane approach as desktop but adds data-focusable
+  // and data-focus-group attributes for the DPAD nav hook, plus the TV
+  // capability banner for voice channels.
+  const renderTVLayout = () => (
+    <div className="h-full w-full min-h-0 min-w-0 flex overflow-hidden bg-surface text-on-surface tv-layout" data-concord-layout="tv">
+      {/* Server sidebar — TV: icon-only rail with focus targets */}
+      <SectionBoundary>
+        <div data-focus-group="tv-main">
+          <ServerSidebar />
+        </div>
+      </SectionBoundary>
+
+      {/* Channel sidebar */}
+      <div className="flex min-h-0 tv-channel-sidebar" style={{ width: 320, minWidth: 200 }}>
+        <SectionBoundary>
+          <div className="w-full" data-focus-group="tv-main">
+            {dmActive ? <DMSidebar /> : <ChannelSidebar />}
+          </div>
+        </SectionBoundary>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 tv-content">
+        {/* TV capability banner — voice/video unavailable */}
+        {isTV && isVoiceChannel && !tvBannerDismissed && (
+          <div className="tv-capability-banner" role="alert">
+            <span className="material-symbols-outlined tv-capability-banner-icon">volume_off</span>
+            <span>Voice and video channels are not available on TV devices. Text chat works normally.</span>
+            <button
+              className="tv-capability-banner-dismiss"
+              onClick={() => setTvBannerDismissed(true)}
+              aria-label="Dismiss"
+              data-focusable="true"
+              data-focus-group="tv-main"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        )}
+        <div data-focus-group="tv-main">
+          {renderMainContent()}
+        </div>
+      </div>
+    </div>
+  );
+
+  // INS-020: iPad explicitly renders the desktop three-pane layout so
+  // the native iOS Tauri build gets the tablet UX regardless of CSS
+  // breakpoints. Non-iPad clients use the existing Tailwind `md:`
+  // split that already handles desktop browsers and phones.
+  return (
+    <>
+      {isTV ? (
+        // TV — three-pane with DPAD navigation and capability banners.
+        renderTVLayout()
+      ) : prefersTabletLayout ? (
+        // iPad native — always three-pane, regardless of viewport width.
+        <div className="h-full w-full min-h-0 min-w-0" data-concord-layout="tablet">
+          {renderDesktopLayout()}
+        </div>
+      ) : (
+        <>
+          {/* Desktop */}
+          <div className="hidden md:block h-full w-full min-h-0 min-w-0" data-concord-layout="desktop">
+            {renderDesktopLayout()}
+          </div>
+          {/* Mobile */}
+          <div className="md:hidden h-full w-full min-h-0 min-w-0" data-concord-layout="mobile">
+            {renderMobileLayout()}
+          </div>
+        </>
+      )}
+
+      {showBugReport && <BugReportModal onClose={() => setShowBugReport(false)} />}
+      {statsTarget && (
+        <StatsModal
+          onClose={() => setStatsTarget(null)}
+          serverId={statsTarget.type === "server" ? statsTarget.serverId : undefined}
+        />
+      )}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      <ExtensionMenu
+        open={extensionMenuOpen}
+        onClose={() => setExtensionMenuOpen(false)}
+        activeExtension={activeExtension}
+        onStart={startExtension}
+        onStop={stopExtension}
+        isHost={isExtensionHost}
+        anchorRef={extensionBtnRef}
+      />
+      {accountSheetOpen && (
+        <AccountSheet
+          userId={userId}
+          onClose={() => setAccountSheetOpen(false)}
+        />
+      )}
+      {/* INS-020: Add Source modal — shared between mobile + desktop native */}
+      {addSourceOpen && (
+        <AddSourceModal
+          initialScreen={addSourceInitialScreen}
+          onClose={() => {
+            setAddSourceOpen(false);
+            setAddSourceInitialScreen(null);
+          }}
+          onSourceAdded={() => {
+            setAddSourceOpen(false);
+            setAddSourceInitialScreen(null);
+            if (scrollStripRef.current) scrollToPanel(1);
+          }}
+        />
+      )}
+      {/* Source browser — opened by clicking a source tile */}
+      {sourceBrowserSourceId && (() => {
+        const source = sources.find((s) => s.id === sourceBrowserSourceId);
+        return (
+          <SourceServerBrowser
+            source={source}
+            onClose={() => setSourceBrowserSourceId(null)}
+          />
+        );
+      })()}
+      {/* INS-070: admin-only Extension Library modal — surfaced from
+          the Tools dropdown so installs are one click instead of
+          two-clicks-deep in Settings → Admin → Extensions. */}
+      {extensionCatalogOpen && (
+        <ExtensionCatalogModal onClose={() => setExtensionCatalogOpen(false)} />
+      )}
+      {/* Room diagnostics popup — opened from the small wrench button
+          in the empty-channel placeholder. The verbose binding /
+          history-access report no longer renders inline; only users
+          who actually want to debug a broken room see it. */}
+      {diagnosticsPopupOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setDiagnosticsPopupOpen(false)}
+        >
+          <div
+            className="relative max-w-2xl w-full max-h-[80vh] overflow-y-auto rounded-2xl border border-outline-variant/30 bg-surface-container shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 flex items-center justify-between px-5 py-3 border-b border-outline-variant/20 bg-surface-container">
+              <h3 className="text-base font-headline font-semibold text-on-surface">Room diagnostics</h3>
+              <button
+                type="button"
+                onClick={() => setDiagnosticsPopupOpen(false)}
+                aria-label="Close diagnostics"
+                className="text-on-surface-variant hover:text-on-surface transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              {roomDiagnosticsLoading && (
+                <div className="text-left">
+                  <p className="text-sm font-medium text-on-surface">No messages loaded yet</p>
+                  <p className="mt-2 text-xs text-on-surface-variant">
+                    Inspecting room binding and homeserver history access for {activeRoomId}.
+                  </p>
+                </div>
+              )}
+              {!roomDiagnosticsLoading && roomDiagnostics && (
+                <div className="text-left">
+                  <p className="text-xs text-on-surface-variant break-all">
+                    room: {roomDiagnostics.room_id}
+                  </p>
+                  <p className="mt-1 text-sm text-on-surface-variant">
+                    {roomDiagnostics.summary}
+                  </p>
+                  <p className="mt-2 text-xs text-on-surface-variant">
+                    inference: {roomDiagnostics.inference}
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {roomDiagnostics.steps.map((step) => (
+                      <div
+                        key={step.step}
+                        className="rounded-md border border-outline-variant/15 bg-surface px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className={step.ok ? "text-[#4ade80]" : "text-[#f87171]"}>
+                            {step.ok ? "OK" : "FAIL"}
+                          </span>
+                          <span className="font-medium text-on-surface">{step.step}</span>
+                          <span className="text-on-surface-variant">
+                            {step.status ?? "no-status"}
+                          </span>
+                        </div>
+                        {step.detail && (
+                          <p className="mt-1 text-[11px] text-on-surface-variant break-all">
+                            {step.detail}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ── Source Server Browser ── */
+// Exported (in addition to its primary use inside ChatLayout below) so
+// INS-068 cross-instance directory tests can mount it standalone.
+export function SourceServerBrowser({
+  source,
+  onClose,
+}: {
+  source?: ConcordSource;
+  onClose: () => void;
+}) {
+  const servers = useServerStore((s) => s.servers);
+  const loadServers = useServerStore((s) => s.loadServers);
+  const setActiveServer = useServerStore((s) => s.setActiveServer);
+  const setDMActive = useDMStore((s) => s.setDMActive);
+  const client = useAuthStore((s) => s.client);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const userId = useAuthStore((s) => s.userId);
+  const addToast = useToastStore((s) => s.addToast);
+  const updateSource = useSourcesStore((s) => s.updateSource);
+  const label = source?.instanceName ?? source?.host ?? "Source";
+  const sourceBrand = inferSourceBrand({
+    platform: source?.platform,
+    host: source?.host,
+    instanceName: source?.instanceName,
+    serverName: source?.serverName,
+  });
+  const [publicRooms, setPublicRooms] = useState<IPublicRoomsChunkRoom[]>([]);
+  const [publicRoomsLoading, setPublicRoomsLoading] = useState(false);
+  const [publicRoomsError, setPublicRoomsError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
+
+  // Only show servers whose rooms belong to this source's host
+  const sourceServers = useMemo(
+    () =>
+      servers.filter((server) => {
+        if (server.federated) return false;
+        const roomId = server.channels?.[0]?.matrix_room_id ?? "";
+        const roomHost = roomId.split(":")[1]?.toLowerCase() ?? "";
+        return !!source && sourceMatchesMatrixDomain(source, roomHost);
+      }),
+    [servers, source],
+  );
+
+  useEffect(() => {
+    // INS-068: Concord-instance sources also expose a Matrix public-room
+    // directory (their homeserver is Matrix-compatible). The only
+    // platform that has no Matrix room directory at all is Reticulum.
+    if (!source || source.platform === "reticulum" || source.authFlows?.length) return;
+    let cancelled = false;
+    import("../../api/matrix")
+      .then(({ fetchLoginFlows }) => fetchLoginFlows(source.homeserverUrl))
+      .then((flows) => {
+        if (!cancelled) updateSource(source.id, { authFlows: flows, authError: undefined });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [source, updateSource]);
+
+  const loadSourceDirectory = useCallback(async () => {
+    // INS-068: skip only Reticulum — concord/matrix both have a Matrix
+    // public-room directory the federated `publicRooms` call can target.
+    if (!source || source.platform === "reticulum") return;
+    setPublicRoomsLoading(true);
+    setPublicRoomsError(null);
+    setAuthRequired(false);
+    try {
+      const sdk = await import("matrix-js-sdk");
+      const browseClient =
+        source.accessToken && source.userId && source.deviceId
+          ? sdk.createClient({
+              baseUrl: source.homeserverUrl,
+              accessToken: source.accessToken,
+              userId: source.userId,
+              deviceId: source.deviceId,
+            })
+          : sdk.createClient({ baseUrl: source.homeserverUrl });
+      const localDomain = userId?.split(":")[1]?.toLowerCase() ?? null;
+      const useLocalDirectory =
+        localDomain != null && sourceMatchesMatrixDomain(source, localDomain);
+      const response = await browseClient.publicRooms(
+        useLocalDirectory
+          ? { limit: 50 }
+          : {
+              server: source.serverName ?? source.host,
+              limit: 50,
+            },
+      );
+      setPublicRooms(
+        [...(response.chunk ?? [])].sort((a, b) =>
+          (b.num_joined_members ?? 0) - (a.num_joined_members ?? 0),
+        ),
+      );
+      updateSource(source.id, { authError: undefined });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load public rooms";
+      setPublicRoomsError(message);
+      setAuthRequired(
+        /M_FORBIDDEN|M_UNKNOWN_TOKEN|401|403|restricted|forbidden|unknown token/i.test(
+          message,
+        ),
+      );
+      updateSource(source.id, {
+        authError: message,
+        status: source.accessToken ? "error" : "disconnected",
+      });
+    } finally {
+      setPublicRoomsLoading(false);
+    }
+  }, [source, updateSource, userId]);
+
+  useEffect(() => {
+    // INS-068: load directory for both concord and matrix sources;
+    // skip only reticulum (no Matrix directory).
+    if (!source || source.platform === "reticulum") return;
+    loadSourceDirectory();
+  }, [source?.id, source?.platform, loadSourceDirectory]);
+
+  const handlePasswordLogin = useCallback(async () => {
+    if (!source || !authUsername.trim() || !authPassword) return;
+    setAuthBusy(true);
+    setPublicRoomsError(null);
+    try {
+      const { loginWithPasswordAtBaseUrl } = await import("../../api/matrix");
+      const session = await loginWithPasswordAtBaseUrl(
+        source.homeserverUrl,
+        authUsername.trim(),
+        authPassword,
+      );
+      updateSource(source.id, {
+        accessToken: session.accessToken,
+        userId: session.userId,
+        deviceId: session.deviceId,
+        authError: undefined,
+        status: "connected",
+      });
+      setAuthPassword("");
+      addToast(`Connected ${label}`, "success");
+      await loadSourceDirectory();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sign in";
+      setPublicRoomsError(message);
+      updateSource(source.id, { authError: message, status: "error" });
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [addToast, authPassword, authUsername, label, loadSourceDirectory, source, updateSource]);
+
+  const handleSsoLogin = useCallback(async () => {
+    if (!source) return;
+    const { buildSsoRedirectUrl } = await import("../../api/matrix");
+    const redirectUrl = new URL(window.location.href);
+    redirectUrl.searchParams.delete("loginToken");
+    redirectUrl.searchParams.set("source_sso", "1");
+    writePendingSourceSso({
+      sourceId: source.id,
+      homeserverUrl: source.homeserverUrl,
+    });
+    window.location.assign(
+      buildSsoRedirectUrl(source.homeserverUrl, redirectUrl.toString()),
+    );
+  }, [source]);
+
+  const handleJoinRoom = useCallback(
+    async (room: IPublicRoomsChunkRoom) => {
+      if (!client || !source) return;
+      const target = room.canonical_alias ?? room.room_id;
+      const viaServer =
+        room.canonical_alias?.split(":")[1] ??
+        room.room_id.split(":")[1] ??
+        source.serverName ??
+        source.host;
+      setJoiningRoomId(room.room_id);
+      try {
+        const localDomain = userId?.split(":")[1]?.toLowerCase() ?? null;
+        const joinOptions =
+          localDomain && viaServer.toLowerCase() === localDomain
+            ? {}
+            : { viaServers: [viaServer] };
+        await client.joinRoom(target, joinOptions);
+        if (accessToken) await loadServers(accessToken);
+        addToast(`Connected ${room.name ?? target}`, "success");
+        onClose();
+      } catch (err) {
+        addToast(err instanceof Error ? err.message : "Failed to connect room", "error");
+      } finally {
+        setJoiningRoomId(null);
+      }
+    },
+    [accessToken, addToast, client, loadServers, onClose, source, userId],
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md mx-4 bg-surface-container rounded-2xl border border-outline-variant/20 shadow-2xl p-6 max-h-[85vh] flex flex-col">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-9 h-9 rounded-xl bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+            <SourceBrandIcon
+              brand={sourceBrand}
+              size={20}
+              className={sourceBrand === "matrix" ? "text-on-surface" : undefined}
+            />
+          </div>
+          <h2 className="flex-1 text-lg font-headline font-semibold text-on-surface">{label}</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-lg">close</span>
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
+          <div className="space-y-5">
+            {source?.platform === "matrix" && (
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/60 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-on-surface">
+                      {source.userId ? `Signed in as ${source.userId}` : "Source login"}
+                    </p>
+                    <p className="mt-1 text-xs text-on-surface-variant break-all">
+                      {source.serverName ?? source.host} via {source.homeserverUrl}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadSourceDirectory}
+                    disabled={publicRoomsLoading}
+                    className="px-3 py-1.5 rounded-lg bg-surface text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest text-xs transition-colors disabled:opacity-40"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {(authRequired || !source.accessToken) && (
+                  <div className="mt-4 space-y-3">
+                    <p className="text-xs text-on-surface-variant">
+                      This source can browse more rooms after you sign in. Concord still joins rooms through your current Concord session.
+                    </p>
+                    {(source.authFlows ?? []).includes("password") && (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={authUsername}
+                          onChange={(event) => setAuthUsername(event.target.value)}
+                          placeholder="Matrix username"
+                          className="w-full px-3 py-2 bg-surface rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                        />
+                        <input
+                          type="password"
+                          value={authPassword}
+                          onChange={(event) => setAuthPassword(event.target.value)}
+                          placeholder="Password"
+                          className="w-full px-3 py-2 bg-surface rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={handlePasswordLogin}
+                          disabled={authBusy || !authUsername.trim() || !authPassword}
+                          className="w-full py-2 rounded-lg bg-primary text-on-primary text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                        >
+                          {authBusy ? "Signing in..." : "Sign in with password"}
+                        </button>
+                      </div>
+                    )}
+                    {(source.authFlows ?? []).includes("sso") && (
+                      <button
+                        type="button"
+                        onClick={handleSsoLogin}
+                        className="w-full py-2 rounded-lg bg-secondary/15 text-secondary text-sm font-medium hover:bg-secondary/20 transition-colors"
+                      >
+                        Continue with SSO
+                      </button>
+                    )}
+                  </div>
+                )}
+                {publicRoomsError && (
+                  <p className="mt-3 text-xs text-error">{publicRoomsError}</p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                  Connected in Concord
+                </p>
+                <span className="text-xs text-on-surface-variant">
+                  {sourceServers.length}
+                </span>
+              </div>
+              {sourceServers.length === 0 ? (
+                <p className="text-sm text-on-surface-variant text-center py-4">No connected rooms yet</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {sourceServers.map((srv) => (
+                    <button
+                      key={srv.id}
+                      onClick={() => {
+                        setDMActive(false);
+                        setActiveServer(srv.id);
+                        onClose();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-primary/10 text-left group transition-colors"
+                    >
+                      <span className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold flex-shrink-0">
+                        {srv.abbreviation || srv.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="text-sm text-on-surface group-hover:text-primary transition-colors">
+                        {srv.name}
+                      </span>
+                      <span className="text-xs text-on-surface-variant ml-auto">{srv.channels.length} ch</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {source?.platform === "matrix" && (
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                    Public rooms
+                  </p>
+                  <span className="text-xs text-on-surface-variant">
+                    {publicRoomsLoading ? "Loading..." : publicRooms.length}
+                  </span>
+                </div>
+                {publicRoomsLoading ? (
+                  <p className="text-sm text-on-surface-variant text-center py-6">Loading rooms…</p>
+                ) : publicRooms.length === 0 ? (
+                  <p className="text-sm text-on-surface-variant text-center py-6">
+                    {publicRoomsError ? "Directory unavailable" : "No public rooms returned"}
+                  </p>
+                ) : (
+                  <div className="space-y-0.5">
+                    {publicRooms.map((room) => (
+                      <button
+                        key={room.room_id}
+                        onClick={() => handleJoinRoom(room)}
+                        disabled={joiningRoomId === room.room_id}
+                        className="w-full flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-secondary/10 text-left group transition-colors disabled:opacity-50"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-secondary/12 ring-1 ring-secondary/20 flex items-center justify-center text-secondary text-xs font-bold flex-shrink-0">
+                          {(room.name ?? "#").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm text-on-surface group-hover:text-secondary transition-colors block truncate">
+                            {room.name ?? room.canonical_alias ?? room.room_id}
+                          </span>
+                          <span className="text-[11px] text-on-surface-variant block truncate">
+                            {room.canonical_alias ?? room.room_id}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-on-surface-variant flex-shrink-0">
+                          {joiningRoomId === room.room_id
+                            ? "Connecting..."
+                            : `${room.num_joined_members ?? 0}`}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ── Mobile Nav Items (shared by pill row + full sheet) ── */
+// Page-depth hierarchy for swipe navigation. Swiping left goes deeper,
+// swiping right goes back (matching iOS back-gesture convention).
+// Native apps have an extra "sources" panel at the shallowest depth.
+const PAGE_DEPTH: MobileView[] = ["sources", "servers", "channels", "chat"];
+
+// Icon + label for the "Page" pill, contextual to the current depth.
+const PAGE_PILL_META: Record<string, { icon: string; label: string }> = {
+  sources: { icon: "hub", label: "Sources" },
+  servers: { icon: "dns", label: "Servers" },
+  channels: { icon: "tag", label: "Channels" },
+  chat: { icon: "forum", label: "Chat" },
+};
+
+
+// ActionsPanel and QuickActionButton removed (INS-041).
+
+/* ── Add Source Modal (INS-020) ──
+   Full-screen modal for connecting to a new Concord instance.
+   Step 1: Enter domain + invite token.
+   Step 2: Validate token against the instance.
+   Step 3: Show login/register form scoped to that instance.
+   Step 4: On success, add the source and close. */
+export function AddSourceModal({
+  initialScreen,
+  onClose,
+  onSourceAdded,
+}: {
+  initialScreen?: string | null;
+  onClose: () => void;
+  onSourceAdded: () => void;
+}) {
+  type Screen =
+    | "address"
+    | "pick"
+    | "concord"
+    | "matrix"
+    | "matrix-auth"
+    | "reticulum"
+    | "pair-peer"
+    | "validating"
+    | "error";
+
+  // Only honor an `initialScreen` value that this modal actually owns
+  // (e.g. "pair-peer", "concord", "matrix"). Domain hints like
+  // "matrix.org" or "chat.mozilla.org" are handled by callers as a
+  // shortcut to open the modal — they don't map to a screen here, so we
+  // fall back to "address" (the unified detection screen) for them.
+  // Avoids surfacing an unknown-screen blank state. Feature F2 made
+  // "address" the default landing, with "pick" reachable via the
+  // "More options" link in case the user wants to bypass detection.
+  const KNOWN_SCREENS: ReadonlySet<Screen> = new Set([
+    "address",
+    "pick",
+    "concord",
+    "matrix",
+    "reticulum",
+    "pair-peer",
+  ]);
+  const startScreen: Screen =
+    initialScreen && KNOWN_SCREENS.has(initialScreen as Screen)
+      ? (initialScreen as Screen)
+      : "address";
+  const [screen, setScreen] = useState<Screen>(startScreen);
+  const [error, setError] = useState("");
+
+  // Feature F2 — unified address screen. The user types one thing and
+  // we figure out which protocol it is. The detection sub-state lives
+  // beside the existing per-protocol form state so each screen keeps
+  // its own self-contained inputs (back-navigation preserves drafts).
+  const [addressInput, setAddressInput] = useState("");
+  const [detectPhase, setDetectPhase] = useState<
+    "idle" | "inspect" | "probe-concord" | "probe-matrix"
+  >("idle");
+
+  // Concord form state
+  const [host, setHost] = useState("");
+  const [token, setToken] = useState("");
+
+  // Matrix form state
+  const [matrixHost, setMatrixHost] = useState("");
+  const [matrixUsername, setMatrixUsername] = useState("");
+  const [matrixPassword, setMatrixPassword] = useState("");
+  const [matrixDraft, setMatrixDraft] = useState<MatrixSourceDraft | null>(null);
+
+  // Reticulum form state
+  const [reticulumDest, setReticulumDest] = useState("");
+  const [reticulumName, setReticulumName] = useState("");
+
+  const addSource = useSourcesStore((s) => s.addSource);
+  const updateSource = useSourcesStore((s) => s.updateSource);
+  const sources = useSourcesStore((s) => s.sources);
+  const resumeHandled = useRef(false);
+
+  useEffect(() => {
+    if (resumeHandled.current) return;
+    const pending = readPendingSourceSso();
+    const loginToken = new URLSearchParams(window.location.search).get("loginToken");
+    if (!pending || !loginToken) return;
+    resumeHandled.current = true;
+    setScreen("validating");
+    import("../../api/matrix")
+      .then(({ loginWithTokenAtBaseUrl }) =>
+        loginWithTokenAtBaseUrl(pending.homeserverUrl, loginToken),
+      )
+      .then((session) => {
+        updateSource(pending.sourceId, {
+          accessToken: session.accessToken,
+          userId: session.userId,
+          deviceId: session.deviceId,
+          authError: undefined,
+          status: "connected",
+        });
+        clearPendingSourceSso();
+        clearPendingSourceSsoQueryParams();
+        onSourceAdded();
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "Source login failed";
+        updateSource(pending.sourceId, { authError: message, status: "error" });
+        clearPendingSourceSso();
+        clearPendingSourceSsoQueryParams();
+        setError(message);
+        setScreen("error");
+      });
+  }, [onSourceAdded, updateSource]);
+
+  /**
+   * Feature F2 — run unified address detection, then route to the
+   * correct protocol-specific screen. We pre-populate the destination
+   * screen's form state so the user doesn't have to retype the address
+   * (e.g. detecting `matrix.org` lands them in matrix-auth with the
+   * homeserver field already filled). Unknown → fall back to the
+   * legacy picker with the address pre-filled so the user can pick a
+   * protocol manually without losing what they typed.
+   *
+   * Detection is purely a routing step: the actual well-known fetch
+   * + login flow still happens via the existing per-screen handlers
+   * once we land on `concord` / `matrix-auth` / `pair-peer`. This
+   * keeps the wire-level discovery logic in one place (`api/wellKnown`)
+   * and avoids duplicating the well-known parse across two callsites.
+   */
+  const handleDetectAddress = async () => {
+    const trimmed = addressInput.trim();
+    if (!trimmed) return;
+    setDetectPhase("inspect");
+    setScreen("validating");
+    try {
+      const { detectAddressKind } = await import("../../lib/detectAddress");
+      const verdict = await detectAddressKind(trimmed, {
+        onProgress: (phase) => setDetectPhase(phase),
+      });
+      switch (verdict.kind) {
+        case "concord-http":
+          setHost(verdict.host);
+          setToken("");
+          setScreen("concord");
+          break;
+        case "matrix":
+          await handleDiscoverPresetMatrix(verdict.host);
+          break;
+        case "concord-p2p":
+          setScreen("pair-peer");
+          break;
+        case "unknown":
+          // Pre-fill both possible destinations so the manual picker
+          // user just has to click "Concord" or "Matrix" and continue.
+          setHost(verdict.host);
+          setMatrixHost(verdict.host);
+          setError(verdict.detail);
+          setScreen("pick");
+          break;
+        case "invalid":
+          setError(verdict.detail);
+          setScreen("error");
+          break;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Detection failed");
+      setScreen("error");
+    } finally {
+      setDetectPhase("idle");
+    }
+  };
+
+  const handleConnectConcord = async () => {
+    const trimmed = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!trimmed) { setError("Enter a hostname"); setScreen("error"); return; }
+    setScreen("validating");
+    try {
+      const { discoverHomeserver } = await import("../../api/wellKnown");
+      const config = await discoverHomeserver(trimmed);
+      // Validate invite token only when one was provided. Instances with
+      // open registration (or that the user will log into separately) can
+      // be added with domain-only discovery.
+      if (token.trim()) {
+        const validateUrl = `${config.api_base}/invites/validate/${encodeURIComponent(token.trim())}`;
+        const validateRes = await fetch(validateUrl, { credentials: "omit" });
+        if (!validateRes.ok) throw new Error("Token validation failed");
+        const validation = await validateRes.json();
+        if (!validation.valid) throw new Error("Invalid or expired invite token");
+      }
+      addSource({
+        host: trimmed,
+        instanceName: config.instance_name,
+        inviteToken: token.trim(),
+        apiBase: config.api_base,
+        homeserverUrl: config.homeserver_url,
+        status: "connected",
+        enabled: true,
+        platform: "concord",
+        branding: config.branding,
+      });
+      onSourceAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't reach that host");
+      setScreen("error");
+    }
+  };
+
+  const handleDiscoverMatrix = async () => {
+    const trimmed = matrixHost.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!trimmed) {
+      setError("Enter a Matrix homeserver");
+      setScreen("error");
+      return;
+    }
+    setScreen("validating");
+    try {
+      const [{ discoverHomeserver }, { fetchLoginFlows }] = await Promise.all([
+        import("../../api/wellKnown"),
+        import("../../api/matrix"),
+      ]);
+      const config = await discoverHomeserver(trimmed);
+      const flows = await fetchLoginFlows(config.homeserver_url);
+      setMatrixDraft(buildMatrixSourceDraft(trimmed, config, flows));
+      setMatrixUsername("");
+      setMatrixPassword("");
+      setScreen("matrix-auth");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't reach that homeserver");
+      setScreen("error");
+    }
+  };
+
+  const handleDiscoverPresetMatrix = async (presetHost: string) => {
+    setMatrixHost(presetHost);
+    const trimmed = presetHost.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!trimmed) return;
+    setScreen("validating");
+    try {
+      const [{ discoverHomeserver }, { fetchLoginFlows }] = await Promise.all([
+        import("../../api/wellKnown"),
+        import("../../api/matrix"),
+      ]);
+      const config = await discoverHomeserver(trimmed);
+      const flows = await fetchLoginFlows(config.homeserver_url);
+      setMatrixDraft(buildMatrixSourceDraft(trimmed, config, flows));
+      setMatrixUsername("");
+      setMatrixPassword("");
+      setScreen("matrix-auth");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't reach that homeserver");
+      setScreen("error");
+    }
+  };
+
+  const handleMatrixPasswordLogin = async () => {
+    if (!matrixDraft || !matrixUsername.trim() || !matrixPassword) return;
+    setScreen("validating");
+    try {
+      const { loginWithPasswordAtBaseUrl } = await import("../../api/matrix");
+      const session = await loginWithPasswordAtBaseUrl(
+        matrixDraft.homeserverUrl,
+        matrixUsername.trim(),
+        matrixPassword,
+      );
+      upsertMatrixSourceRecord({
+        sources,
+        addSource,
+        updateSource,
+        draft: matrixDraft,
+        session,
+      });
+      onSourceAdded();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Source login failed";
+      setError(message);
+      setScreen("error");
+    }
+  };
+
+  const handleMatrixSsoLogin = async () => {
+    if (!matrixDraft) return;
+    try {
+      const { buildSsoRedirectUrl } = await import("../../api/matrix");
+      const sourceId = upsertMatrixSourceRecord({
+        sources,
+        addSource,
+        updateSource,
+        draft: matrixDraft,
+      });
+      writePendingSourceSso({
+        sourceId,
+        homeserverUrl: matrixDraft.homeserverUrl,
+      });
+      const redirectUrl = new URL(window.location.href);
+      redirectUrl.searchParams.delete("loginToken");
+      redirectUrl.searchParams.set("source_sso", "1");
+      window.location.assign(
+        buildSsoRedirectUrl(matrixDraft.homeserverUrl, redirectUrl.toString()),
+      );
+    } catch (err) {
+      clearPendingSourceSso();
+      setError(err instanceof Error ? err.message : "Unable to start SSO");
+      setScreen("error");
+    }
+  };
+
+  const back = () => setScreen("pick");
+
+  // Shared close button header
+  const Header = ({ title, onBack }: { title: string; onBack?: () => void }) => (
+    <div className="flex items-center gap-3 mb-6">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+        >
+          <span className="material-symbols-outlined text-lg">arrow_back</span>
+        </button>
+      )}
+      <h2 className="flex-1 text-lg font-headline font-semibold text-on-surface">{title}</h2>
+      <button
+        onClick={onClose}
+        className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors"
+      >
+        <span className="material-symbols-outlined text-lg">close</span>
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full sm:max-w-sm sm:mx-4 bg-surface-container rounded-t-2xl sm:rounded-2xl border border-outline-variant/20 shadow-2xl p-4 sm:p-6 max-h-[88vh] overflow-y-auto safe-bottom">
+
+        {/* ── Screen: address (Feature F2 — unified create-server flow) ──
+            One input field. Accepts a hostname, a Matrix domain, a
+            Concord well-known URL, a `concord://peer/` deeplink, a
+            `concord+pair://` URL, a libp2p multiaddr, or a bare peer
+            id. We auto-detect which protocol the address belongs to
+            and route the user to the matching sub-flow behind the
+            scenes — they never have to know which protocol they
+            picked. See `lib/detectAddress.ts` for the precedence
+            order. */}
+        {screen === "address" && (
+          <>
+            <Header title="Add a place" />
+            <div className="space-y-4">
+              <p className="text-xs text-on-surface-variant">
+                You arrive at a "place" and that place has servers you may have access to. Paste an address — a hostname, an invite link, or a peer card — and Concord figures out the rest.
+              </p>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">
+                  Address
+                </label>
+                <input
+                  type="text"
+                  value={addressInput}
+                  onChange={(e) => setAddressInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && addressInput.trim()) {
+                      void handleDetectAddress();
+                    }
+                  }}
+                  placeholder="chat.example.com, matrix.org, concord://peer/…"
+                  data-testid="add-source-address-input"
+                  autoFocus
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleDetectAddress()}
+                disabled={!addressInput.trim()}
+                data-testid="add-source-address-continue"
+                className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
+              >
+                Continue
+              </button>
+              <button
+                type="button"
+                onClick={() => setScreen("pick")}
+                data-testid="add-source-address-more-options"
+                className="w-full text-xs text-on-surface-variant hover:text-on-surface underline-offset-2 hover:underline transition-colors"
+              >
+                More options — pick a protocol manually
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: pick ── */}
+        {screen === "pick" && (
+          <>
+            <Header title="Explore Sources" onBack={() => setScreen("address")} />
+            <div className="space-y-2">
+              {/*
+                "Start / Stop local hosting" sits at the top of the pick
+                screen on Tauri builds only. Web builds hide it entirely
+                (web hosts via Docker, outside the app). Native installs
+                never need account creation — the local porch is implicit
+                — so this control just toggles the embedded servitude
+                daemon. There is no bootstrap wizard path anymore.
+              */}
+              <LocalHostingControl />
+
+              <button
+                onClick={() => setScreen("concord")}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="concord" size={24} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Concord Instance</p>
+                  <p className="text-xs text-on-surface-variant">Connect to another Concord domain with an invite token</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                onClick={() => void handleDiscoverPresetMatrix("matrix.org")}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-teal-500/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="matrix" size={24} className="text-on-surface" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">matrix.org</p>
+                  <p className="text-xs text-on-surface-variant">Discover public rooms with Matrix login flows</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                onClick={() => void handleDiscoverPresetMatrix("chat.mozilla.org")}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-orange-500/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="mozilla" size={24} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Mozilla</p>
+                  <p className="text-xs text-on-surface-variant">Use Mozilla&apos;s delegated Matrix login</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                onClick={() => setScreen("matrix")}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-teal-500/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="matrix" size={24} className="text-on-surface" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Custom Matrix Homeserver</p>
+                  <p className="text-xs text-on-surface-variant">Enter any Matrix domain manually</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScreen("pair-peer")}
+                data-testid="add-source-tile-pair-peer"
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-on-surface-variant">hub</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-on-surface">Pair a peer</p>
+                  <p className="text-xs text-on-surface-variant">Connect directly to another Concord install via QR, deeplink, or Matrix room.</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+
+              <button
+                type="button"
+                disabled
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/10 bg-surface-container/40 text-left opacity-60 cursor-not-allowed"
+              >
+                <div className="w-8 h-8 rounded-lg bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-on-surface-variant">forum</span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-on-surface">Slack</p>
+                  <p className="text-xs text-on-surface-variant">Preloaded release target</p>
+                </div>
+                <span className="text-[10px] uppercase tracking-wider text-on-surface-variant font-label">Soon</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScreen("reticulum")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border border-outline-variant/20 hover:border-green-700/40 hover:bg-surface-container-high transition-all text-left group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-surface-container-high ring-1 ring-outline-variant/15 flex items-center justify-center flex-shrink-0">
+                  <SourceBrandIcon brand="reticulum" size={24} className="text-green-500" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-on-surface">Reticulum</p>
+                  <p className="text-xs text-on-surface-variant">Connect via Reticulum destination hash</p>
+                </div>
+                <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: concord ── */}
+        {screen === "concord" && (
+          <>
+            <Header title="Concord Instance" onBack={back} />
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Hostname</label>
+                <input
+                  type="text"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="chat.example.com"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Invite Token <span className="opacity-50">(optional)</span></label>
+                <input
+                  type="text"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="inv_... — leave blank for open instances"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={handleConnectConcord}
+                disabled={!host.trim()}
+                className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
+              >
+                Connect
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: matrix ── */}
+        {screen === "matrix" && (
+          <>
+            <Header title="Matrix Network" onBack={back} />
+            <div className="space-y-4">
+              <p className="text-xs text-on-surface-variant">
+                Add a Matrix homeserver, discover its login methods, and use that account for remote room discovery.
+              </p>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Homeserver</label>
+                <input
+                  type="text"
+                  value={matrixHost}
+                  onChange={(e) => setMatrixHost(e.target.value)}
+                  placeholder="matrix.org"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={handleDiscoverMatrix}
+                disabled={!matrixHost.trim()}
+                className="w-full py-2.5 bg-teal-700 text-white rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-teal-600 transition-colors"
+              >
+                Continue
+              </button>
+            </div>
+          </>
+        )}
+
+        {screen === "matrix-auth" && matrixDraft && (
+          <>
+            <Header title={inferSourceBrand({ host: matrixDraft.host, serverName: matrixDraft.serverName }) === "mozilla" ? "Mozilla Source" : "Matrix Source"} onBack={() => setScreen("matrix")} />
+            <div className="space-y-4">
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/60 p-4 space-y-2">
+                <p className="text-sm font-medium text-on-surface">{matrixDraft.instanceName}</p>
+                <p className="text-xs text-on-surface-variant break-all">
+                  {matrixDraft.serverName ?? matrixDraft.host} via {matrixDraft.homeserverUrl}
+                </p>
+                <p className="text-xs text-on-surface-variant">
+                  Available login methods: {matrixDraft.authFlows.length > 0 ? matrixDraft.authFlows.join(", ") : "none advertised"}
+                </p>
+              </div>
+
+              {matrixDraft.authFlows.includes("password") && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={matrixUsername}
+                    onChange={(event) => setMatrixUsername(event.target.value)}
+                    placeholder="Matrix username"
+                    className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                  />
+                  <input
+                    type="password"
+                    value={matrixPassword}
+                    onChange={(event) => setMatrixPassword(event.target.value)}
+                    placeholder="Password"
+                    className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                  />
+                  <button
+                    onClick={handleMatrixPasswordLogin}
+                    disabled={!matrixUsername.trim() || !matrixPassword}
+                    className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
+                  >
+                    Sign in with password
+                  </button>
+                </div>
+              )}
+
+              {matrixDraft.authFlows.includes("sso") && (
+                <button
+                  onClick={handleMatrixSsoLogin}
+                  className="w-full py-2.5 bg-secondary/15 text-secondary rounded-lg text-sm font-medium hover:bg-secondary/20 transition-colors"
+                >
+                  Continue with SSO
+                </button>
+              )}
+
+              {!matrixDraft.authFlows.some((flow) => flow === "password" || flow === "sso") && (
+                <p className="text-xs text-on-surface-variant">
+                  This homeserver did not advertise an interactive login flow that Concord can complete here yet.
+                </p>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: reticulum ── */}
+        {screen === "reticulum" && (
+          <>
+            <Header title="Reticulum Network" onBack={back} />
+            <div className="space-y-4">
+              <p className="text-xs text-on-surface-variant">
+                Add a peer reachable via the Reticulum network. Enter the peer's destination hash
+                and an optional display name. Requires the Reticulum transport to be running
+                (enabled via the <code className="font-mono">reticulum</code> feature flag).
+              </p>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Destination Hash</label>
+                <input
+                  type="text"
+                  value={reticulumDest}
+                  onChange={(e) => setReticulumDest(e.target.value)}
+                  placeholder="a1b2c3d4e5f6… (32-byte hex)"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-green-700/50 focus:outline-none font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Display Name <span className="opacity-50">(optional)</span></label>
+                <input
+                  type="text"
+                  value={reticulumName}
+                  onChange={(e) => setReticulumName(e.target.value)}
+                  placeholder="My Reticulum peer"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-green-700/50 focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  const dest = reticulumDest.trim();
+                  if (!dest) { setError("Enter a destination hash"); setScreen("error"); return; }
+                  addSource({
+                    host: dest,
+                    instanceName: reticulumName.trim() || undefined,
+                    inviteToken: "",
+                    apiBase: "",
+                    homeserverUrl: "",
+                    status: "connected",
+                    enabled: true,
+                    platform: "reticulum",
+                  });
+                  onSourceAdded();
+                }}
+                disabled={!reticulumDest.trim()}
+                className="w-full py-2.5 bg-green-700 text-white rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-green-600 transition-colors"
+              >
+                Add Peer
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Screen: pair-peer (peer pairing flow, added 2026-05-30) ──
+            Re-uses the existing PeerCardScanner which handles camera +
+            paste + matrix-room tabs (the scanner is itself a
+            fixed-inset modal that stacks over the AddSource modal). On
+            a successful pair or explicit close the scanner calls
+            `onClose`, which here fires `onSourceAdded` to dismiss the
+            whole AddSource modal — paired peers persist via the
+            peer-store, not as a sources-store entry, so we don't add a
+            source row. */}
+        {screen === "pair-peer" && (
+          <div data-testid="add-source-screen-pair-peer">
+            <PeerCardScanner onClose={onSourceAdded} />
+          </div>
+        )}
+
+        {/* ── Screen: validating ──
+            Shared between Feature F2 detection and the per-protocol
+            login round-trips. When detection is mid-probe we show a
+            phase-specific subtitle so the user knows which protocol
+            is being probed; everything else gets the generic
+            "Connecting…". The BringingUpSplash is mandatory — never
+            invent a new spinner here (see CLAUDE.md). */}
+        {screen === "validating" && (
+          <BringingUpSplash
+            size="compact"
+            status={
+              detectPhase === "probe-concord"
+                ? "Detecting Concord HTTP…"
+                : detectPhase === "probe-matrix"
+                  ? "Detecting Matrix…"
+                  : detectPhase === "inspect"
+                    ? "Detecting…"
+                    : "Connecting…"
+            }
+            testId="add-source-validating-splash"
+          />
+        )}
+
+        {/* ── Screen: error ── */}
+        {screen === "error" && (
+          <>
+            <Header title="Connection Failed" />
+            <div className="rounded-lg bg-error/10 border border-error/20 px-4 py-3 mb-4">
+              <p className="text-sm text-error">{error}</p>
+            </div>
+            <button
+              onClick={back}
+              className="w-full py-2.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-highest transition-colors"
+            >
+              Back
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+
+/* ── DM Header Name (uses hook, must be a component) ── */
+function DMHeaderName({ userId }: { userId: string }) {
+  const name = useDisplayName(userId);
+  return <h2 className="font-headline font-semibold truncate">{name}</h2>;
+}
+

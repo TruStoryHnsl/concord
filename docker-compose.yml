@@ -1,0 +1,408 @@
+services:
+  conduwuit:
+    image: ghcr.io/matrix-construct/tuwunel:main
+    restart: unless-stopped
+    volumes:
+      - ./data/conduwuit:/var/lib/conduwuit
+      # Federation settings live in ./config/tuwunel.toml and are hot-swapped
+      # by the admin UI. We bind-mount the PARENT DIRECTORY here, not the file
+      # directly: Docker binds single files by inode at start time, and any
+      # editor or atomic write (including our own tmp-file+rename in
+      # services/tuwunel_config.py) creates a new inode that the container
+      # cannot see until it restarts. Directory mounts track changes by path,
+      # not inode, so edits on the host are reflected immediately.
+      - ./config:/etc/concord-config:ro
+    environment:
+      CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
+      CONDUWUIT_DATABASE_PATH: /var/lib/conduwuit
+      CONDUWUIT_PORT: ${CONDUWUIT_PORT}
+      CONDUWUIT_ADDRESS: 0.0.0.0
+      CONDUWUIT_MAX_REQUEST_SIZE: 20000000
+      CONDUWUIT_ALLOW_REGISTRATION: "true"
+      CONDUWUIT_REGISTRATION_TOKEN: ${CONDUWUIT_REGISTRATION_TOKEN}
+      CONDUWUIT_ALLOW_PRESENCE: "true"
+      # Federation keys (allow_federation, forbidden_remote_server_names,
+      # allowed_remote_server_names) are now managed in the TOML file below
+      # by the Concord admin UI. Do NOT add them as env vars here — that
+      # would shadow the runtime-managed values.
+      TUWUNEL_CONFIG: /etc/concord-config/tuwunel.toml
+      CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY_OVER_FEDERATION: "false"
+      CONDUWUIT_TRUSTED_SERVERS: '["matrix.org"]'
+      CONDUWUIT_LOG: "info"
+    healthcheck:
+      disable: true
+    networks:
+      - concord
+
+  # Minimal-privilege proxy that lets concord-api restart the conduwuit
+  # container when the federation allowlist changes. Only CONTAINERS list
+  # and POST (restart) are enabled — no image, volume, or network access.
+  # This avoids mounting the host's /var/run/docker.sock directly into
+  # concord-api, shrinking the blast radius if concord-api is compromised.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      POST: "1"
+      # Everything else stays at its secure default (disabled).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - concord
+
+  # ── Reticulum Transport feature flag (INS-037) ──────────────────────────────
+  #
+  # The Concord Tauri/desktop binary supports an optional `reticulum` Cargo
+  # feature flag that compiles in the ReticulumTransport variant. This flag is
+  # OFF by default; standard builds and this docker-compose stack are unaffected.
+  #
+  # To build with Reticulum transport enabled:
+  #   cargo build --features reticulum
+  #
+  # What it adds: ReticulumTransport struct + TransportRuntime::Reticulum variant
+  # that spawns `rnsd` (the Reticulum Network Stack daemon) as a child process
+  # and manages its lifecycle (start / health-check / graceful stop).
+  #
+  # Runtime dependency: `rnsd` must be installed (pip install rns) or bundled.
+  # The feature flag does NOT automatically bundle rnsd.
+  #
+  # Docker note: if you run a Reticulum-enabled build inside this stack, add the
+  # following to the concord-api service below to allow rnsd TUN/TAP access:
+  #
+  #   cap_add:
+  #     - NET_ADMIN
+  #   # For serial/USB radio interfaces, also add a devices: section:
+  #   # devices:
+  #   #   - /dev/ttyUSB0:/dev/ttyUSB0
+  #
+  # See docs/deployment/README.md § "Reticulum Transport (experimental)" for the
+  # full setup guide and wave-sequencing notes.
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  concord-api:
+    build: ./server
+    restart: unless-stopped
+    volumes:
+      - ./data/concord:/data
+      # Directory mount (not single-file) so atomic writes from
+      # tuwunel_config.write_federation() are visible immediately to both
+      # this container and the conduwuit sibling. See the long comment on
+      # the conduwuit service above for why single-file mounts break.
+      # RW because the admin UI rewrites config/tuwunel.toml at runtime.
+      # Other files in config/ (Caddyfile, livekit.yaml, turnserver.conf)
+      # become writable too — the blast radius is limited to corr-owned
+      # host files and admin-gated backend code paths.
+      - ./config:/etc/concord-config:rw
+    environment:
+      CONCORD_DATA_DIR: /data
+      MATRIX_HOMESERVER_URL: http://conduwuit:${CONDUWUIT_PORT}
+      CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
+      CONDUWUIT_REGISTRATION_TOKEN: ${CONDUWUIT_REGISTRATION_TOKEN}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_URL: ws://livekit:7880
+      # PUBLIC_BASE_URL is the canonical public origin clients reach this
+      # instance at. server/config.py derives INSTANCE_DOMAIN from it
+      # (which in turn feeds TURN_HOST / TURN_DOMAIN derivations in
+      # server/routers/voice.py when those env vars aren't usable —
+      # e.g. when TURN_HOST is an RFC1918 address that off-LAN browsers
+      # can't reach). Without this passthrough, INSTANCE_DOMAIN falls
+      # back to ``localhost`` (from SITE_URL's default), TURN_HOST
+      # derives to ``turn.localhost`` -> 127.0.0.1, the voice-health
+      # probe correctly flags that as private, and /api/voice/token
+      # 503s every voice-join. .env already carries PUBLIC_BASE_URL;
+      # this line just routes it into the api container.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      TURN_SECRET: ${TURN_SECRET:-}
+      TURN_HOST: ${TURN_HOST:-}
+      TURN_DOMAIN: ${TURN_DOMAIN:-localhost}
+      TURN_PUBLIC_PORT: ${TURN_PUBLIC_PORT:-3478}
+      TURN_TLS_ENABLED: ${TURN_TLS_ENABLED:-false}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      TURN_PUBLIC_TLS_PORT: ${TURN_PUBLIC_TLS_PORT:-443}
+      TURN_TLS_ONLY: ${TURN_TLS_ONLY:-false}
+      METERED_APP_NAME: ${METERED_APP_NAME:-}
+      METERED_API_KEY: ${METERED_API_KEY:-}
+      ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
+      FREESOUND_API_KEY: ${FREESOUND_API_KEY:-}
+      INSTANCE_NAME: ${INSTANCE_NAME:-${CONDUWUIT_SERVER_NAME}}
+      # INS-050: Pre-populates the domain confirm field in the first-boot Host/Join picker.
+      # Defaults to CONDUWUIT_SERVER_NAME if not set explicitly.
+      CONCORD_DOMAIN: ${CONCORD_DOMAIN:-${CONDUWUIT_SERVER_NAME}}
+      # INS-051: canonical default domain root. Bare-slug server names
+      # are advertised as <slug>.concordchat.net unless overridden
+      # explicitly via CONCORD_DEFAULT_DOMAIN_ROOT (alternate forks
+      # who maintain a different generic domain).
+      CONCORD_DEFAULT_DOMAIN_ROOT: ${CONCORD_DEFAULT_DOMAIN_ROOT:-concordchat.net}
+      # FastAPI CORSMiddleware allow-origins. When unset, main.py falls back
+      # to a localhost/tauri-only default. Operators add their public
+      # hostname(s) here so cross-origin flows work — e.g. adding a
+      # sibling Concord instance as a source validates its invite token via
+      # a browser fetch that would otherwise be blocked by the same-origin
+      # policy. Leave empty on single-tenant installs.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Path where we read/write the Tuwunel federation config inside
+      # this container. Matches the directory bind mount target above.
+      TUWUNEL_CONFIG_PATH: /etc/concord-config/tuwunel.toml
+      # docker-socket-proxy endpoint for the restart-on-apply flow.
+      DOCKER_PROXY_URL: http://docker-socket-proxy:2375
+      # Phase 7 (INS-019b): pin the docker deployment to the web-first
+      # profile. The Tauri sidecar and the server both read this — the
+      # Rust side gates non-libp2p transports behind WebFirst, and the
+      # FastAPI hosting endpoints report it via /api/hosting/profile.
+      # Native installs leave this unset; their persisted profile
+      # defaults to p2p_only.
+      CONCORD_PROFILE: web_first
+    depends_on:
+      conduwuit:
+        condition: service_started
+      livekit:
+        condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - concord
+
+  livekit:
+    image: livekit/livekit-server:v1.9
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    # See docs/voice/port-coherence.md for the four-file port contract.
+    # The container-side range here (right of `:`) MUST equal
+    # config/livekit.yaml rtc.port_range_start..port_range_end.
+    # CI's config-lint job enforces this on every PR.
+    ports:
+      - "${LIVEKIT_TCP_PORT:-7881}:7881"
+      - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
+    volumes:
+      - ./config/livekit.yaml:/etc/livekit.yaml:ro
+      - ./config/livekit-entrypoint.sh:/etc/concord-livekit/entrypoint.sh:ro
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+      # Optional override of LiveKit's ICE host candidate IP. Empty by
+      # default — LiveKit STUN-discovers the container's external view
+      # (correct for public deployments with port-forwarded WAN). Set
+      # in .env to an interface the browser can actually route to when
+      # STUN's answer doesn't match reality: e.g. a Tailscale-only dev
+      # origin where STUN returns the operator's home WAN IP but the
+      # browser is on Tailscale and can never reach it. Without this
+      # override, the signaling WebSocket connects fine but every ICE
+      # candidate pair fails and the RTCPeerConnection times out with
+      # "could not establish pc connection".
+      LIVEKIT_RTC_NODE_IP: "${LIVEKIT_RTC_NODE_IP:-}"
+    entrypoint: ["/bin/sh", "/etc/concord-livekit/entrypoint.sh"]
+    # INS-067 W3 (deferred): a runtime UDP-bound healthcheck would
+    # detect the docker-port-mapping black-hole that caused the
+    # 2026-05-01 incident, but LiveKit doesn't pre-bind the ICE range
+    # — UDP sockets open on-demand per peer connection. At idle,
+    # /proc/net/udp{,6} contain ZERO entries for the port_range. There
+    # is no practical container-side health probe that succeeds at
+    # idle and detects misconfig. The catch-the-misconfig safeguards
+    # are: (1) INS-067 W2's static config-coherence linter (catches
+    # drift at PR time), (2) INS-067 W1's CI smoke (boots the stack
+    # and exercises a real relay allocation against the actual host
+    # port mapping). Filed as INS-067-FUP if a sidecar-based runtime
+    # check is wanted later.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - concord
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+    volumes:
+      # Mount the whole config dir (NOT a single file). Single-file bind
+      # mounts pin a specific inode at container start; when the host file
+      # is rewritten by `git pull` or by an admin tool that uses
+      # tmp-file-then-rename semantics, the new inode is invisible inside
+      # the container until restart. Follows the same pattern as the
+      # conduwuit and concord-api services (see commit a40fbb3).
+      - ./config:/etc/concord-config:ro
+      - ./data/caddy:/data
+      - ./downloads:/srv/downloads:ro
+    command: caddy run --config /etc/concord-config/Caddyfile --adapter caddyfile
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
+      # Substituted into the inline `.well-known/matrix/*` responses
+      # so the federation discovery documents advertise the operator's
+      # actual hostname. Without this passthrough, Caddy expands
+      # {$CONDUWUIT_SERVER_NAME} to empty and m.homeserver.base_url
+      # becomes literally "https://" — breaking native clients that
+      # try to resolve the homeserver from well-known discovery.
+      CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
+      # MATRIX_BASE_URL is the URL the Matrix client SDK should use to
+      # reach this homeserver. Computed from PUBLIC_BASE_URL when set
+      # (e.g. https://dev.concordchat.net for a Cloudflare-proxied instance
+      # where the raw server name is a bare LAN IP), otherwise falls back
+      # to https://<CONDUWUIT_SERVER_NAME>. The Caddyfile uses this for
+      # the m.homeserver.base_url in /.well-known/matrix/client.
+      MATRIX_BASE_URL: ${PUBLIC_BASE_URL:-https://${CONDUWUIT_SERVER_NAME}}
+      # TLS strategy picker — drives the `import tls_mode_<mode>` line
+      # in both Caddyfile and Caddyfile.dev. See .env.example for the
+      # documented matrix. Empty falls back to each Caddyfile's
+      # built-in default. The prod default is `letsencrypt_http01`;
+      # the dev override (docker-compose.dev.yml) substitutes
+      # `internal_longlived` so Caddyfile.dev keeps its historical
+      # Tailscale-friendly behaviour when TLS_MODE is unset in .env.
+      TLS_MODE: ${TLS_MODE:-letsencrypt_http01}
+      # Optional ACME contact email. Consumed by the letsencrypt_*
+      # TLS_MODE snippets via Caddy's `{$ACME_EMAIL:fallback}` syntax;
+      # the fallback only fires when the env var is UNSET (not when
+      # set-to-empty), so we always pass an effective placeholder
+      # value. `internal@example.invalid` is the operator-anonymous
+      # default — Let's Encrypt accepts non-existent emails for ACME
+      # account records but won't be able to send expiry warnings.
+      # Override with a real email in .env to receive renewal alerts.
+      ACME_EMAIL: ${ACME_EMAIL:-internal@example.invalid}
+      # Cloudflare API token. Consumed by the
+      # letsencrypt_dns01_cloudflare TLS_MODE snippet. Token scope:
+      # Zone.Zone:Read + Zone.DNS:Edit on the zone hosting SITE_ADDRESS.
+      # Empty is fine when TLS_MODE is not the DNS-01 mode.
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+    depends_on:
+      conduwuit:
+        condition: service_started
+      concord-api:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - concord
+
+  # Bundled SNI multiplexer on the operator's public 443.
+  #
+  # sslh sniffs the ClientHello of each inbound TCP/443 connection and
+  # routes by SNI:
+  #
+  #   * SNI == turn.<INSTANCE_DOMAIN>  -> coturn TLS on 5349
+  #   * everything else                -> Caddy web on 8080 (HTTPS)
+  #
+  # This is what lets a single port-forwarded 443 on the operator's home
+  # router carry BOTH the regular Concord web UI AND TURN-over-TLS for
+  # WebRTC media. Without this multiplexer, the operator would need to
+  # port-forward both 443 (web) and 5349 (TURN-TLS) — and ISPs frequently
+  # block uncommon ports while leaving 443 open.
+  #
+  # Disabled-by-default: present in the compose but only started when
+  # ``COMPOSE_PROFILES=public-ingress`` is set. Native builds (which
+  # default to P2P-first and don't expose a public web surface) omit the
+  # profile and so don't start sslh. Docker / public-web operators set
+  # the profile in their .env and get the multiplexer at boot.
+  sslh:
+    image: ghcr.io/yrutschle/sslh:2.3.1
+    container_name: concord-sslh
+    restart: unless-stopped
+    profiles: ["public-ingress"]
+    network_mode: host
+    volumes:
+      - ./config/sslh.conf:/etc/sslh/sslh.cfg:ro
+    command: ["-F/etc/sslh/sslh.cfg"]
+    # Match the ulimit + healthcheck + autoheal pattern that the prior
+    # infra/turn/ edge stack used — those mitigations exist because the
+    # default 1024-fd ceiling combined with no liveness probe caused
+    # sslh to wedge on accumulated half-open TURN connections on a
+    # 25-day uptime. Same risk applies wherever sslh runs.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "ss -ltn 'sport = :443' | grep -q LISTEN || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 2
+      start_period: 10s
+    labels:
+      - "autoheal=true"
+
+  # Bundled TURN relay for NAT traversal.
+  #
+  # coturn runs in host networking mode because it must relay UDP media
+  # packets between external clients and LiveKit's published UDP port
+  # range (50000-50100) on the host. Bridge-mode networking would add a
+  # NAT layer that breaks TURN relay semantics — the relay address that
+  # coturn advertises to clients must be directly reachable, and the
+  # relay-to-LiveKit path must be on the host's loopback or LAN, not a
+  # Docker bridge IP.
+  #
+  # Port allocation:
+  #   3478/udp+tcp  — standard TURN/STUN listener
+  #   5349/tcp      — TLS TURN listener (sslh muxes 443→5349 by SNI)
+  #   49152-49252   — relay ports (media traffic from clients)
+  #
+  # Credential containment:
+  #   The shared secret (TURN_SECRET) is injected via CLI --static-auth-secret
+  #   so it never touches disk inside the container. The API server uses
+  #   the same TURN_SECRET env var to generate time-limited credentials
+  #   per RFC 5389 (see server/routers/voice.py _generate_turn_credentials).
+  #
+  # The install script (install.sh) may add --external-ip to the command
+  # list in docker-compose.override.yml for NAT-behind-NAT scenarios.
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["/bin/sh", "/etc/concord-turn/coturn-entrypoint.sh"]
+    volumes:
+      - ./config/turnserver.conf:/etc/turnserver.conf:ro
+      - ./config/coturn-entrypoint.sh:/etc/concord-turn/coturn-entrypoint.sh:ro
+      - ${TURN_TLS_CERT_DIR:-./config/turn-certs}:/certs:ro
+    environment:
+      TURN_SECRET: ${TURN_SECRET}
+      TURN_DOMAIN: ${TURN_DOMAIN:-localhost}
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-}
+      TURN_LISTEN_IP: ${TURN_LISTEN_IP:-}
+      TURN_RELAY_IP: ${TURN_RELAY_IP:-}
+      TURN_PUBLIC_PORT: ${TURN_PUBLIC_PORT:-3478}
+      TURN_TLS_ENABLED: ${TURN_TLS_ENABLED:-false}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      TURN_PUBLIC_TLS_PORT: ${TURN_PUBLIC_TLS_PORT:-443}
+      TURN_TLS_ONLY: ${TURN_TLS_ONLY:-false}
+      TURN_TLS_CERT_FILE: ${TURN_TLS_CERT_FILE:-/certs/fullchain.pem}
+      TURN_TLS_KEY_FILE: ${TURN_TLS_KEY_FILE:-/certs/privkey.pem}
+    healthcheck:
+      # Probe the actual bound listener IP. When TURN_EXTERNAL_IP is a
+      # public/private NAT mapping we clamp coturn to the private host-side
+      # interface, so probing 127.0.0.1 would be a false negative.
+      test:
+        [
+          "CMD-SHELL",
+          "TURN_HEALTH_IP=\"$${TURN_LISTEN_IP:-}\"; if [ -z \"$${TURN_HEALTH_IP}\" ]; then case \"$${TURN_EXTERNAL_IP:-}\" in */*) TURN_HEALTH_IP=\"$${TURN_EXTERNAL_IP#*/}\" ;; *) TURN_HEALTH_IP=127.0.0.1 ;; esac; fi; turnutils_stunclient \"$${TURN_HEALTH_IP}\" 2>/dev/null || exit 1",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  concord:
+    driver: bridge

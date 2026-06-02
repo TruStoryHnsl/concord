@@ -1,0 +1,46 @@
+# Syncthing conflict files — never include in Docker build context
+*.sync-conflict-*
+**/*.sync-conflict-*
+
+# Node modules and build output — Docker installs/builds its own
+**/node_modules/
+client/dist/
+
+# Python virtualenv
+server/.venv/
+
+# Rust build cache (anywhere in tree)
+**/target/
+
+# Tauri-generated Xcode/Android project files
+src-tauri/gen/
+
+# Tauri bundled native binaries (not needed for web/server Docker images)
+src-tauri/resources/
+
+# Build cache
+.build-cache/
+
+# Runtime data (mounted as volume in compose)
+data/
+
+# Playwright MCP cache
+.playwright-mcp/
+
+# Python caches
+**/__pycache__/
+**/.pytest_cache/
+
+# Git worktrees created by Claude Code (can be gigabytes)
+.claude/
+
+# Git history — not needed in image
+.git/
+
+# Codex backups
+.codex-backups/
+
+# Local dev / IDE
+.env
+.env.*
+*.local

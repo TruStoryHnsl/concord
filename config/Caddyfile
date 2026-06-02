@@ -1,0 +1,250 @@
+{
+    http_port 8080
+    https_port 8443
+    # pki block for the internal_longlived TLS_MODE snippet. Harmless
+    # for the public-ACME modes — Caddy only consults `pki` when an
+    # `issuer internal` directive is active on a site.
+    pki {
+        ca local {
+            root_cn "Concord Local Root"
+            intermediate_cn "Concord Local Intermediate"
+            intermediate_lifetime 80000h
+        }
+    }
+}
+
+# ── TLS_MODE snippets ──────────────────────────────────────────────────
+# Imported at the top of the {$SITE_ADDRESS} block based on the
+# TLS_MODE env var. See .env.example for the operator-facing description
+# of each mode. Kept in lockstep with config/Caddyfile.dev so both
+# surfaces share an identical mode matrix.
+
+# Caddy's internal CA with a long-lived leaf cert (~9 years).
+# Tailscale-only / LAN-only deployment. Operators add Caddy's root
+# CA to their trust store (or accept the cert exception) once.
+# See the matching snippet comment in Caddyfile.dev for the full
+# rationale on why the lifetime override is load-bearing.
+(tls_mode_internal_longlived) {
+    tls {
+        issuer internal {
+            lifetime 78000h
+        }
+    }
+}
+
+# Public ACME via HTTP-01. Requires port 80 reachable from the
+# public internet for the validation handshake. Default for the
+# production Caddyfile. ACME_EMAIL is optional — when set, Caddy
+# uses it as the ACME account contact; when blank, Caddy auto-generates
+# an anonymous account. The placeholder `internal@example.invalid`
+# never reaches Let's Encrypt: it only gets written into the ACME
+# account if the operator actually leaves ACME_EMAIL blank AND Caddy
+# falls all the way back to the literal default, which is harmless
+# (LE allows non-existent emails for the account record itself; it
+# only matters when LE wants to email expiry warnings).
+(tls_mode_letsencrypt_http01) {
+    tls {$ACME_EMAIL:internal@example.invalid}
+}
+
+# Public ACME via DNS-01 against Cloudflare. No public reachability
+# required. Requires CLOUDFLARE_API_TOKEN with Zone.Zone:Read +
+# Zone.DNS:Edit on the zone hosting SITE_ADDRESS. Same ACME_EMAIL
+# fallback as the HTTP-01 snippet.
+(tls_mode_letsencrypt_dns01_cloudflare) {
+    tls {$ACME_EMAIL:internal@example.invalid} {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+}
+
+{$SITE_ADDRESS} {
+    # TLS strategy is operator-pickable via the TLS_MODE env var.
+    # See .env.example for the full description of each mode. The
+    # default for the prod Caddyfile is `letsencrypt_http01` — the
+    # historical auto-ACME behaviour when SITE_ADDRESS is a public
+    # hostname. Caddyfile has no real `if/else`, so each mode is a
+    # named snippet defined at the bottom of this file and imported
+    # by name. The `{$TLS_MODE:letsencrypt_http01}` default applies
+    # when the operator leaves TLS_MODE empty in .env.
+    import tls_mode_{$TLS_MODE:letsencrypt_http01}
+
+    # Compression
+    encode gzip
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+    }
+
+    # Max upload size (media, soundboard clips)
+    request_body {
+        max_size 20MB
+    }
+
+    # Matrix login — rate-limited via concord-api (2026-05-18 pentest F1).
+    # Tuwunel has no per-IP login throttle, and the catch-all /_matrix/*
+    # block below would otherwise let a hostile page mount an unbounded
+    # online dictionary attack from any visitor's browser. concord-api
+    # applies the same sliding-window deque-per-IP limiter that protects
+    # /api/register (server/routers/matrix_proxy.py) and proxies onward
+    # to tuwunel. Order matters: this handle must come BEFORE /_matrix/*.
+    handle /_matrix/client/*/login {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+            flush_interval -1
+        }
+    }
+
+    # Matrix Client-Server API (streaming, no buffering)
+    handle /_matrix/* {
+        reverse_proxy conduwuit:6167 {
+            flush_interval -1
+        }
+    }
+
+    # Matrix server + client well-known — static JSON responses served
+    # directly by Caddy, instance-agnostic via CONDUWUIT_SERVER_NAME env.
+    #
+    # Background (INS-026, 2026-04-08): these paths used to be proxied to
+    # conduwuit/tuwunel, which does NOT implement `.well-known/matrix/*` —
+    # it returns `{"errcode":"M_NOT_FOUND"}` with HTTP 404. The Matrix
+    # spec requires .well-known to be a STATIC file served by the
+    # reverse proxy, not a dynamic homeserver endpoint.
+    #
+    # Consequence of the old (broken) config: federating servers fall
+    # back through the Matrix server discovery ladder (SRV → .well-known
+    # → port 8448), and since .well-known returned 404 and port 8448 is
+    # not exposed through most CDN proxies, every federation attempt
+    # failed with `401 M_UNAUTHORIZED: Failed to find any key to satisfy
+    # _FetchKeyRequest(server_name=...)`.
+    #
+    # Fix: return the two .well-known JSON documents inline, using the
+    # operator-provided CONDUWUIT_SERVER_NAME env var so the responses
+    # are instance-agnostic and safe to commit to the public repo.
+    #
+    #   `m.server` delegates federation to port 443 on the same host,
+    #   which IS reachable through any CDN. Federating servers read this
+    #   and connect to <server_name>:443 for the server-server API
+    #   instead of the default port 8448.
+    #
+    #   `m.homeserver` tells Matrix clients that <server_name> is its
+    #   own homeserver for the client-server API, which also unblocks
+    #   clients that enter the hostname in a picker without a scheme.
+    handle /.well-known/matrix/server {
+        header Content-Type "application/json"
+        header Access-Control-Allow-Origin "*"
+        respond `{"m.server":"{$CONDUWUIT_SERVER_NAME}:443"}` 200
+    }
+    handle /.well-known/matrix/client {
+        header Content-Type "application/json"
+        header Access-Control-Allow-Origin "*"
+        respond `{"m.homeserver":{"base_url":"{$MATRIX_BASE_URL}"}}` 200
+    }
+
+    # Concord-specific well-known (INS-027) — dynamic endpoint, served
+    # by the Concord API container rather than inline, because the
+    # response body is derived from env vars (instance name, LiveKit
+    # URL, advertised features) that only the Python service knows.
+    # Unauthenticated by design: native clients hit this BEFORE they
+    # have any credentials. See `server/routers/wellknown.py`.
+    #
+    # CORS (INS-020, 2026-04-09): native Tauri mobile clients load from
+    # custom schemes (`tauri://localhost` on iOS, `http://tauri.localhost`
+    # on Android), none of which are in FastAPI's CORS whitelist. Since
+    # this is a public discovery document that ANY client should be able
+    # to read, we override the upstream CORS headers at the edge with a
+    # wildcard Allow-Origin. This matches the inline handling of
+    # `.well-known/matrix/*` above — both are public bootstrap endpoints.
+    # The `-Access-Control-Allow-Credentials` strip is required because
+    # `Access-Control-Allow-Origin: *` is invalid when credentials are
+    # also allowed (CORS spec: wildcards and credentials are mutually
+    # exclusive).
+    handle /.well-known/concord/* {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+            header_down Access-Control-Allow-Origin "*"
+            header_down Access-Control-Allow-Methods "GET, OPTIONS"
+            header_down -Access-Control-Allow-Credentials
+        }
+    }
+
+    # Matrix Server-Server (federation) API
+    handle /_matrix/federation/* {
+        reverse_proxy conduwuit:6167 {
+            flush_interval -1
+        }
+    }
+
+    # Matrix key endpoints (required for federation key exchange)
+    handle /_matrix/key/* {
+        reverse_proxy conduwuit:6167
+    }
+
+    # Concord API — forward proto for correct scheme detection.
+    # CORS: native Tauri clients (desktop + mobile) load from custom
+    # origins that won't match the server's CORS whitelist. Wildcard
+    # Allow-Origin at the edge ensures all clients can reach the API.
+    handle /api/* {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+            header_down Access-Control-Allow-Origin "*"
+            header_down Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            header_down Access-Control-Allow-Headers "Content-Type, Authorization"
+            header_down -Access-Control-Allow-Credentials
+        }
+    }
+
+    # Installed extension bundles (v0.4.0+). concord-api serves these
+    # out of <DATA_DIR>/extensions/<id>/ — the admin install flow
+    # extracts the zips there, and iframes load index.html +
+    # relative ./assets/ out of this same prefix. Replaces the legacy
+    # /ext/worldview -> worldview:8080 block that was tied to the
+    # deprecated python-server worldview container.
+    handle /ext/* {
+        reverse_proxy concord-api:8000 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+
+    # LiveKit WebSocket signaling (strip /livekit/ prefix)
+    # flush_interval -1 disables response buffering (required for WebSocket/streaming)
+    # X-Forwarded-Proto ensures wss:// is used on HTTPS sites
+    handle_path /livekit/* {
+        reverse_proxy livekit:7880 {
+            header_up X-Forwarded-Proto {http.request.scheme}
+            flush_interval -1
+        }
+    }
+
+    # Desktop app downloads (force download, not inline)
+    handle /downloads/* {
+        header Content-Disposition "attachment"
+        root * /srv
+        file_server
+    }
+
+    # React SPA — serve static files, fall back to index.html
+    #
+    # Cache strategy:
+    #  - /assets/* are content-hashed by Vite (e.g. index-XXXX.js) — safe to
+    #    cache forever as immutable.
+    #  - Everything else resolves to index.html via try_files fallback. The
+    #    HTML must NOT be cached, otherwise browsers serve a stale shell that
+    #    references old asset hashes after a deploy.
+    handle {
+        root * /srv/html
+
+        @assets path /assets/*
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+
+        @notAssets not path /assets/*
+        header @notAssets Cache-Control "no-cache, no-store, must-revalidate"
+        header @notAssets Pragma "no-cache"
+        header @notAssets Expires "0"
+
+        try_files {path} /index.html
+        file_server
+    }
+}
