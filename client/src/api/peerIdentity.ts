@@ -2,7 +2,7 @@
  * Peer identity API wrapper (Phase 2 — Ed25519 device identity).
  *
  * Thin wrapper around the `peer_identity` Tauri command exposed by
- * `src-tauri/src/lib.rs`. The Rust side keeps the Ed25519 private key inside
+ * the native IPC backend. The Rust side keeps the Ed25519 private key inside
  * a Stronghold snapshot and only ever returns the public surface:
  * `{ public_key_hex, fingerprint }`. This module mirrors that contract on
  * the TypeScript side and converts snake_case → camelCase for the consumer

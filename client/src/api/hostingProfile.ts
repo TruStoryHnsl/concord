@@ -193,7 +193,7 @@ export async function setHostingProfile(
  * registration, rooms, and invites all live there. The native default
  * deployment profile is `p2p_only`, which materializes ONLY the libp2p
  * baseline transport and SKIPS the homeserver (Phase 7 gating in
- * `src-tauri/src/servitude/mod.rs::new_with_identity`). A bare
+ * the native hosting profile initializer). A bare
  * {@link servitudeStart} on a fresh `p2p_only` install therefore brings
  * up a node with no homeserver, and the very next `servitude_register_owner`
  * fails with "no MatrixFederation transport configured for register_owner".

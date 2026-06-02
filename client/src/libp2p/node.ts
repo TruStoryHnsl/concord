@@ -40,7 +40,7 @@
  *   stream + Phase 8 voice signaling stream without a separate
  *   behaviour layer.
  *
- * Spec pointer: `docs/architecture/p2p-design.md` § Phase 9 +
+ * Spec pointer: `the P2P design` § Phase 9 +
  * § "Discovery" (post-redirect).
  */
 
@@ -58,14 +58,14 @@ import { getBrowserIdentity } from "./identity";
 /**
  * Concord Matrix-federation libp2p protocol. MUST match the Rust
  * constant `CONCORD_MATRIX_FEDERATION_PROTOCOL` in
- * `src-tauri/src/servitude/federation/matrix.rs`.
+ * the native federation backend.
  */
 export const CONCORD_MATRIX_FEDERATION_PROTOCOL =
   "/concord/matrix-federation/1.0.0";
 
 /**
  * Concord voice-signaling libp2p protocol. MUST match the Rust
- * constant in `src-tauri/src/servitude/voice/signaling.rs`.
+ * constant in the native voice signaling backend.
  */
 export const CONCORD_VOICE_SIGNALING_PROTOCOL =
   "/concord/voice-signaling/1.0.0";

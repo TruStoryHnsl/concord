@@ -17,7 +17,7 @@
   --color-on-surface: #f9f9fd;
   --color-on-surface-variant: #aaabaf;
 
-  /* ── Brand (Concord — reference tokens, see branding/BRAND.md).
+  /* ── Brand (Concord reference tokens).
          Not aliased to --color-primary because the existing Electric
          Indigo identity is load-bearing across the chat UI. Use
          text-brand-primary / bg-brand-primary explicitly where the

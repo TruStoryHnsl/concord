@@ -3,8 +3,8 @@
  *
  * Thin wrapper around the `tunnel_get_config` / `tunnel_set_config` /
  * `tunnel_detect_interfaces` Tauri commands exposed by
- * `src-tauri/src/lib.rs`. Mirrors the contract in
- * `src-tauri/src/servitude/network/`.
+ * the native IPC backend. Mirrors the contract in
+ * the native tunnel backend.
  *
  * Web build: every call short-circuits to a permissive default. Web
  * tabs can't host an inbound libp2p surface, so the gate is a no-op

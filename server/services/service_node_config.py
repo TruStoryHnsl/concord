@@ -219,7 +219,7 @@ def _resolve_path() -> Path:
     ``/data`` location used by ``config.DATA_DIR``.
     """
     env_dir = os.environ.get("CONCORD_DATA_DIR") or os.environ.get(
-        "example_DATA_DIR"
+        "CONCORRD_DATA_DIR"
     )
     data_dir = Path(env_dir) if env_dir else Path("/data")
     return data_dir / SERVICE_NODE_FILE_NAME

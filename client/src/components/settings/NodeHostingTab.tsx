@@ -12,9 +12,9 @@ import { HostPairingQR } from "../pairing/HostPairingQR";
 /**
  * Settings tab exposing the embedded servitude (service node hosting) toggle.
  *
- * The Rust side of servitude lives in `src-tauri/src/servitude/` and is
+ * The Rust side of servitude lives in the native service backend and is
  * wired into Tauri via `servitude_start` / `servitude_stop` /
- * `servitude_status` commands in `src-tauri/src/lib.rs`. This component is
+ * `servitude_status` commands in the native IPC backend. This component is
  * the user-facing switch for that pipeline — part of INS-022 (mobile
  * phone-as-relay), scope also applies to desktop Tauri builds.
  *
@@ -32,7 +32,7 @@ import { HostPairingQR } from "../pairing/HostPairingQR";
  *
  * Note — v0.1 reality check: the embedded servitude lifecycle is wired
  * end-to-end but the layered transports are `TODO(transport)` stubs in
- * `src-tauri/src/servitude/mod.rs`. "Running" means the state machine
+ * the native service backend. "Running" means the state machine
  * reports Running, NOT that a single byte of traffic has crossed a
  * network boundary. The UI intentionally does not lie about this — the
  * status text reads "Hosting enabled (transports pending)" until the

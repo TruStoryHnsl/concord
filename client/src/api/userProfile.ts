@@ -2,11 +2,11 @@
  * User Management Phase 1 — API wrapper.
  *
  * Thin wrappers around the eight `user_profile_*` Tauri commands exposed
- * by `src-tauri/src/lib.rs`. All commands are native-only — the web
+ * by the native IPC backend. All commands are native-only — the web
  * build doesn't host a porch, so the wrappers return a `not_supported`
  * sentinel (an empty list / a typed error) instead of dispatching.
  *
- * Wire shapes mirror the Rust types in `src-tauri/src/porch/users.rs`:
+ * Wire shapes mirror the Rust types in the native user backend:
  *   - `UserProfile`
  *   - `Provenance` (`local` | `relay_restored`)
  *   - `KeychainEntry`

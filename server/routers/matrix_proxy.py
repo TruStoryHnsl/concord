@@ -13,7 +13,7 @@ so the same per-IP rate-limit machinery used by `/api/register` covers
 it. Everything else under `/_matrix/*` continues to go straight to
 tuwunel — only the login endpoint is intercepted.
 
-Caddy is updated (config/Caddyfile + config/Caddyfile.dev) so the more
+Caddy is updated (config/Caddyfile) so the more
 specific `handle /_matrix/client/*/login` block matches before the
 generic `/_matrix/*` catch-all.
 

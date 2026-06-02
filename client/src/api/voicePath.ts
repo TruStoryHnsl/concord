@@ -5,7 +5,7 @@
  * full libp2p WebRTC mesh or falls back to the LiveKit SFU. This
  * module bridges the React voice-join flow to the Rust
  * `select_voice_path` Tauri command (see
- * `src-tauri/src/lib.rs::select_voice_path`).
+ * `native backend`).
  *
  * Decision rules (Phase 8 design doc, restated for the TS side):
  *   - >8 participants → SFU (`"above_cap_8"`).
@@ -75,7 +75,7 @@ export interface VoicePathSelection {
  *
  * Native build: invokes the Tauri command. The Rust side resolves
  * the path via the same selector that backs the integration tests
- * (see `src-tauri/src/servitude/voice/selector.rs`).
+ * (see the native voice selector).
  *
  * Web build: short-circuits to LiveKit. Browsers cannot be libp2p
  * mesh peers until Phase 9.

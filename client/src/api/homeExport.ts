@@ -13,8 +13,8 @@
  * `isTauri()` is false.
  *
  * Wire shapes mirror the Rust types in:
- *   - `src-tauri/src/porch/home_export.rs::ExportManifest`
- *   - `src-tauri/src/porch/home_export_protocol.rs::DeliveryReceipt`
+ *   - the native home-export manifest
+ *   - the native delivery receipt
  *
  * Field names follow the Rust `serde(rename_all = "camelCase")`
  * attribute on those structs — the Tauri layer transcribes

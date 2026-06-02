@@ -1,7 +1,7 @@
 /**
  * LocalChannelSidebar — channel column for the active LOCAL server
  * (porch OR home, see the 2026-06-01 CONSOLIDATED ARCHITECTURE filing
- * in `instructions_inbox.md`).
+ * in the internal instruction inbox).
  *
  * Today both tiles read their channels from the existing `porchStore`
  * (which is backed by the persistent porch SQLite). That's correct

@@ -65,6 +65,9 @@ ext/*
 # Workflow / tooling state (develop_feature MCP tool)
 .orrch/
 
+# Internal operation plan; lives locally at .orrch/PLAN.md and is not GitHub-public.
+/PLAN.md
+
 # Codex IDE backup snapshots
 .codex-backups/
 
@@ -75,6 +78,7 @@ ext/*
 .orrtemp
 
 # AI / workflow files (kept locally, not tracked)
+.superpowers/
 CLAUDE.md
 GEMINI.md
 agents.md
@@ -88,6 +92,36 @@ naming-brainstorm.md
 SELF_CONTAINMENT_REPORT.md
 DEVLOG.md
 PROVENANCE_REPORT.md
+
+# Public Docker-edition export boundary. These files may exist locally in the
+# private development checkout, but they do not belong in the public repo.
+.github/
+docs/
+src-tauri/
+src-tvos/
+branding/
+infra/
+patches/
+scripts/
+client/e2e/
+client/src/**/__tests__/
+client/src/test/
+server/tests/
+client/eslint.config.js
+client/vitest.config.ts
+client/MONETIZATION_PROPOSAL.md
+client/NATIVE_BUILD.md
+server/pytest.ini
+server/requirements-dev.txt
+docker-compose.dev.yml
+docker-compose.override.yml
+docker-compose.podman.yml
+web/Dockerfile.dev
+install.sh
+CHANGELOG.md
+CLA.md
+CONTRIBUTING.md
+.scope
 
 # Syncthing folder ignore patterns (local only)
 .stignore

@@ -2,7 +2,7 @@
  * Porch Phase A — API wrapper.
  *
  * Thin wrappers around the six `porch_*` Tauri commands exposed by
- * `src-tauri/src/lib.rs`:
+ * the native IPC backend:
  *
  *   - porch_list_my_channels — LOCAL: list this install's channels.
  *   - porch_get_messages — LOCAL: page messages from a local channel.
@@ -17,7 +17,7 @@
  * with the dispatch picked automatically based on `isTauri()`.
  *
  * Wire shapes mirror the Rust types in
- * `src-tauri/src/porch/channel.rs` and `src-tauri/src/porch/protocol.rs`.
+ * the native porch channel backend and the native porch protocol.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -759,7 +759,7 @@ export async function porchSyncAllPersonalDevices(): Promise<SyncReport[]> {
  * Ed25519 public key. Receivers verify the peer-id derives from the
  * pubkey before trusting any signature in the chain.
  *
- * Mirrors the Rust `PeerIdent` shape (`src-tauri/src/porch/history_protocol.rs`).
+ * Mirrors the Rust `PeerIdent` shape (the native porch history protocol).
  */
 export interface PorchHistoryPeerIdent {
   /** base58 libp2p PeerId. */
