@@ -418,7 +418,7 @@ select {
   /* max() floor so the bottom gap never collapses on viewports with no
      safe-area inset (e.g. desktop, where env() resolves to 0). This rule is
      intentionally UNLAYERED so it still wins over Tailwind's layered
-     pb-*/py-*/p-* utilities and applies uniformly. Previously this was
+     padding utilities and applies uniformly. Previously this was
      `env(safe-area-inset-bottom, 0px)` alone, which silently zeroed the
      bottom padding of every .safe-bottom element on desktop and slammed
      content flush to the container bottom edge (Explore Sources modal,
