@@ -265,7 +265,7 @@ export function BrowserSessionIdentityRow(_props: { handleCopy: () => void }) {
  *
  * Renders directly beneath the Phase 2 [`PeerIdentitySection`] because
  * the two surfaces are derived from the same per-install Ed25519 seed
- * (see the native identity backend for the architectural
+ * (see `src-tauri/src/servitude/identity.rs` for the architectural
  * unification note).
  */
 export function SwarmStatusSection() {

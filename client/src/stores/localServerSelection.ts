@@ -3,7 +3,7 @@
  * local source.
  *
  * Per the 2026-06-01 CONSOLIDATED ARCHITECTURE filing in
- * the internal instruction inbox, the local source contains TWO intrinsic
+ * `instructions_inbox.md`, the local source contains TWO intrinsic
  * default servers — `"porch"` (ephemeral, in-memory, F1a parallel PR)
  * and `"home"` (persistent SQLite, this PR). The renderer needs a
  * tiny piece of state to remember which tile the user last clicked

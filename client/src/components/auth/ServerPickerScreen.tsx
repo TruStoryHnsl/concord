@@ -386,7 +386,7 @@ export function ServerPickerScreen({ onConnected, onSkip, onGuestSession }: Prop
   // concord-api and LiveKit are NOT embedded yet, so Concord-specific
   // features (server list, voice channels, extensions, soundboard,
   // federation UI) will fail until those services are also bundled.
-  // See the pairing follow-up notes for the follow-up.
+  // See PLAN.md §INS-030 for the follow-up.
   //
   // The fallback for users who want the full stack is the "Bridge
   // to docker-compose" path exposed as an Advanced affordance on

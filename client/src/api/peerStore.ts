@@ -2,9 +2,9 @@
  * Peer store API wrapper (Phase 5 — peer pairing).
  *
  * Thin wrapper around the `peer_store_list` / `peer_store_add` /
- * `peer_store_remove` Tauri commands exposed by the native IPC backend.
+ * `peer_store_remove` Tauri commands exposed by `src-tauri/src/lib.rs`.
  * The Rust side persists pairings to an encrypted sibling file next to the
- * Stronghold snapshot (see the native peer-store backend).
+ * Stronghold snapshot (see `src-tauri/src/servitude/peer_store.rs`).
  *
  * Wire shape: per Wave 1, the backend's IPC shape is already camelCase
  * (`#[serde(rename_all = "camelCase")]` on `KnownPeerPublic`), so the
@@ -27,7 +27,7 @@ import { invoke } from "@tauri-apps/api/core";
  * Where this pairing came from. Used downstream for UI hints (the source
  * badge in the paired-peers list) and for analytics if we ever add them.
  * Kept in sync with the Rust `PeerSource` enum in
- * the native peer-store backend.
+ * `src-tauri/src/servitude/peer_store.rs`.
  */
 export type PeerSource = "qr" | "deeplink" | "matrix_room" | "dht";
 

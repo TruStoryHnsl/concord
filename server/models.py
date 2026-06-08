@@ -331,7 +331,7 @@ class BugReport(Base):
 class DisposableNode(Base):
     """A short-lived anonymous node session.
 
-    Used by the disposable-anonymous-browsing flow. A
+    Used by the disposable-anonymous-browsing pillar (PLAN.md). A
     disposable node has no email, no password, and no Matrix account —
     only a random session token. The node MUST contribute compute back
     to the network (the ``must_contribute_compute`` flag is a hint to
@@ -472,4 +472,5 @@ class PlaceLedgerHeader(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
 
