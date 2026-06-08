@@ -132,7 +132,8 @@ export function listBrowserPeers(): KnownPeer[] {
       source !== "qr" &&
       source !== "deeplink" &&
       source !== "matrix_room" &&
-      source !== "dht"
+      source !== "dht" &&
+      source !== "proximity"
     ) {
       continue;
     }

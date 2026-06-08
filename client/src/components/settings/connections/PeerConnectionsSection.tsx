@@ -22,6 +22,9 @@
 import { useEffect, useState } from "react";
 import type { Libp2p } from "@libp2p/interface";
 
+import { TapToPairSheet } from "../../peers/TapToPairSheet";
+import { useProximityPairStore } from "../../../stores/proximityPair";
+
 import { useIdentityStore, IDENTITY_ERROR_NATIVE_ONLY } from "../../../stores/identity";
 import { useToastStore } from "../../../stores/toast";
 import { usePeerStore } from "../../../stores/peerStore";
@@ -383,6 +386,15 @@ export function SwarmStatusSection() {
  */
 export function PairedPeersSection() {
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
+  const beginPair = useProximityPairStore((s) => s.begin);
+
+  async function onTapToPair() {
+    setPairOpen(true);
+    // Phase 1: the mock transport ignores payload contents. Real signed
+    // payload assembly is added in a later task (Task 11).
+    await beginPair({ peerId: "", publicKeyHex: "", multiaddrs: [], signatureHex: "" });
+  }
 
   return (
     <div className="border-t border-outline-variant/15 pt-6 space-y-4">
@@ -396,8 +408,18 @@ export function PairedPeersSection() {
       {/* Your card — QR + copyable link + post-to-room. */}
       <PeerCardDisplay />
 
-      {/* Add-a-peer launcher. */}
-      <div className="flex justify-end">
+      {/* Add-a-peer launchers. */}
+      <div className="flex justify-end gap-2">
+        {isTauri() && (
+          <button
+            type="button"
+            onClick={() => void onTapToPair()}
+            data-testid="tap-to-pair-launch"
+            className="text-sm px-3 py-1.5 rounded-lg bg-surface-variant text-on-surface"
+          >
+            Tap to pair
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setScannerOpen(true)}
@@ -418,6 +440,9 @@ export function PairedPeersSection() {
       {scannerOpen && (
         <PeerCardScanner onClose={() => setScannerOpen(false)} />
       )}
+
+      {/* Tap-to-pair sheet — mounts on demand. */}
+      <TapToPairSheet open={pairOpen} onClose={() => setPairOpen(false)} />
     </div>
   );
 }

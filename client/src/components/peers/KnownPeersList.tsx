@@ -30,6 +30,7 @@ const SOURCE_LABEL: Record<PeerSource, string> = {
   deeplink: "Link",
   matrix_room: "Matrix",
   dht: "DHT",
+  proximity: "Tap-paired",
 };
 
 /**

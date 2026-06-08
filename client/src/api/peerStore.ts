@@ -29,7 +29,7 @@ import { invoke } from "@tauri-apps/api/core";
  * Kept in sync with the Rust `PeerSource` enum in
  * `src-tauri/src/servitude/peer_store.rs`.
  */
-export type PeerSource = "qr" | "deeplink" | "matrix_room" | "dht";
+export type PeerSource = "qr" | "deeplink" | "matrix_room" | "dht" | "proximity";
 
 /**
  * A peer the user has paired with. Mirrors `KnownPeerPublic` on the Rust
@@ -81,7 +81,21 @@ interface RawKnownPeer {
   peerId: string;
   publicKeyHex: string;
   multiaddrs: string[];
-  source: "Qr" | "Deeplink" | "MatrixRoom" | "Dht";
+  // The real wire form is lowercase (source_to_wire in src-tauri/src/lib.rs
+  // emits "qr" | "deeplink" | "matrix_room" | "dht" | "proximity"). The
+  // PascalCase variants are retained defensively in case older serialization
+  // paths or test mocks emit them.
+  source:
+    | "Qr"
+    | "Deeplink"
+    | "MatrixRoom"
+    | "Dht"
+    | "Proximity"
+    | "qr"
+    | "deeplink"
+    | "matrix_room"
+    | "dht"
+    | "proximity";
   firstSeen: string;
   lastSeen: string;
   accessGranted: boolean;
@@ -89,14 +103,18 @@ interface RawKnownPeer {
 }
 
 /**
- * Normalize the backend's PascalCase source enum to the TS-facing
- * snake_case form. Defensive against unknown variants — if Wave 1 ever
- * adds a new variant we haven't taught the wrapper about, we fall back
- * to `'dht'` (the lowest-trust source) rather than fabricating a value
- * the consumer might rely on.
+ * Normalize the backend's source enum to the TS-facing snake_case form.
+ * The real wire form from `source_to_wire` is already lowercase
+ * ("qr" | "deeplink" | "matrix_room" | "dht" | "proximity"); the PascalCase
+ * arms are retained defensively so existing test mocks and any older
+ * serialization path continue to parse correctly.
+ *
+ * Defensive against unknown variants — falls back to `'dht'` (lowest-trust
+ * source) rather than fabricating a value the consumer might rely on.
  */
 function parseSource(raw: RawKnownPeer["source"]): PeerSource {
   switch (raw) {
+    // PascalCase — retained for defensive compatibility.
     case "Qr":
       return "qr";
     case "Deeplink":
@@ -105,6 +123,19 @@ function parseSource(raw: RawKnownPeer["source"]): PeerSource {
       return "matrix_room";
     case "Dht":
       return "dht";
+    case "Proximity":
+      return "proximity";
+    // Lowercase — the real source_to_wire output from the backend.
+    case "qr":
+      return "qr";
+    case "deeplink":
+      return "deeplink";
+    case "matrix_room":
+      return "matrix_room";
+    case "dht":
+      return "dht";
+    case "proximity":
+      return "proximity";
     default:
       // Unknown variant — treat as DHT (lowest trust). This branch is
       // also typed as `never` because the switch is exhaustive over the
