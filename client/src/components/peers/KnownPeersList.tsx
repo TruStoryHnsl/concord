@@ -15,9 +15,10 @@
  * we want the parent's layout to stay stable as the list fills in.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePeerStore } from "../../stores/peerStore";
 import type { KnownPeer, PeerSource } from "../../api/peerStore";
+import { connectToPeer } from "../../api/peerDial";
 import { useToastStore } from "../../stores/toast";
 
 /**
@@ -95,6 +96,28 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
   const revokeAccess = usePeerStore((s) => s.revokeAccess);
   const grantAccess = usePeerStore((s) => s.grantAccess);
   const addToast = useToastStore((s) => s.addToast);
+  const [connecting, setConnecting] = useState(false);
+
+  // P2P-FR-002 — turn the intentional pairing into a live connection.
+  // Native invokes the `peer_dial` Rust command (queues a real swarm.dial);
+  // web ensures the browser node and dials the peer's stored multiaddrs.
+  // Either way, no discovery is consulted — only the paired addresses.
+  const handleConnect = async () => {
+    if (connecting) return;
+    setConnecting(true);
+    try {
+      await connectToPeer(peer);
+      // Native resolves on "dial queued"; web resolves on "connection
+      // opened". Phrase the toast so it's truthful for both.
+      addToast("Connecting to peer…", "success");
+    } catch (err) {
+      addToast(
+        `Could not connect: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   const handleRemove = async () => {
     // window.confirm is fine here — it's a destructive action on a single
@@ -190,6 +213,31 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
         />
         Access
       </label>
+      {/* P2P-FR-002 — Connect: dial this paired peer using its stored
+          multiaddrs. Disabled when access is revoked (a visible-only peer
+          can't be dialed) or while a dial is already in flight. */}
+      <button
+        type="button"
+        onClick={() => void handleConnect()}
+        disabled={!peer.accessGranted || connecting}
+        className="btn-press inline-flex items-center justify-center px-1.5 py-1 rounded-md text-on-surface-variant hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
+        aria-label={`Connect to paired peer ${peer.peerId.slice(0, 12)}`}
+        title={
+          peer.accessGranted
+            ? "Connect to this peer (dials its stored addresses)"
+            : "Grant access before connecting"
+        }
+        data-testid={`connect-peer-${peer.peerId}`}
+      >
+        <span
+          className="material-symbols-outlined text-base leading-none"
+          style={{
+            fontVariationSettings: '"FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24',
+          }}
+        >
+          {connecting ? "sync" : "cable"}
+        </span>
+      </button>
       <button
         type="button"
         onClick={handleRemove}
