@@ -27,14 +27,19 @@ that gets to decide what an extension can do, and it must be explicit.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import ipaddress
 import json
 import logging
 import os
 import shutil
+import socket
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
@@ -66,6 +71,132 @@ ALLOWED_PERMISSIONS: frozenset[str] = frozenset(
         "media.read",        # read shared media on the server
     }
 )
+
+
+# ── SSRF / fetch policy (S2) ─────────────────────────────────────
+# By default the install fetcher refuses to reach private, loopback,
+# link-local, or otherwise non-public IPs — a malicious repo index
+# could otherwise point ``bundle_url`` at an internal metadata service
+# (169.254.169.254), a localhost admin port, or a LAN host, turning the
+# admin-triggered install into an SSRF primitive. ``file://`` bypasses
+# the network entirely and is therefore also dev-only.
+#
+# Operators who knowingly run a local mirror (CI, ``python -m
+# http.server`` on localhost, ``file://`` bundles in tests) opt in with
+# ``EXTENSIONS_ALLOW_PRIVATE_FETCH=1``.
+
+
+def _dev_fetch_allowed() -> bool:
+    """True when the operator has opted into private-IP / file:// fetches.
+
+    Read at call time (not import time) so tests can toggle it per-case.
+    """
+    return os.getenv("EXTENSIONS_ALLOW_PRIVATE_FETCH", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True iff ``ip`` is a globally-routable public address.
+
+    Rejects loopback, private (RFC1918 / ULA), link-local (incl. the
+    169.254.169.254 cloud-metadata range), multicast, reserved, and the
+    unspecified address. IPv4-mapped IPv6 is unwrapped first so an
+    attacker can't smuggle 127.0.0.1 as ::ffff:127.0.0.1.
+    """
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _assert_host_is_public(host: str) -> None:
+    """Resolve ``host`` and raise HTTPException(400) if ANY resolved
+    address is non-public. A literal IP is checked directly; a hostname
+    is resolved via DNS and every returned address must be public
+    (defends against DNS rebinding to a single private A record)."""
+    # Literal IP?
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if not _ip_is_public(literal):
+            raise HTTPException(
+                400, f"remote_url host resolves to a non-public address: {host}"
+            )
+        return
+
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as e:
+        raise HTTPException(400, f"remote_url host did not resolve: {host} ({e})")
+    if not infos:
+        raise HTTPException(400, f"remote_url host did not resolve: {host}")
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if not _ip_is_public(ip):
+            raise HTTPException(
+                400,
+                f"remote_url host {host} resolves to a non-public address ({addr})",
+            )
+
+
+def _verify_integrity(zip_bytes: bytes, integrity: str) -> None:
+    """Verify a bundle's SHA-384 Subresource-Integrity string.
+
+    ``integrity`` is the ``sha384-<base64>`` form used throughout the
+    repo protocol and the room-session ``launch_descriptor.integrity``
+    field. Recomputes the digest of the *fetched* bytes and rejects with
+    HTTP 422 on any mismatch — called BEFORE unpack so a tampered bundle
+    never touches the filesystem.
+    """
+    value = integrity.strip()
+    prefix = "sha384-"
+    if not value.startswith(prefix):
+        raise HTTPException(
+            422,
+            "integrity must be a SHA-384 SRI string of the form 'sha384-<base64>'",
+        )
+    b64 = value[len(prefix):]
+    try:
+        expected = base64.b64decode(b64, validate=True)
+    except (ValueError, Exception):  # noqa: BLE001 — base64 raises binascii.Error
+        raise HTTPException(422, "integrity base64 payload is malformed")
+    if len(expected) != hashlib.sha384().digest_size:
+        raise HTTPException(
+            422, "integrity digest length does not match SHA-384 (48 bytes)"
+        )
+    actual = hashlib.sha384(zip_bytes).digest()
+    if not _consttime_eq(actual, expected):
+        raise HTTPException(
+            422,
+            {
+                "error": "integrity_mismatch",
+                "algorithm": "sha384",
+                "expected": value,
+                "actual": prefix + base64.b64encode(actual).decode("ascii"),
+            },
+        )
+
+
+def _consttime_eq(a: bytes, b: bytes) -> bool:
+    import hmac
+
+    return hmac.compare_digest(a, b)
 
 
 def is_extension_directory_safe(target: Path, base: Path) -> bool:
@@ -290,20 +421,48 @@ def _validate_manifest(manifest: Any) -> dict[str, Any]:
 
 
 async def _fetch_zip_bytes(remote_url: str) -> bytes:
-    """Fetch the bundle as bytes. Supports http(s):// and file://."""
+    """Fetch the bundle as bytes. Supports http(s):// and file://.
+
+    SSRF-hardened (S2): http(s) hosts must resolve to a public IP, or
+    the operator must set ``EXTENSIONS_ALLOW_PRIVATE_FETCH=1``. ``file://``
+    reads bypass the network and are therefore only honoured behind the
+    same dev flag. Redirects are NOT auto-followed — a 30x is surfaced as
+    a 502 so a public URL can't bounce the fetch to a private target.
+    """
     parsed_url = remote_url.strip()
+    dev = _dev_fetch_allowed()
+
     if parsed_url.startswith("file://"):
+        if not dev:
+            raise HTTPException(
+                400,
+                "file:// fetch is disabled; set EXTENSIONS_ALLOW_PRIVATE_FETCH=1 "
+                "for local development",
+            )
         local = Path(parsed_url[len("file://") :])
         if not local.is_file():
             raise HTTPException(400, f"file not found: {local}")
         return local.read_bytes()
+
     if not parsed_url.startswith(("http://", "https://")):
         raise HTTPException(400, "remote_url must be http(s):// or file://")
-    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+
+    split = urlsplit(parsed_url)
+    host = split.hostname
+    if not host:
+        raise HTTPException(400, "remote_url has no host")
+    if not dev:
+        _assert_host_is_public(host)
+
+    # follow_redirects is False so a public URL cannot 30x-redirect the
+    # fetch onto a private/loopback target after the SSRF check.
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=False) as client:
         try:
             r = await client.get(parsed_url)
         except httpx.HTTPError as e:
             raise HTTPException(502, f"fetch failed: {e}")
+    if r.is_redirect:
+        raise HTTPException(502, "fetch returned a redirect; redirects are not followed")
     if r.status_code != 200:
         raise HTTPException(502, f"fetch returned {r.status_code}")
     return r.content
@@ -536,6 +695,12 @@ async def list_extensions(
 
 class InstallRequest(BaseModel):
     remote_url: str
+    # S2 / repo protocol Tier-1: optional SHA-384 SRI of the bundle.zip.
+    # When present, the server recomputes the digest of the fetched bytes
+    # and rejects (422) on mismatch BEFORE unpack. Repo-driven installs
+    # pass the index's ``integrity`` here; direct admin installs may omit
+    # it (no integrity guarantee, but the existing pipeline still runs).
+    integrity: str | None = None
 
 
 @router.post("/install", status_code=201, response_model=InstalledExtensionOut)
@@ -548,6 +713,12 @@ async def install_extension(
     _admin_required(user_id)
 
     zip_bytes = await _fetch_zip_bytes(body.remote_url)
+
+    # Tier-1 integrity gate (S2): verify the SHA-384 of the fetched bytes
+    # BEFORE anything is written to disk. A tampered mirror is rejected
+    # here, never reaching the unpack step.
+    if body.integrity is not None:
+        _verify_integrity(zip_bytes, body.integrity)
 
     # Use a temp staging directory so manifest validation runs before
     # we commit to a final extension id (read from the manifest itself).
