@@ -158,6 +158,44 @@ export const MessageList = memo(function MessageList({
   const senderFormats = useFormatStore((s) => s.senderFormats);
   const stickyWidgets = messages.filter((message) => message.widgetRaw && !message.redacted).slice(-3);
 
+  // Virtualization (tail window). Rooms keep up to ~1000 ChatMessages in
+  // `messages` (useMatrix caps the timeline slice at 1000). Rendering all
+  // of them mounts thousands of DOM nodes — avatar + markdown content +
+  // reaction pills per row — which janks scroll and balloons memory. We
+  // instead render only the most-recent `visibleCount` messages and grow
+  // the window upward as the user scrolls back, before falling through to
+  // Matrix server pagination (`onLoadMore`) once the whole in-memory array
+  // is on screen. This is purely a render-window optimization: the message
+  // data, scroll-restore math, headers, date separators and pagination all
+  // operate on absolute indices into the full `messages` array, so output
+  // is identical to the previous `messages.map(...)` — just fewer live DOM
+  // nodes at any instant.
+  const WINDOW_INITIAL = 80;
+  const WINDOW_STEP = 80;
+  const [visibleCount, setVisibleCount] = useState(WINDOW_INITIAL);
+
+  // Window onto the tail of the array. `windowStart` is the absolute index
+  // of the first rendered message; the slice below preserves each message's
+  // real neighbour (for header/date-separator grouping) by also reading the
+  // element immediately before `windowStart`.
+  const windowStart = Math.max(0, messages.length - visibleCount);
+  const windowedMessages = messages.slice(windowStart);
+  const windowAtArrayTop = windowStart === 0;
+
+  // When new messages stream in at the bottom, keep the tail window pinned
+  // to the newest message so "scrolled to bottom" stays virtualized to the
+  // most recent rows rather than drifting. Growing only happens via the
+  // top sentinel (scrollback). Reset to the initial window when the room
+  // changes (array shrinks / identity of first message changes).
+  const prevLenRef = useRef(messages.length);
+  useEffect(() => {
+    if (messages.length < prevLenRef.current) {
+      // Array shrank (room switch / timeline trim) — reset the window.
+      setVisibleCount(WINDOW_INITIAL);
+    }
+    prevLenRef.current = messages.length;
+  }, [messages.length]);
+
   // Track whether user is at/near bottom
   const bottomObserverCallback = useCallback(
     (entries: IntersectionObserverEntry[]) => {
@@ -203,7 +241,10 @@ export const MessageList = memo(function MessageList({
     }
 
     prevLastMsgIdRef.current = lastMsgId;
-  }, [messages, currentUserId]);
+    // `visibleCount` is a dep so that growing the tail window during
+    // scrollback runs the same scroll-restore branch (via the pending
+    // `prevScrollHeightRef`) that a Matrix paginate would.
+  }, [messages, currentUserId, visibleCount]);
 
   // Top sentinel — triggers scrollback pagination
   useEffect(() => {
@@ -213,7 +254,18 @@ export const MessageList = memo(function MessageList({
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting && hasMore && !isPaginating) {
+        if (!entries[0]?.isIntersecting) return;
+        // Scrollback step 1: if there are still in-memory messages above
+        // the rendered window, grow the window (cheap, no network) and
+        // preserve scroll position the same way a paginate would.
+        if (!windowAtArrayTop) {
+          prevScrollHeightRef.current = container.scrollHeight;
+          setVisibleCount((c) => c + WINDOW_STEP);
+          return;
+        }
+        // Scrollback step 2: the whole in-memory array is on screen — fall
+        // through to Matrix server pagination for older history.
+        if (hasMore && !isPaginating) {
           prevScrollHeightRef.current = container.scrollHeight;
           onLoadMore();
         }
@@ -222,7 +274,7 @@ export const MessageList = memo(function MessageList({
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, isPaginating, onLoadMore]);
+  }, [hasMore, isPaginating, onLoadMore, windowAtArrayTop]);
 
   if (messages.length === 0) {
     return (
@@ -256,7 +308,11 @@ export const MessageList = memo(function MessageList({
         </div>
       )}
 
-      {messages.map((msg, i) => {
+      {windowedMessages.map((msg, wi) => {
+        // Absolute index into the full `messages` array so header/date
+        // grouping reads the true previous message even across the window
+        // boundary (the message just above the rendered window).
+        const i = windowStart + wi;
         const prevMsg = messages[i - 1];
         const showHeader =
           !prevMsg ||
