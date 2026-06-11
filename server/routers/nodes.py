@@ -159,7 +159,7 @@ async def create_disposable_node(
     pillar — for now the token is just an opaque identifier).
     """
     if not body.contribute_compute:
-        # Hard requirement from the disposable-node review notes:
+        # Hard requirement from PLAN.md feedback_open_questions:
         # disposable nodes MUST contribute compute. Refusing the
         # contribution is a fast-fail.
         raise ConcordError(

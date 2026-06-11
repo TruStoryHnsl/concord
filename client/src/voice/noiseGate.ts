@@ -12,7 +12,19 @@ export const INPUT_NOISE_GATE_RELEASE_SECONDS = 0.14;
 export const INPUT_SIGNAL_METER_FLOOR_DB = -72;
 export const INPUT_SIGNAL_METER_CEIL_DB = -6;
 const SILENCE_FLOOR_DB = -100;
-type VoiceIsolationConstraints = MediaTrackConstraints & {
+// TS6's lib.dom widened MediaTrackConstraints' boolean audio members to
+// ``ConstrainBooleanOrDOMString``. livekit's ``AudioCaptureOptions`` (and the
+// way we actually populate these fields — always plain booleans) expects the
+// narrower ``ConstrainBoolean``. Re-narrow the members we set so the produced
+// object stays assignable to both ``MediaTrackConstraints`` and
+// ``AudioCaptureOptions``.
+type VoiceIsolationConstraints = Omit<
+  MediaTrackConstraints,
+  "echoCancellation" | "noiseSuppression" | "autoGainControl"
+> & {
+  echoCancellation?: ConstrainBoolean;
+  noiseSuppression?: ConstrainBoolean;
+  autoGainControl?: ConstrainBoolean;
   voiceIsolation?: ConstrainBoolean;
 };
 type VoiceIsolationSupportedConstraints = MediaTrackSupportedConstraints & {
@@ -77,7 +89,7 @@ export function resolveNoiseGateOpenState({
 
 export function buildMicTrackConstraints(
   settings: VoiceInputSettings,
-): MediaTrackConstraints {
+): VoiceIsolationConstraints {
   const constraints: VoiceIsolationConstraints = {
     echoCancellation: settings.echoCancellation,
     noiseSuppression: settings.noiseSuppression,

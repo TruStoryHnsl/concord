@@ -29,7 +29,7 @@
  *   extension:send_state_event — request the shell emit a Matrix state
  *                                event on behalf of the extension (W6)
  *
- * See the extension shell API contract for the full specification.
+ * See docs/extensions/shell-api.md for the full specification.
  */
 
 import type { Mode, Seat } from "../components/extension/InputRouter";

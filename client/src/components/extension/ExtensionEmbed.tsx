@@ -3,7 +3,7 @@
  *
  * Replaces the original single-pane ExtensionEmbed with a surface manager
  * that can mount 1..N extension surfaces per session, per the structured
- * session model defined in the extension session contract.
+ * session model defined in docs/extensions/session-model.md.
  *
  * W2 adds: InputRouter permission enforcement — postMessage actions from iframes
  * are checked against the session mode + participant seat before being forwarded.
@@ -14,7 +14,7 @@
  *   - concord:init      sent to each iframe on mount with session context
  *   - concord:surface_resize  sent via ResizeObserver when container dimensions change
  *   Participant join/leave and host_transfer messages are emitted by the caller
- *   via the useExtensionSession() hook (see the extension shell API contract).
+ *   via the useExtensionSession() hook (see docs/extensions/shell-api.md).
  *
  * Backward compatibility:
  *   - When no `surfaces` prop is provided (or it is empty), falls back to

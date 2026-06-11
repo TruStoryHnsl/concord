@@ -3,7 +3,7 @@
  * (`/concord/porch/1.0.0`).
  *
  * Speaks the same wire format as the Rust handler in
- * the native porch protocol:
+ * `src-tauri/src/porch/protocol.rs`:
  *
  *   - 4-byte BIG-ENDIAN length prefix.
  *   - JSON envelope body (UTF-8).

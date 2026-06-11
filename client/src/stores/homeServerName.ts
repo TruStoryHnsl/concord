@@ -3,7 +3,7 @@
  *
  * The home server is the user's persistent local data layer (see the
  * 2026-06-01 CONSOLIDATED ARCHITECTURE filing in
- * the internal instruction inbox). Its default name is `"home"`; the user
+ * `instructions_inbox.md`). Its default name is `"home"`; the user
  * can rename it via the Tauri command `home_set_server_name`.
  *
  * Storage backs onto the new `home_meta` table inside the existing

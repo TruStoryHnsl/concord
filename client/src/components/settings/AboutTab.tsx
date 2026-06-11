@@ -7,8 +7,8 @@ import {
   type UpdaterCheckResult,
 } from "../../lib/updater";
 
-// Per-platform release-suffix tags emitted by the desktop release pipeline.
-// Each one carries exactly one
+// Per-platform release-suffix tags emitted by the desktop pipeline
+// (.github/workflows/release.yml). Each one carries exactly one
 // installer asset; the asset filename embeds the SemVer version,
 // so we cannot use GitHub's static `/releases/latest/download/<name>`
 // redirect — we resolve the latest tag of each suffix at runtime via
