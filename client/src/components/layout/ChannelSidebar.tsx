@@ -27,6 +27,7 @@ import { useUnreadCounts } from "../../hooks/useUnreadCounts";
 import { useVoiceParticipants } from "../../hooks/useVoiceParticipants";
 import { usePlatform } from "../../hooks/usePlatform";
 import { InviteModal } from "../server/InviteModal";
+import { ExtensionRepoBrowser } from "../extension/ExtensionRepoBrowser";
 
 interface ChannelSidebarProps {
   mobile?: boolean;
@@ -76,6 +77,10 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
   const [selectedExtensionId, setSelectedExtensionId] = useState<string>("");
   const [appAccess, setAppAccess] = useState<AppAccess>("all");
   const [showInviteModal, setShowInviteModal] = useState(false);
+  // S4: community extension-repository browser (browse/install/update/remove
+  // across repos). Reached from the "Extensions" affordance in the
+  // Applications section, alongside app channels.
+  const [showRepoBrowser, setShowRepoBrowser] = useState(false);
   const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState<number | null>(null);
   // Tracks which launcher button is currently kicking off an app
   // channel — disables the button + shows a hourglass while the
@@ -493,15 +498,28 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
          *      it via POST /servers/<id>/extensions/<id>/start. The user
          *      doesn't manage app channels manually anymore.
          *
-         * Always renders (not gated on appChannels.length) when at least
-         * one extension is installed — the launchers are the entry point.
+         * Always renders — even with zero installed extensions — so the
+         * "Extensions" affordance (the repo browser entry, S4) is always
+         * reachable alongside channels.
          */}
-        {(appChannels.length > 0 || extensionCatalog.length > 0) && (
+        {true && (
           <div className="mb-3">
             <div className="flex items-center justify-between px-2 mb-1">
               <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
                 Applications
               </h3>
+              {/* S4 entry: open the community extension-repository browser.
+                  A per-user client pref — no admin gate to BROWSE; the
+                  install/uninstall buttons inside the browser are the
+                  admin-gated surface. */}
+              <button
+                onClick={() => setShowRepoBrowser(true)}
+                data-testid="open-extension-repo-browser"
+                title="Browse extensions"
+                className="text-on-surface-variant hover:text-on-surface transition-colors flex items-center"
+              >
+                <span className="material-symbols-outlined text-sm">add</span>
+              </button>
             </div>
 
             {/* Active app channels. Stop button here AND inside the
@@ -566,6 +584,24 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
                   </button>
                 );
               })}
+
+            {/* "Extensions" affordance — always present, opens the repo
+                browser (S4). Consistent with how app channels appear in
+                this column; the entry sits at the bottom of the section. */}
+            <button
+              onClick={() => setShowRepoBrowser(true)}
+              data-testid="extensions-affordance"
+              className="w-full text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body text-on-surface-variant/70 hover:bg-surface-container-high hover:text-on-surface"
+              title="Browse and install extensions"
+            >
+              <span className="material-symbols-outlined text-base flex-shrink-0">
+                extension
+              </span>
+              <span className="min-w-0 truncate flex-1">Extensions</span>
+              <span className="material-symbols-outlined text-sm text-on-surface-variant/50 flex-shrink-0">
+                add
+              </span>
+            </button>
           </div>
         )}
 
@@ -703,6 +739,9 @@ export const ChannelSidebar = memo(function ChannelSidebar({ mobile: _mobile, on
 
       {showInviteModal && (
         <InviteModal serverId={server.id} onClose={() => setShowInviteModal(false)} />
+      )}
+      {showRepoBrowser && (
+        <ExtensionRepoBrowser onClose={() => setShowRepoBrowser(false)} />
       )}
     </div>
   );
