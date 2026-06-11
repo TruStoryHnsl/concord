@@ -46,8 +46,6 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
   const active = useLocalServerSelectionStore((s) => s.active);
   const lanMapOpen = useLocalServerSelectionStore((s) => s.lanMapOpen);
   const setLanMapOpen = useLocalServerSelectionStore((s) => s.setLanMapOpen);
-  const meshMapOpen = useLocalServerSelectionStore((s) => s.meshMapOpen);
-  const setMeshMapOpen = useLocalServerSelectionStore((s) => s.setMeshMapOpen);
   const homeName = useHomeServerNameStore((s) => s.name);
 
   // Lazy-load on mount. `loadChannels` is idempotent — re-calling it
@@ -139,33 +137,9 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                   }`}
                 >
                   <span className="material-symbols-outlined flex-shrink-0 text-on-surface-variant" style={{ fontSize: "18px" }}>
-                    wifi_tethering
-                  </span>
-                  <span className="min-w-0 truncate flex-1">LAN map</span>
-                </button>
-              </div>
-              {/* W1.1 / F2 — Mesh map (N-hop topology). Sibling of the LAN
-                  map row; selecting it opens MeshMap in the chat pane. The
-                  store makes the two surfaces mutually exclusive. */}
-              <div className="group flex items-center gap-0.5">
-                <button
-                  type="button"
-                  data-testid="local-channel-row-mesh"
-                  data-channel-kind="mesh"
-                  onClick={() => {
-                    setMeshMapOpen(true);
-                    onChannelSelect?.();
-                  }}
-                  className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
-                    meshMapOpen
-                      ? "bg-surface-container-highest text-on-surface"
-                      : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-                  }`}
-                >
-                  <span className="material-symbols-outlined flex-shrink-0 text-on-surface-variant" style={{ fontSize: "18px" }}>
                     hub
                   </span>
-                  <span className="min-w-0 truncate flex-1">Mesh map</span>
+                  <span className="min-w-0 truncate flex-1">LAN map</span>
                 </button>
               </div>
             </div>
@@ -177,8 +151,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                 </h3>
               </div>
               {channels.map((ch) => {
-                const isActive =
-                  !lanMapOpen && !meshMapOpen && selectedChannelId === ch.id;
+                const isActive = !lanMapOpen && selectedChannelId === ch.id;
                 return (
                   <div key={ch.id} className="group flex items-center gap-0.5">
                     <button
@@ -186,7 +159,6 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                       data-testid={`local-channel-row-${ch.id}`}
                       onClick={() => {
                         setLanMapOpen(false);
-                        setMeshMapOpen(false);
                         void selectChannel(ch.id);
                         onChannelSelect?.();
                       }}

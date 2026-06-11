@@ -43,15 +43,6 @@ interface LocalServerSelectionState {
    */
   lanMapOpen: boolean;
   setLanMapOpen: (open: boolean) => void;
-  /**
-   * W1.1 / F2 — whether the `mesh` pseudo-channel (the N-hop mesh
-   * topology map) is the active view in the local source's chat pane.
-   * Mutually exclusive with `lanMapOpen` (both are cross-server special
-   * surfaces); opening one closes the other. See `LocalChannelSidebar` /
-   * `ChatLayout`.
-   */
-  meshMapOpen: boolean;
-  setMeshMapOpen: (open: boolean) => void;
 }
 
 export const useLocalServerSelectionStore = create<LocalServerSelectionState>(
@@ -59,12 +50,6 @@ export const useLocalServerSelectionStore = create<LocalServerSelectionState>(
     active: "home",
     setActive: (next: ActiveLocalServer) => set({ active: next }),
     lanMapOpen: false,
-    // Opening the LAN map closes the mesh map (they share the chat pane).
-    setLanMapOpen: (open: boolean) =>
-      set(open ? { lanMapOpen: true, meshMapOpen: false } : { lanMapOpen: false }),
-    meshMapOpen: false,
-    // Opening the mesh map closes the LAN map (they share the chat pane).
-    setMeshMapOpen: (open: boolean) =>
-      set(open ? { meshMapOpen: true, lanMapOpen: false } : { meshMapOpen: false }),
+    setLanMapOpen: (open: boolean) => set({ lanMapOpen: open }),
   }),
 );
