@@ -52,6 +52,8 @@ import { ChannelSidebar, UserBar } from "./ChannelSidebar";
 import { LocalServerSidebar } from "../local/LocalServerSidebar";
 import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
 import { LocalChatPane } from "../local/LocalChatPane";
+import { LanDiscoveryMap } from "../local/LanDiscoveryMap";
+import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { usePorchStore } from "../../stores/porchStore";
 import { useInstanceNameStore } from "../../stores/instanceName";
 import { useHomeServerNameStore } from "../../stores/homeServerName";
@@ -346,6 +348,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   //   - client/src/components/local/LocalChannelSidebar.tsx
   //   - client/src/components/local/LocalChatPane.tsx
   const [localActive, setLocalActive] = useState(false);
+  // W0.3 / F1 — when the local source's `lan_map` pseudo-channel is the
+  // active view, the chat pane renders LanDiscoveryMap instead of a porch
+  // channel. Tracked in the localServerSelection store so the sidebar row
+  // and the pane agree on which special surface is open.
+  const lanMapOpen = useLocalServerSelectionStore((s) => s.lanMapOpen);
   const porchSelectedChannel = usePorchStore((s) =>
     s.channels.find((c) => c.id === s.selectedChannelId) ?? null,
   );
@@ -1445,8 +1452,17 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                   data-testid="local-chat-header"
                   className="font-headline font-semibold truncate"
                 >
-                  <span className="text-on-surface-variant mr-1">#</span>
-                  {porchSelectedChannel?.name ?? porchLabel}
+                  {lanMapOpen ? (
+                    <>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                      LAN map
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-on-surface-variant mr-1">#</span>
+                      {porchSelectedChannel?.name ?? porchLabel}
+                    </>
+                  )}
                 </h2>
                 {showInlineAccountBanner && (
                   <DesktopAccountButton
@@ -1650,9 +1666,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Shared chat/voice content
   const renderChatContent = () => {
-    // Local porch chat — reuses MessageList + MessageInput so the
-    // visual surface matches every other server source.
+    // Local source surfaces. The LAN map is a special cross-server view
+    // that takes precedence over the porch channel when its pseudo-channel
+    // row is selected; otherwise the porch chat renders as before.
     if (localActive) {
+      if (lanMapOpen) {
+        return <LanDiscoveryMap />;
+      }
       return <LocalChatPane />;
     }
     // DM chat
