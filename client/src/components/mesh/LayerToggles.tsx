@@ -48,9 +48,22 @@ export interface LayerTogglesProps {
   enabled: Set<MeshLayerId>;
   /** Fired with the layer id when an available toggle is clicked. */
   onToggle: (id: MeshLayerId) => void;
+  /**
+   * Layer ids made available at runtime by an enabled connector (F7). A
+   * layer listed here renders as a live (clickable) toggle even though its
+   * static [`MeshLayerDescriptor.available`] is `false` — that flag is just
+   * the conservative default before any connector registers. The Concord
+   * layer is always available regardless. When omitted, only statically-
+   * available layers are clickable (the W1.1 contract).
+   */
+  availableOverride?: Set<MeshLayerId>;
 }
 
-export function LayerToggles({ enabled, onToggle }: LayerTogglesProps) {
+export function LayerToggles({
+  enabled,
+  onToggle,
+  availableOverride,
+}: LayerTogglesProps) {
   return (
     <div
       className="flex items-center gap-1.5 flex-wrap"
@@ -58,13 +71,15 @@ export function LayerToggles({ enabled, onToggle }: LayerTogglesProps) {
     >
       {MESH_LAYERS.map((layer) => {
         const on = enabled.has(layer.id);
-        const disabled = !layer.available;
+        const available =
+          layer.available || (availableOverride?.has(layer.id) ?? false);
+        const disabled = !available;
         return (
           <button
             key={layer.id}
             type="button"
             data-testid={`mesh-layer-toggle-${layer.id}`}
-            data-layer-available={layer.available}
+            data-layer-available={available}
             data-layer-on={on}
             disabled={disabled}
             title={

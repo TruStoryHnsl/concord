@@ -154,18 +154,6 @@ services:
       # Native installs leave this unset; their persisted profile
       # defaults to p2p_only.
       CONCORD_PROFILE: web_first
-      # W2.2 / F5 — Hub mode. When set truthy (1/true/yes/on) the Concord
-      # Rust binary runs as a HUB: the full libp2p swarm, always-on,
-      # always-scanning (drives the F2 mesh topology), exposing the web
-      # portal AND accepting passphrase-encrypted superuser-keychain
-      # CLAIMs from native devices (stored ciphertext-only — the Hub
-      # never sees plaintext). A Hub ALWAYS forces the inbound
-      # connection_gate enforce flag ON regardless of tunnel_config.json,
-      # because it holds users' encrypted backups. Default 0 (not a Hub);
-      # an operator opts in by setting CONCORD_HUB=1 in their .env. The
-      # encrypted-blob keystore persists under
-      # ${CONCORD_DATA_DIR}/hub_keystore/ (mounted at ./data/concord).
-      CONCORD_HUB: ${CONCORD_HUB:-0}
     depends_on:
       conduwuit:
         condition: service_started

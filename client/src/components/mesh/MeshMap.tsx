@@ -39,6 +39,10 @@ import {
   type SpringTier,
 } from "../../api/meshGraph";
 import { fetchPeerSwarmStatus } from "../../api/peerSwarm";
+import {
+  listConnectors,
+  fetchConnectorLayerGraph,
+} from "../../api/connectors";
 import { useInstanceNameStore } from "../../stores/instanceName";
 import {
   MeshCanvas,
@@ -69,11 +73,21 @@ export function MeshMap() {
   const [hopScale, setHopScale] = useState(1);
   const userAdjustedHop = useRef(false);
 
-  // Layer toggles. Concord on by default; external layers are disabled
-  // placeholders (F7), so toggling them is a no-op until then.
+  // Layer toggles. Concord on by default. External layers (F7) become
+  // available once their connector is enabled in the Connectors settings;
+  // `availableLayers` is driven by the connector registry below.
   const [enabledLayers, setEnabledLayers] = useState<Set<MeshLayerId>>(
     () => new Set<MeshLayerId>(["concord"]),
   );
+  // Layers an enabled connector has registered (F7). Concord is always
+  // available. Drives which LayerToggles are clickable.
+  const [availableLayers, setAvailableLayers] = useState<Set<MeshLayerId>>(
+    () => new Set<MeshLayerId>(["concord"]),
+  );
+  // The Meshtastic layer graph (W2.4) — populated when its connector is
+  // enabled and the Meshtastic layer toggle is on.
+  const [meshtasticGraph, setMeshtasticGraph] =
+    useState<MeshGraph>(EMPTY_MESH_GRAPH);
 
   // W1.3 / F4b — local-spring (one-hop-up) governance. CONSERVATIVE
   // DEFAULT OFF: a fresh install does not surface friend-of-friend nodes.
@@ -118,6 +132,55 @@ export function MeshMap() {
     if (!isNative) return;
     void refetchSpring();
   }, [isNative, refetchSpring]);
+
+  // Load the connector registry → which external-mesh layers are available
+  // (a layer is available iff its connector is enabled). Concord is always
+  // available.
+  const refreshAvailableLayers = useCallback(async () => {
+    if (!isNative) return;
+    try {
+      const connectors = await listConnectors();
+      const avail = new Set<MeshLayerId>(["concord"]);
+      for (const c of connectors) {
+        if (c.enabled) avail.add(c.id);
+      }
+      setAvailableLayers(avail);
+      // Drop any enabled layer that is no longer available (connector
+      // disabled out from under us).
+      setEnabledLayers((prev) => {
+        const next = new Set<MeshLayerId>();
+        for (const id of prev) if (avail.has(id)) next.add(id);
+        next.add("concord");
+        return next;
+      });
+    } catch (err) {
+      console.warn("[MeshMap] connector list failed:", err);
+    }
+  }, [isNative]);
+
+  useEffect(() => {
+    void refreshAvailableLayers();
+  }, [refreshAvailableLayers]);
+
+  // Fetch the Meshtastic layer graph when its layer is enabled. Empty when
+  // the layer is off (no fetch) — the canvas just shows the Concord layer.
+  const meshtasticOn = enabledLayers.has("meshtastic");
+  const refetchMeshtastic = useCallback(async () => {
+    if (!isNative || !meshtasticOn) {
+      setMeshtasticGraph(EMPTY_MESH_GRAPH);
+      return;
+    }
+    try {
+      setMeshtasticGraph(await fetchConnectorLayerGraph("meshtastic"));
+    } catch (err) {
+      console.warn("[MeshMap] meshtastic layer fetch failed:", err);
+      setMeshtasticGraph(EMPTY_MESH_GRAPH);
+    }
+  }, [isNative, meshtasticOn]);
+
+  useEffect(() => {
+    void refetchMeshtastic();
+  }, [refetchMeshtastic]);
 
   // Hydrate once: local peer id (center node) + initial snapshot.
   useEffect(() => {
@@ -214,18 +277,54 @@ export function MeshMap() {
     if (!out.some((n) => n.kind === "host")) {
       out.unshift({ id: localId, label: hostLabel, hop: 0, kind: "host" });
     }
+
+    // W2.4 — overlay the Meshtastic layer when enabled. Its node ids are
+    // namespaced (`meshtastic:<num>`) so they never collide with Concord
+    // base58 ids. Rendered as "known" nodes (no per-node trust on an open
+    // mesh); the radio at hop 0 is the layer's center.
+    if (meshtasticOn) {
+      const seen = new Set(out.map((n) => n.id));
+      for (const n of meshtasticGraph.nodes) {
+        if (seen.has(n.peerId)) continue;
+        const hop = n.hopDistance ?? 1;
+        out.push({
+          id: n.peerId,
+          label: n.peerId.replace(/^meshtastic:/, "📡 "),
+          hop,
+          kind: "known",
+        });
+      }
+    }
     return out;
-  }, [graph, concordOn, hopScale, instanceName, localId, reachedViaByPeer]);
+  }, [
+    graph,
+    concordOn,
+    hopScale,
+    instanceName,
+    localId,
+    reachedViaByPeer,
+    meshtasticOn,
+    meshtasticGraph,
+  ]);
 
   // Edges, filtered to those whose BOTH endpoints survived the node
   // filter. MeshCanvas uses {from,to}; our graph uses {a,b}.
   const edges = useMemo<MeshEdge[]>(() => {
-    if (!concordOn) return [];
     const visible = new Set(nodes.map((n) => n.id));
-    return graph.edges
-      .filter((e) => visible.has(e.a) && visible.has(e.b))
-      .map((e) => ({ from: e.a, to: e.b }));
-  }, [graph, nodes, concordOn]);
+    const out: MeshEdge[] = [];
+    if (concordOn) {
+      for (const e of graph.edges) {
+        if (visible.has(e.a) && visible.has(e.b)) out.push({ from: e.a, to: e.b });
+      }
+    }
+    // W2.4 — Meshtastic layer edges (namespaced ids, no collision).
+    if (meshtasticOn) {
+      for (const e of meshtasticGraph.edges) {
+        if (visible.has(e.a) && visible.has(e.b)) out.push({ from: e.a, to: e.b });
+      }
+    }
+    return out;
+  }, [graph, nodes, concordOn, meshtasticOn, meshtasticGraph]);
 
   const toggleLayer = useCallback((id: MeshLayerId) => {
     setEnabledLayers((prev) => {
@@ -266,7 +365,11 @@ export function MeshMap() {
       {/* Controls row: layer toggles + hop slider + count. */}
       <div className="px-4 py-2 flex flex-col gap-2 flex-shrink-0 border-b border-outline-variant/40">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <LayerToggles enabled={enabledLayers} onToggle={toggleLayer} />
+          <LayerToggles
+            enabled={enabledLayers}
+            onToggle={toggleLayer}
+            availableOverride={availableLayers}
+          />
           <span className="text-xs text-on-surface-variant font-label">
             {!concordOn
               ? "Concord layer off"

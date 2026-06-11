@@ -14,6 +14,7 @@ import { NodeHostingTab } from "./NodeHostingTab";
 import { UserConnectionsTab } from "./UserConnectionsTab";
 import { AboutTab } from "./AboutTab";
 import { HostingTab } from "./HostingTab";
+import { ConnectorsTab } from "./ConnectorsTab";
 import { AdminTab } from "./AdminTab";
 import { ServerSettingsContent } from "./ServerSettingsModal";
 
@@ -130,6 +131,9 @@ export function SettingsPanel() {
       // servitude module runs on mobile (foreground-active; backgrounded
       // pauses are handled by the app-level lifecycle hook).
       tabs.push({ key: "node", label: "Node", icon: "dns", group: "user" });
+      // F7 / W2.4 — external-mesh connectors (Reticulum, Meshtastic, LoRa).
+      // Native-only: connectors run in the swarm, not the browser.
+      tabs.push({ key: "connectors", label: "Connectors", icon: "device_hub", group: "user" });
     }
     tabs.push({ key: "hosting", label: "Hosting", icon: "dns", group: "user" });
     tabs.push({ key: "about", label: "About", icon: "info", group: "user" });
@@ -362,6 +366,7 @@ export function SettingsPanel() {
         {activeTab === "connections" && <UserConnectionsTab />}
         {activeTab === "appearance" && <AppearanceTab />}
         {activeTab === "node" && <NodeHostingTab />}
+        {activeTab === "connectors" && <ConnectorsTab />}
         {activeTab === "hosting" && <HostingTab />}
         {activeTab === "about" && <AboutTab />}
         {activeTab === "admin" && isAdmin && <AdminTab />}
