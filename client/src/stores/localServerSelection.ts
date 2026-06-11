@@ -33,23 +33,11 @@ export type ActiveLocalServer = "porch" | "home";
 interface LocalServerSelectionState {
   active: ActiveLocalServer;
   setActive: (next: ActiveLocalServer) => void;
-  /**
-   * W0.3 / F1 — whether the `lan_map` pseudo-channel is the active view
-   * in the local source's chat pane. When `true`, the chat pane renders
-   * `LanDiscoveryMap` instead of the selected porch channel. Selecting a
-   * real channel clears this (see `LocalChannelSidebar`). Distinct from
-   * `active` (which server tile is selected) — the LAN map is a
-   * cross-server special surface, not a server channel.
-   */
-  lanMapOpen: boolean;
-  setLanMapOpen: (open: boolean) => void;
 }
 
 export const useLocalServerSelectionStore = create<LocalServerSelectionState>(
   (set) => ({
     active: "home",
     setActive: (next: ActiveLocalServer) => set({ active: next }),
-    lanMapOpen: false,
-    setLanMapOpen: (open: boolean) => set({ lanMapOpen: open }),
   }),
 );
