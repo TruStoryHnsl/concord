@@ -53,6 +53,7 @@ import { LocalServerSidebar } from "../local/LocalServerSidebar";
 import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
 import { LocalChatPane } from "../local/LocalChatPane";
 import { LanDiscoveryMap } from "../local/LanDiscoveryMap";
+import { MeshMap } from "../mesh/MeshMap";
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { usePorchStore } from "../../stores/porchStore";
 import { useInstanceNameStore } from "../../stores/instanceName";
@@ -336,6 +337,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // channel. Tracked in the localServerSelection store so the sidebar row
   // and the pane agree on which special surface is open.
   const lanMapOpen = useLocalServerSelectionStore((s) => s.lanMapOpen);
+  // W1.1 / F2 — mesh-topology map special surface (sibling of the LAN
+  // map; mutually exclusive with it via the store).
+  const meshMapOpen = useLocalServerSelectionStore((s) => s.meshMapOpen);
   const porchSelectedChannel = usePorchStore((s) =>
     s.channels.find((c) => c.id === s.selectedChannelId) ?? null,
   );
@@ -1289,8 +1293,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 >
                   {lanMapOpen ? (
                     <>
-                      <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">wifi_tethering</span>
                       LAN map
+                    </>
+                  ) : meshMapOpen ? (
+                    <>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                      Mesh map
                     </>
                   ) : (
                     <>
@@ -1507,6 +1516,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     if (localActive) {
       if (lanMapOpen) {
         return <LanDiscoveryMap />;
+      }
+      if (meshMapOpen) {
+        return <MeshMap />;
       }
       return <LocalChatPane />;
     }

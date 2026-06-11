@@ -170,60 +170,6 @@ export async function listExtensions(accessToken: string): Promise<ServerExtensi
   return apiFetch("/extensions", {}, accessToken);
 }
 
-/**
- * Repo-driven install (S4). Hands the existing server install pipeline a
- * bundle URL + optional SHA-384 integrity string sourced from a
- * `concord-repo/v1` index version entry.
- *
- *   POST /api/extensions/install  { remote_url, integrity? }
- *
- * This is the SAME endpoint the legacy install-by-zip-URL admin path uses
- * — the repo system layers discovery on top of it, it does not reinvent
- * the install. Admin-gated server-side (403 for non-admins). The returned
- * shape carries the installed id + version; callers typically follow with
- * `reloadCatalog` so the Applications sidebar surfaces the new extension.
- */
-export interface InstallByUrlResult {
-  id: string;
-  version: string;
-  pricing: string;
-  enabled: boolean;
-}
-
-export async function installExtensionFromUrl(
-  remoteUrl: string,
-  accessToken: string,
-  integrity?: string,
-): Promise<InstallByUrlResult> {
-  return apiFetch(
-    "/extensions/install",
-    {
-      method: "POST",
-      body: JSON.stringify(
-        integrity
-          ? { remote_url: remoteUrl, integrity }
-          : { remote_url: remoteUrl },
-      ),
-    },
-    accessToken,
-  );
-}
-
-/**
- * Remove an installed extension by id (S4). DELETE /api/extensions/{id},
- * admin-gated server-side. 204 on success.
- */
-export async function uninstallExtensionById(
-  extensionId: string,
-  accessToken: string,
-): Promise<void> {
-  await apiFetch(
-    `/extensions/${encodeURIComponent(extensionId)}`,
-    { method: "DELETE" },
-    accessToken,
-  );
-}
-
 export async function listServers(accessToken: string): Promise<Server[]> {
   return apiFetch("/servers", {}, accessToken);
 }
