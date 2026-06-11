@@ -44,6 +44,8 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
   const selectChannel = usePorchStore((s) => s.selectChannel);
 
   const active = useLocalServerSelectionStore((s) => s.active);
+  const lanMapOpen = useLocalServerSelectionStore((s) => s.lanMapOpen);
+  const setLanMapOpen = useLocalServerSelectionStore((s) => s.setLanMapOpen);
   const homeName = useHomeServerNameStore((s) => s.name);
 
   // Lazy-load on mount. `loadChannels` is idempotent — re-calling it
@@ -106,41 +108,79 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
             </button>
           </div>
         ) : (
-          <div className="mb-3">
-            <div className="flex items-center justify-between px-2 mb-1">
-              <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
-                Text Channels
-              </h3>
+          <>
+            {/* W0.3 / F1 — Mesh section. The LAN discovery map is a
+                cross-server special surface (not a porch channel), so it
+                lives in its own section above Text Channels, mirroring how
+                app/special channels appear elsewhere. Selecting it opens
+                LanDiscoveryMap in the chat pane; selecting a real channel
+                below clears it. */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between px-2 mb-1">
+                <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
+                  Mesh
+                </h3>
+              </div>
+              <div className="group flex items-center gap-0.5">
+                <button
+                  type="button"
+                  data-testid="local-channel-row-lan_map"
+                  data-channel-kind="lan_map"
+                  onClick={() => {
+                    setLanMapOpen(true);
+                    onChannelSelect?.();
+                  }}
+                  className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
+                    lanMapOpen
+                      ? "bg-surface-container-highest text-on-surface"
+                      : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                  }`}
+                >
+                  <span className="material-symbols-outlined flex-shrink-0 text-on-surface-variant" style={{ fontSize: "18px" }}>
+                    hub
+                  </span>
+                  <span className="min-w-0 truncate flex-1">LAN map</span>
+                </button>
+              </div>
             </div>
-            {channels.map((ch) => {
-              const isActive = selectedChannelId === ch.id;
-              return (
-                <div key={ch.id} className="group flex items-center gap-0.5">
-                  <button
-                    type="button"
-                    data-testid={`local-channel-row-${ch.id}`}
-                    onClick={() => {
-                      void selectChannel(ch.id);
-                      onChannelSelect?.();
-                    }}
-                    className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
-                      isActive
-                        ? "bg-surface-container-highest text-on-surface"
-                        : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-                    }`}
-                  >
-                    <span className="text-on-surface-variant flex-shrink-0">#</span>
-                    <span className="min-w-0 truncate flex-1">{ch.name}</span>
-                  </button>
-                </div>
-              );
-            })}
-            {channels.length === 0 && (
-              <p className="px-3 py-4 text-xs text-on-surface-variant/70 font-label text-center">
-                No channels yet
-              </p>
-            )}
-          </div>
+
+            <div className="mb-3">
+              <div className="flex items-center justify-between px-2 mb-1">
+                <h3 className="text-[10px] font-label font-medium text-on-surface-variant uppercase tracking-widest">
+                  Text Channels
+                </h3>
+              </div>
+              {channels.map((ch) => {
+                const isActive = !lanMapOpen && selectedChannelId === ch.id;
+                return (
+                  <div key={ch.id} className="group flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      data-testid={`local-channel-row-${ch.id}`}
+                      onClick={() => {
+                        setLanMapOpen(false);
+                        void selectChannel(ch.id);
+                        onChannelSelect?.();
+                      }}
+                      className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
+                        isActive
+                          ? "bg-surface-container-highest text-on-surface"
+                          : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                      }`}
+                    >
+                      <span className="text-on-surface-variant flex-shrink-0">#</span>
+                      <span className="min-w-0 truncate flex-1">{ch.name}</span>
+                    </button>
+                  </div>
+                );
+              })}
+              {channels.length === 0 && (
+                <p className="px-3 py-4 text-xs text-on-surface-variant/70 font-label text-center">
+                  No channels yet
+                </p>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
