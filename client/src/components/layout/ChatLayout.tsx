@@ -89,7 +89,6 @@ import { useBootReadyStore } from "../../stores/bootReady";
 import {
   useNavStack,
   navTop,
-  buildStackToLevel,
   type NavLevel,
 } from "../../stores/navStack";
 
@@ -739,18 +738,6 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       setDMActive(false);
       setActiveServer(server.id);
       origSetActiveChannel(channel.matrix_room_id);
-      // Deep-link/refresh rehydrate: rebuild the navStack so a phone refresh
-      // inside a channel reopens the chat frame WITH a working back path
-      // (sources → servers → channels → chat) rather than landing on the
-      // top-of-stack `sources` root. Desktop ignores the stack, so this is a
-      // no-op there. `buildStackToLevel` synthesizes the intermediate frames.
-      useNavStack.getState().setStack(
-        buildStackToLevel("chat", {
-          serverId: server.id,
-          channelId: channel.matrix_room_id,
-        }),
-        null,
-      );
     } catch {
       startupRestoreHandled.current = userId;
     }
@@ -975,67 +962,6 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     navDepth >= prevNavDepthRef.current ? "forward" : "back";
   useEffect(() => {
     prevNavDepthRef.current = navDepth;
-  }, [navDepth]);
-
-  // ── Browser / Android hardware-back integration ──
-  //
-  // The navStack is mirrored into the History API so that the browser back
-  // button and the Android hardware-back gesture pop the stack instead of
-  // leaving Concord. Each drill-in `push` adds one `history.pushState` entry
-  // carrying a `navDepth` token; a `popstate` (back) pops the navStack.
-  //
-  // Loop avoidance: `popstate` ONLY drives navStack.pop() — it never pushes.
-  // The depth-sync effect ONLY pushes when the stack grew ABOVE the depth
-  // already recorded in `history.state` — so the pop it itself causes (which
-  // lowers depth) never re-triggers a push. The `navDepth` token in
-  // `history.state` is the double-pop guard: a popstate that finds the stack
-  // already at-or-below the entry's depth is a no-op.
-  const popstateSyncingRef = useRef(false);
-  useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      const targetDepth =
-        e.state && typeof e.state.navDepth === "number"
-          ? (e.state.navDepth as number)
-          : 1;
-      const current = useNavStack.getState().stack.length;
-      // Only pop when the history entry we landed on is shallower than the
-      // live stack — guards against double-pop and forward-nav no-ops.
-      if (current > targetDepth) {
-        popstateSyncingRef.current = true;
-        // Collapse to the target depth (usually one pop, but a multi-entry
-        // back swipe can skip several frames at once).
-        let steps = current - targetDepth;
-        while (steps-- > 0) useNavStack.getState().pop();
-        popstateSyncingRef.current = false;
-      }
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  // Push a history entry whenever the stack deepens past what history knows.
-  // Skipped while a popstate is actively collapsing the stack (that motion
-  // is driven BY history, so re-recording it would corrupt the back chain).
-  useEffect(() => {
-    if (popstateSyncingRef.current) return;
-    const recorded =
-      window.history.state && typeof window.history.state.navDepth === "number"
-        ? (window.history.state.navDepth as number)
-        : 1;
-    if (navDepth > recorded) {
-      // Push ONE entry per level gained so browser/hardware back can step
-      // through each frame. A deep-link rehydrate jumps depth by several at
-      // once (root→chat); seeding an entry per intermediate level gives that
-      // refreshed-into-channel view a full back chain to sources.
-      for (let d = recorded + 1; d <= navDepth; d++) {
-        window.history.pushState({ navDepth: d }, "");
-      }
-    } else if (navDepth < recorded) {
-      // Stack shrank from a non-history source (in-app back button). Align
-      // the history token without adding/removing entries so the next browser
-      // back maps to the correct depth.
-      window.history.replaceState({ navDepth }, "");
-    }
   }, [navDepth]);
 
   // The chain MUST NOT be broken by any new ancestor introducing overflow:
