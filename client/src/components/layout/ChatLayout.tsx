@@ -86,6 +86,11 @@ import {
 } from "../sources/matrixSourceAuth";
 import { useFormatStore } from "../../stores/format";
 import { useBootReadyStore } from "../../stores/bootReady";
+import {
+  useNavStack,
+  navTop,
+  type NavLevel,
+} from "../../stores/navStack";
 
 /** localStorage key for tracking rules acceptance per server per user. */
 function rulesAcceptedKey(userId: string, serverId: string) {
@@ -94,21 +99,9 @@ function rulesAcceptedKey(userId: string, serverId: string) {
 
 type MobileView = "sources" | "servers" | "channels" | "chat" | "dms" | "settings";
 
-/** A parallel browse tab — each tab has its own independent navigation state. */
-interface BrowseTab {
-  id: string;
-  pageView: "sources" | "servers" | "channels" | "chat";
-  /** Saved server/channel selection for this tab (persisted while tab is inactive). */
-  serverId: string | null;
-  channelId: string | null;
-  dmActive: boolean;
-  dmRoomId: string | null;
-}
-
-/** Generate a short unique tab ID. */
-function newTabId(): string {
-  return Math.random().toString(36).slice(2, 8);
-}
+// The legacy `BrowseTab` interface + `newTabId()` helper were removed with
+// the multi-tab page-depth model. The navStack store (and its `LegacyBrowseTab`
+// type + `browseTabToStack` mapper) is the single navigation model now.
 
 /** True when running inside a Tauri native shell (iOS, Android, desktop).
  *  `__TAURI_INTERNALS__` is the canonical Tauri v2 global — see the
@@ -228,52 +221,42 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     };
   }, [accessToken]);
 
-  // INS-044: Multi-tab browse. Each BrowseTab has its own page-depth
-  // position (sources → servers → channels → chat). Overlay views
-  // (dms, settings, actions) are NOT per-tab — they are shared overlays
-  // that render on top of the active tab.
-  const [tabState, setTabState] = useState<{ tabs: BrowseTab[]; activeId: string }>(() => {
-    const firstId = newTabId();
-    return {
-      tabs: [{ id: firstId, pageView: "sources", serverId: null, channelId: null, dmActive: false, dmRoomId: null }],
-      activeId: firstId,
-    };
-  });
-
-  // Shared overlay state — not per-tab.
-  // Overlay views (dms, settings) cover the whole screen on top of
-  // whichever browse tab is active. Switching to a page-depth view clears
-  // the overlay, restoring the active tab's content.
-  const [overlayView, setOverlayView] = useState<"dms" | "settings" | null>(null);
-
-  // Convenience accessors
-  const tabs = tabState.tabs;
-  const activeTabIdVal = tabState.activeId;
-  const activeTab = tabs.find((t) => t.id === activeTabIdVal) ?? tabs[0];
+  // ── Navigation stack (replaces the flat scroll-snap page-depth enum) ──
+  //
+  // The navStack store is now the single source of truth for the mobile
+  // view. The legacy multi-tab `BrowseTab` model (one flat `pageView` enum
+  // per tab) is superseded — its old→new mapper (`browseTabToStack`) lives
+  // in the navStack module and is unit-tested for the eventual multi-tab
+  // wiring, but no tab-switch UI exists today, so a single active stack is
+  // the live model. The desktop multi-column layout reads selection from the
+  // server/source/DM stores directly and is byte-identical to before — it
+  // never consumed the per-tab `pageView` or the overlay state.
+  const navStack = useNavStack((s) => s.stack);
+  const navOverlay = useNavStack((s) => s.overlay);
+  const navResetToLevel = useNavStack((s) => s.resetToLevel);
+  const navSetOverlay = useNavStack((s) => s.setOverlay);
+  const navPop = useNavStack((s) => s.pop);
 
   // The "mobileView" seen by the rest of ChatLayout:
   //   - If an overlay is active, that overlay is the view.
-  //   - Otherwise, the active tab's pageView is the view.
-  const mobileView: MobileView = overlayView ?? activeTab.pageView;
+  //   - Otherwise, the top-of-stack frame's level is the view.
+  const mobileView: MobileView = navOverlay ?? navTop({ stack: navStack }).level;
 
-  // setMobileView — compatibility shim so all the existing code keeps working.
-  // Page-depth views update the active tab's position; overlay views update
-  // the shared overlay. Switching to a page-depth view clears any overlay.
+  // setMobileView — compatibility shim so all the existing call-sites keep
+  // working. Overlay views (dms/settings) set the navStack overlay;
+  // page-depth views clear the overlay and collapse/extend the stack so that
+  // level is on top. `resetToLevel` preserves branch context, so a
+  // server→channels→chat path popped back to "channels" lands on the SAME
+  // server's channel list rather than resetting to leftmost — the headline
+  // bug fix.
   const setMobileView = useCallback((view: MobileView) => {
     if (view === "dms" || view === "settings") {
-      setOverlayView(view);
+      navSetOverlay(view);
     } else {
-      setOverlayView(null);
-      setTabState((prev) => ({
-        ...prev,
-        tabs: prev.tabs.map((t) =>
-          t.id === prev.activeId
-            ? { ...t, pageView: view as BrowseTab["pageView"] }
-            : t,
-        ),
-      }));
+      navSetOverlay(null);
+      navResetToLevel(view as NavLevel);
     }
-  }, []);
+  }, [navSetOverlay, navResetToLevel]);
 
   // Mobile account sheet (T003)
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
@@ -766,16 +749,34 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     }
   }, [accessToken, activeServerId, loadMembers]);
 
-  // When selecting a channel on mobile, auto-switch to chat view
+  // When selecting a channel on mobile, push a chat frame onto the nav
+  // stack (carrying the selected channel + active server context) so that
+  // `pop()` returns to THIS server's channel list. Selecting a sibling
+  // channel while already in chat is a `replaceTop` inside `push` (same
+  // level → no duplicate frame), so back still pops to the channel list
+  // exactly once.
   const handleMobileChannelSelect = useCallback((roomId: string) => {
     origSetActiveChannel(roomId);
-    setMobileView("chat");
-  }, [origSetActiveChannel]);
+    useDMStore.getState().setDMActive(false);
+    useNavStack.getState().push({
+      level: "chat",
+      serverId: activeServerId,
+      channelId: roomId,
+      dmRoomId: null,
+    });
+  }, [origSetActiveChannel, activeServerId]);
 
-  // When selecting a DM on mobile, switch to chat view
+  // When selecting a DM on mobile, push a chat frame that is a DISTINCT
+  // branch (dmRoomId set, no serverId) per the spec — back pops out of the
+  // DM rather than into a server channel list.
   const handleMobileDMSelect = useCallback((roomId: string) => {
     setActiveDM(roomId);
-    setMobileView("chat");
+    useNavStack.getState().push({
+      level: "chat",
+      serverId: null,
+      channelId: null,
+      dmRoomId: roomId,
+    });
   }, [setActiveDM]);
 
   /* ── TASK 26: Mobile dashboard quick actions ── */
@@ -939,87 +940,36 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   //     ├── MobilePillRow       flex-shrink-0  (INS-016 pills)
   //     └── MobileDashboardSheet  absolute-positioned overlay
   //
-  // ── Scroll-snap page navigation (INS-020) ──
-  // All three page-depth views are rendered as side-by-side panels in a
-  // horizontal scroll-snap container. The browser handles swipe physics,
-  // momentum, and snap-to-nearest. We sync `mobileView` state from the
-  // scroll position so the top bar and pills reflect the visible panel.
-  const scrollStripRef = useRef<HTMLDivElement>(null);
-  const tabIndicatorRef = useRef<HTMLDivElement>(null);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Programmatic-scroll guard. When `scrollToPanel` runs (state change,
-  // initial sync, page-tab tap), we must NOT let the resulting scroll
-  // events feed back into `setMobileView` via handleScrollSnap. Without
-  // this, joining a voice room would set mobileView=chat → scrollToPanel
-  // smooth → voice connect reflows ChatLayout (VoiceConnectionBar
-  // appears below it) → mid-scroll snap-type re-snaps to nearest →
-  // handleScrollSnap reads scrollLeft≈0 → setMobileView("sources").
-  // Holds the guard for 500ms after every programmatic scroll, which is
-  // long enough for the smooth animation + any reflow snap to settle.
-  const programmaticScrollUntilRef = useRef(0);
-  // INS-047: restore the page-depth view when closing settings/DMs
+  // ── Hierarchical navigation stack (replaces the scroll-snap strip) ──
+  // The old CSS scroll-snap horizontal strip (sources/servers/channels/chat
+  // side-by-side, scroll position = active panel) has been removed. Its
+  // `scrollLeft`-driven `mobileView` sync was the root cause of the
+  // connect-to-room "reset to leftmost" bug: a voice/room connect reflow
+  // re-snapped mid-scroll, read `scrollLeft ≈ 0`, and slammed mobileView to
+  // "sources". With a real stack, only the top-of-stack frame is rendered
+  // and connecting is a pure no-op — the chat frame stays on top by
+  // construction, so there is nothing to "reset".
+  //
+  // INS-047: restore the page-depth view when closing settings/DMs.
   const prevPageDepthRef = useRef<MobileView>("chat");
-  // INS-045: left-edge tap zone overlay
-  const [leftEdgeOverlay, setLeftEdgeOverlay] = useState<"servers" | "sources" | null>(null);
-  // INS-046: right-edge tap zone overlay
-  const [rightEdgeOverlay, setRightEdgeOverlay] = useState(false);
 
-  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "instant") => {
-    const strip = scrollStripRef.current;
-    if (!strip) return;
-    const panelWidth = strip.clientWidth;
-    programmaticScrollUntilRef.current = Date.now() + 500;
-    strip.scrollTo({ left: panelIndex * panelWidth, behavior });
-  }, []);
-
-  const handleScrollLive = useCallback(() => {
-    const strip = scrollStripRef.current;
-    const indicator = tabIndicatorRef.current;
-    if (!strip || !indicator) return;
-    const panelWidth = strip.clientWidth;
-    if (!panelWidth) return;
-    const pos = strip.scrollLeft / panelWidth;
-    indicator.style.transform = `translateX(${pos * 100}%)`;
-  }, []);
-
-  // Debounced scroll handler — updates mobileView when the user finishes
-  // scrolling. Uses a 100ms debounce so we don't spam state updates during
-  // the momentum phase. Skips the write entirely when the scroll was
-  // programmatic (state-driven), which is what happens on tab taps,
-  // channel selection, voice join, settings open/close, and so on.
-  const handleScrollSnap = useCallback(() => {
-    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-    scrollTimerRef.current = setTimeout(() => {
-      if (Date.now() < programmaticScrollUntilRef.current) return;
-      const strip = scrollStripRef.current;
-      if (!strip) return;
-      const panelWidth = strip.clientWidth;
-      if (panelWidth === 0) return;
-      const panelIndex = Math.round(strip.scrollLeft / panelWidth);
-      const clamped = Math.max(0, Math.min(panelIndex, PAGE_DEPTH.length - 1));
-      const target = PAGE_DEPTH[clamped];
-      if (target && target !== mobileView) {
-        setMobileView(target);
-        useDMStore.getState().setDMActive(false);
-      }
-    }, 100);
-  }, [mobileView]);
-
-  // Sync scroll position when mobileView changes from outside (e.g. page tab tap,
-  // channel select, settings open/close). Always uses `instant` so external
-  // state changes can't be hijacked by a half-finished smooth scroll being
-  // re-snapped during a layout reflow.
+  // Slide direction for the stack frame transition: forward when the
+  // stack got deeper (drill-in), back when it shrank (pop). Compared
+  // against the previous render's depth.
+  const navDepth = navStack.length;
+  const prevNavDepthRef = useRef(navDepth);
+  const navDirection: "forward" | "back" =
+    navDepth >= prevNavDepthRef.current ? "forward" : "back";
   useEffect(() => {
-    const depthIdx = PAGE_DEPTH.indexOf(mobileView);
-    if (depthIdx >= 0) scrollToPanel(depthIdx);
-  }, [mobileView, scrollToPanel]);
+    prevNavDepthRef.current = navDepth;
+  }, [navDepth]);
 
   // The chain MUST NOT be broken by any new ancestor introducing overflow:
   // visible or removing min-h-0 — that would let MessageInput's auto-grow
   // textarea push the MessageList out of view instead of reflowing it.
   // MessageInput's internal useLayoutEffect caps the textarea at
   // min(viewport*0.4, 8*22px) and switches to internal scroll above that.
-  const renderMobileLayout = () => (
+  const renderStackLayout = () => (
     <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
       {/* Top bar — safe-top lives on the OUTER wrapper so the safe-area
           inset adds transparent padding ABOVE the 48px content bar instead
@@ -1042,7 +992,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         ) : mobileView === "chat" && activeChannel ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
-              onClick={() => setMobileView("channels")}
+              onClick={() => navPop()}
               className="text-on-surface-variant hover:text-on-surface transition-colors"
             >
               <span className="material-symbols-outlined text-xl">arrow_back</span>
@@ -1079,7 +1029,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         ) : mobileView === "channels" && activeServer ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
-              onClick={() => setMobileView("servers")}
+              onClick={() => navPop()}
               className="text-on-surface-variant hover:text-on-surface transition-colors"
             >
               <span className="material-symbols-outlined text-xl">arrow_back</span>
@@ -1187,66 +1137,34 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       </div>
       </div>
 
-      {/* Panel navigation tabs — mouse/keyboard nav between page-depth panels */}
-      {PAGE_DEPTH.includes(mobileView as MobileView) && (
-        <div className="relative flex items-stretch bg-surface-container-low flex-shrink-0 border-b border-outline-variant/10">
-          {PAGE_DEPTH.map((view) => {
-            const meta = PAGE_PILL_META[view];
-            const isActive = mobileView === view;
-            return (
-              <button
-                key={view}
-                onClick={() => {
-                  setMobileView(view as MobileView);
-                }}
-                className={`flex-1 flex items-center justify-center gap-1 py-1 text-xs font-label transition-colors ${
-                  isActive ? "text-on-surface font-medium" : "text-on-surface-variant hover:text-on-surface"
-                }`}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>{meta.icon}</span>
-                {meta.label}
-              </button>
-            );
-          })}
-          {/* Live sliding underline — moves continuously with scroll position */}
-          <div
-            ref={tabIndicatorRef}
-            className="absolute bottom-0 h-0.5 bg-primary rounded-t-full pointer-events-none"
-            style={{ width: `${100 / PAGE_DEPTH.length}%`, willChange: "transform", transform: `translateX(${PAGE_DEPTH.indexOf(mobileView) * 100}%)` }}
-          />
-        </div>
-      )}
-
-      {/* Main content area — scroll strip is ALWAYS mounted; settings/DMs are absolute overlays */}
+      {/* Main content area — renders ONLY the top-of-stack frame. The old
+          scroll-snap strip (all four panels mounted side-by-side) is gone;
+          drilling in pushes a frame, back pops it. settings/DMs are
+          absolute overlays on top of the current frame. */}
       <div className="flex-1 min-h-0 overflow-hidden relative">
-        {/* Page-depth scroll strip — always mounted so scroll position is preserved across settings/DMs */}
+        {/* Top stack frame. Keyed on depth+level so a push/pop remounts the
+            pane and re-triggers the slide animation. The direction class
+            (forward / back) gives drill-in vs. back the correct slide. */}
         <div
-          ref={scrollStripRef}
-          className="h-full flex overflow-x-auto overflow-y-hidden overscroll-x-auto"
-          style={{
-            scrollSnapType: "x mandatory",
-            scrollBehavior: "smooth",
-            WebkitOverflowScrolling: "touch",
-          }}
-          onScroll={() => { handleScrollLive(); handleScrollSnap(); }}
+          key={`navframe-${navDepth}-${mobileView}`}
+          className={`h-full w-full min-h-0 ${
+            navDirection === "forward" ? "nav-frame-forward" : "nav-frame-back"
+          }`}
         >
-          {/* Panel: Sources */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          {mobileView === "sources" && (
             <SourcesPanel
               mobile
               onAddSource={openAddSource}
-              onSourceSelect={() => scrollToPanel(1)}
+              onSourceSelect={() => setMobileView("servers")}
               onExplore={openExplore}
               onSourceOpen={openSourceBrowser}
               onLocalOpen={() => {
                 openLocal();
-                scrollToPanel(1);
+                setMobileView("servers");
               }}
             />
-
-          </div>
-          {/* Panel: Servers */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          )}
+          {mobileView === "servers" && (
             <SectionBoundary>
               {localActive ? (
                 <LocalServerSidebar
@@ -1257,9 +1175,8 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 <ServerSidebar mobile onServerSelect={() => setMobileView("channels")} />
               )}
             </SectionBoundary>
-          </div>
-          {/* Panel: Channels */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          )}
+          {mobileView === "channels" && (
             <SectionBoundary>
               {localActive ? (
                 <LocalChannelSidebar
@@ -1267,12 +1184,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                   onChannelSelect={() => setMobileView("chat")}
                 />
               ) : (
-                <ChannelSidebar mobile onChannelSelect={(chId) => { handleMobileChannelSelect(chId); setMobileView("chat"); }} />
+                <ChannelSidebar mobile onChannelSelect={(chId) => handleMobileChannelSelect(chId)} />
               )}
             </SectionBoundary>
-          </div>
-          {/* Panel: Chat */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          )}
+          {mobileView === "chat" && (
             <div className="h-full flex flex-col min-h-0">
               {showPlaceBanner && (
                 <PlaceVoiceBanner
@@ -1286,10 +1202,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               )}
               {renderChatContent()}
             </div>
-          </div>
+          )}
         </div>
 
-        {/* DMs overlay — absolute so the strip keeps its scroll position */}
+        {/* DMs overlay — absolute, sits on top of the current stack frame. */}
         {mobileView === "dms" && (
           <div className="absolute inset-0 z-10 bg-surface">
             <SectionBoundary>
@@ -1298,99 +1214,18 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           </div>
         )}
 
-        {/* Settings overlay — absolute so the strip keeps its scroll position */}
+        {/* Settings overlay — absolute, sits on top of the current frame. */}
         {mobileView === "settings" && (
           <div className="absolute inset-0 z-10 bg-surface flex flex-col min-h-0">
             <SettingsPanel />
           </div>
         )}
-
-        {/* INS-045: Left-edge tap zone — shows previous panel as tile overlay */}
-        {!(mobileView === "dms" || mobileView === "settings") && mobileView !== "sources" && mobileView !== "servers" && (
-          <div
-            className="absolute left-0 top-0 w-6 h-full z-10"
-            onPointerDown={() => {
-              const prevIdx = PAGE_DEPTH.indexOf(mobileView) - 1;
-              if (prevIdx >= 0) {
-                const prev = PAGE_DEPTH[prevIdx];
-                setLeftEdgeOverlay(prev === "sources" ? "sources" : "servers");
-              }
-            }}
-          />
-        )}
-        {leftEdgeOverlay && (
-          <div
-            className="absolute inset-0 z-20 flex items-center"
-            onPointerDown={() => setLeftEdgeOverlay(null)}
-          >
-            <div className="ml-2 rounded-2xl bg-surface-container shadow-xl border border-outline-variant/20 p-4 animate-[fadeSlideUp_0.15s_ease-out]">
-              <button
-                className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
-                onPointerDown={(e) => { e.stopPropagation(); setLeftEdgeOverlay(null); setMobileView(leftEdgeOverlay); }}
-              >
-                <span className="material-symbols-outlined text-lg">{leftEdgeOverlay === "sources" ? "hub" : "dns"}</span>
-                {leftEdgeOverlay === "sources" ? "Sources" : "Servers"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* INS-046: Right-edge tap zone — contextual shortcut tiles */}
-        {!(mobileView === "dms" || mobileView === "settings") && mobileView !== "chat" && (
-          <div
-            className="absolute right-0 top-0 w-6 h-full z-10"
-            onPointerDown={() => setRightEdgeOverlay(true)}
-          />
-        )}
-        {rightEdgeOverlay && (
-          <div
-            className="absolute inset-0 z-20 flex items-center justify-end"
-            onPointerDown={() => setRightEdgeOverlay(false)}
-          >
-            <div className="mr-2 rounded-2xl bg-surface-container shadow-xl border border-outline-variant/20 p-4 animate-[fadeSlideUp_0.15s_ease-out] flex flex-col gap-2">
-              {mobileView === "servers" && (
-                <button
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
-                  onPointerDown={(e) => { e.stopPropagation(); setRightEdgeOverlay(false); setMobileView("channels"); }}
-                >
-                  <span className="material-symbols-outlined text-lg">tag</span>
-                  Channels
-                </button>
-              )}
-              {mobileView === "channels" && (
-                <button
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
-                  onPointerDown={(e) => { e.stopPropagation(); setRightEdgeOverlay(false); setMobileView("chat"); }}
-                >
-                  <span className="material-symbols-outlined text-lg">forum</span>
-                  Chat
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Pill collapse toggle removed — swipe up from the bottom edge raises
-          the nav, swipe down anywhere hides it. The dedicated arrow tile
-          was a vestigial second affordance that just clipped to the
-          bottom-right of the page. */}
-
-      {/* MobilePillRow removed. It implemented tabs via imperative state-
-         swapping on useServerStore / useDMStore — each pill click called
-         setState() to restore a saved snapshot. That's not "parallel
-         displays"; it's a state-mutating nav that loses React-internal
-         state (scroll positions, expanded folders, chat compose drafts)
-         on every switch. Real per-tab persistence would require
-         mounting one subtree per tab (each with store-scoping), which
-         is a separate architectural project. Per the user's call, the
-         illusion goes away rather than stay in. The horizontal scroll
-         strip above (sources/servers/channels/chat) remains because
-         IT really is parallel — all four panels are mounted
-         simultaneously and scroll position picks which is visible.
-         DMs moved to the top bar (see TopBarIconButton with chat_bubble
-         above) so this row isn't replaced with a smaller version of
-         itself. */}
+      {/* The scroll-snap strip and its page-tab pill row were removed in the
+         adaptive-nav migration. Navigation is now an explicit navStack: only
+         the top-of-stack frame is rendered, drill-in pushes, back pops. DMs
+         live in the top bar (TopBarIconButton with chat_bubble above). */}
 
       {/* Mobile extension menu overlay */}
       {extensionMenuOpen && (
@@ -2008,7 +1843,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           </div>
           {/* Mobile */}
           <div className="md:hidden h-full w-full min-h-0 min-w-0" data-concord-layout="mobile">
-            {renderMobileLayout()}
+            {renderStackLayout()}
           </div>
         </>
       )}
@@ -2047,7 +1882,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           onSourceAdded={() => {
             setAddSourceOpen(false);
             setAddSourceInitialScreen(null);
-            if (scrollStripRef.current) scrollToPanel(1);
+            // After adding a source, advance to the servers frame so the
+            // user sees the newly-connected instance's servers.
+            setMobileView("servers");
           }}
         />
       )}
@@ -2522,19 +2359,14 @@ export function SourceServerBrowser({
 }
 
 
-/* ── Mobile Nav Items (shared by pill row + full sheet) ── */
-// Page-depth hierarchy for swipe navigation. Swiping left goes deeper,
-// swiping right goes back (matching iOS back-gesture convention).
-// Native apps have an extra "sources" panel at the shallowest depth.
+/* ── Page-depth membership set ──
+   The set of hierarchical drill-down levels (as opposed to the dms/settings
+   overlays). Used only as a membership guard — "is the current mobileView a
+   page-depth level?" — when deciding whether to stash the current view in
+   `prevPageDepthRef` before opening an overlay. The old linear-index usage
+   (scroll-strip panel ordering) was removed with the strip; navStack now
+   owns ordering. PAGE_PILL_META was removed with the page-tab pill row. */
 const PAGE_DEPTH: MobileView[] = ["sources", "servers", "channels", "chat"];
-
-// Icon + label for the "Page" pill, contextual to the current depth.
-const PAGE_PILL_META: Record<string, { icon: string; label: string }> = {
-  sources: { icon: "hub", label: "Sources" },
-  servers: { icon: "dns", label: "Servers" },
-  channels: { icon: "tag", label: "Channels" },
-  chat: { icon: "forum", label: "Chat" },
-};
 
 
 // ActionsPanel and QuickActionButton removed (INS-041).
