@@ -1,20 +1,12 @@
-import { lazy, Suspense } from "react";
+import { useCallback } from "react";
+import {
+  useLocalParticipant,
+  useConnectionState,
+} from "@livekit/components-react";
+import { ConnectionState } from "livekit-client";
 import { useVoiceStore } from "../../stores/voice";
 import { useServerStore } from "../../stores/server";
 import { BringingUpSplash } from "../BringingUpSplash";
-
-// Phase 10 (bundle split): VoiceConnectionBar is mounted on every screen
-// (it lives in App.tsx's shellContent). Its only LiveKit-coupled part is
-// the mic/return/leave control cluster, which is now isolated in its own
-// module and lazy-loaded here. That keeps `@livekit/components-react` /
-// `livekit-client` out of the always-mounted bar's static import graph,
-// so the LiveKit vendor chunk is fetched on first voice join, not at cold
-// start. The controls only render inside the connected `<LiveKitRoom>`
-// subtree (the `connected` branch below), so the dynamic import fires
-// exactly when a Room context exists for its hooks.
-const VoiceBarControls = lazy(() =>
-  import("./VoiceBarControls").then((m) => ({ default: m.VoiceBarControls })),
-);
 
 export function VoiceConnectionBar() {
   const connected = useVoiceStore((s) => s.connected);
@@ -90,15 +82,75 @@ export function VoiceConnectionBar() {
         </span>
       </div>
 
-      <Suspense fallback={null}>
-        <VoiceBarControls
-          onReturn={() => {
-            if (serverId) setActiveServer(serverId);
-            if (channelId) setActiveChannel(channelId);
-          }}
-          onLeave={disconnect}
-        />
-      </Suspense>
+      <VoiceBarControls
+        onReturn={() => {
+          if (serverId) setActiveServer(serverId);
+          if (channelId) setActiveChannel(channelId);
+        }}
+        onLeave={disconnect}
+      />
+    </div>
+  );
+}
+
+function VoiceBarControls({
+  onReturn,
+  onLeave,
+}: {
+  onReturn: () => void;
+  onLeave: () => void;
+}) {
+  const { localParticipant } = useLocalParticipant();
+  const connectionState = useConnectionState();
+  const isMicEnabled = localParticipant.isMicrophoneEnabled;
+
+  const toggleMic = useCallback(async () => {
+    try {
+      await localParticipant.setMicrophoneEnabled(!isMicEnabled);
+    } catch {
+      // Permission or state error
+    }
+  }, [localParticipant, isMicEnabled]);
+
+  if (connectionState !== ConnectionState.Connected) return null;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {/* Mute */}
+      <button
+        onClick={toggleMic}
+        className={`btn-press min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 py-2 md:px-2.5 md:py-1 text-xs rounded-xl md:rounded-lg transition-colors flex items-center justify-center font-label ${
+          isMicEnabled
+            ? "bg-secondary-container text-on-secondary-container"
+            : "bg-error-container/30 text-on-error-container"
+        }`}
+        title={isMicEnabled ? "Mute" : "Unmute"}
+      >
+        <span className="material-symbols-outlined text-lg md:hidden">
+          {isMicEnabled ? "mic" : "mic_off"}
+        </span>
+        <span className="hidden md:inline">{isMicEnabled ? "Mic On" : "Mic Off"}</span>
+      </button>
+
+      {/* Return to channel */}
+      <button
+        onClick={onReturn}
+        className="btn-press min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 py-2 md:px-2.5 md:py-1 text-xs bg-secondary-container text-on-secondary-container rounded-xl md:rounded-lg transition-colors flex items-center justify-center font-label"
+        title="Return to voice channel"
+      >
+        <span className="material-symbols-outlined text-lg md:hidden">arrow_back</span>
+        <span className="hidden md:inline">Return</span>
+      </button>
+
+      {/* Leave */}
+      <button
+        onClick={onLeave}
+        className="btn-press min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 px-3 py-2 md:px-2.5 md:py-1 text-xs bg-error-container/30 text-on-error-container rounded-xl md:rounded-lg transition-colors flex items-center justify-center font-label"
+        title="Disconnect from voice"
+      >
+        <span className="material-symbols-outlined text-lg md:hidden">call_end</span>
+        <span className="hidden md:inline">Leave</span>
+      </button>
     </div>
   );
 }

@@ -81,41 +81,6 @@ export default defineConfig({
           ) {
             return 'libp2p'
           }
-          // Phase 10 (bundle split) — pin the LiveKit voice stack to its
-          // own named chunk. `livekit-client` + `@livekit/components-*`
-          // are only exercised once a user joins voice; the lazy
-          // `<VoiceRoomProvider/>` boundary in `App.tsx` defers the
-          // `@livekit/components-react` consumer tree behind a dynamic
-          // import, so this chunk is fetched on first voice join rather
-          // than at cold start.
-          if (
-            id.includes('node_modules/@livekit/') ||
-            /node_modules\/livekit-client\//.test(id)
-          ) {
-            return 'livekit'
-          }
-          // Phase 10 — matrix-js-sdk is statically imported across the
-          // chat hooks/stores (it is the core protocol client, not a
-          // rarely-needed surface), so it can't be lazy. But pinning it
-          // to its own vendor chunk strips ~hundreds of KB out of the
-          // main entry chunk, shrinking the cold-start parse/eval cost.
-          // The matrix-crypto wasm is already its own on-demand `.wasm`
-          // asset loaded by the SDK; this only buckets the JS.
-          if (/node_modules\/matrix-js-sdk\//.test(id)) {
-            return 'matrix'
-          }
-          // Phase 10 — consolidate the entire `@tauri-apps/*` surface
-          // (api/core + window/event/image/dpi + plugin-dialog) into a
-          // single chunk. The app mixes static (`import { invoke }`) and
-          // dynamic (`await import("@tauri-apps/api/core")`) usage of
-          // `core`; left unbucketed, Rollup warns the dynamic import
-          // "will not move module into another chunk" and keeps core in
-          // main. Forcing one `tauri` chunk makes both import styles
-          // resolve to the same chunk, clearing the mixed-import warning
-          // and pulling the Tauri runtime out of the web cold-start path.
-          if (id.includes('node_modules/@tauri-apps/')) {
-            return 'tauri'
-          }
           return undefined
         },
       },

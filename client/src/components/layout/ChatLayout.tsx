@@ -71,11 +71,6 @@ import { BugReportModal } from "../BugReportModal";
 import { StatsModal } from "../StatsModal";
 import { SourceBrandIcon, inferSourceBrand } from "../sources/sourceBrand";
 import {
-  getRoomDiagnostics,
-  getServerRules,
-  type RoomDiagnostics,
-} from "../../api/concord";
-import {
   buildMatrixSourceDraft,
   clearPendingSourceSso,
   clearPendingSourceSsoQueryParams,
@@ -87,19 +82,13 @@ import {
 } from "../sources/matrixSourceAuth";
 import { useFormatStore } from "../../stores/format";
 import { useBootReadyStore } from "../../stores/bootReady";
-import {
-  useNavStack,
-  navTop,
-  buildStackToLevel,
-  type NavLevel,
-} from "../../stores/navStack";
-
-/** localStorage key for tracking rules acceptance per server per user. */
-function rulesAcceptedKey(userId: string, serverId: string) {
-  return `concord_rules_accepted:${userId}:${serverId}`;
-}
-
-type MobileView = "sources" | "servers" | "channels" | "chat" | "dms" | "settings";
+import { useInstanceAdmin } from "./chatLayout/useInstanceAdmin";
+import { useSidebarResize } from "./chatLayout/useSidebarResize";
+import { useRoomDiagnostics } from "./chatLayout/useRoomDiagnostics";
+import { rulesAcceptedKey, useServerRulesGate } from "./chatLayout/useServerRulesGate";
+import { useHistoryNav } from "./chatLayout/useHistoryNav";
+import { useNavRestore } from "./chatLayout/useNavRestore";
+import { useNavBridge, type MobileView } from "./chatLayout/useNavBridge";
 
 // The legacy `BrowseTab` interface + `newTabId()` helper were removed with
 // the multi-tab page-depth model. The navStack store (and its `LegacyBrowseTab`
@@ -110,10 +99,6 @@ type MobileView = "sources" | "servers" | "channels" | "chat" | "dms" | "setting
  *  comment in `client/src/api/serverUrl.ts` for the full history. */
 // const isNativeApp =
 //   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-function lastChannelStorageKey(userId: string | null): string {
-  return userId ? `concord_last_channel:${userId}` : "concord_last_channel";
-}
 
 /**
  * ChatLayout — the top-level shell.
@@ -172,9 +157,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const typingUsers = useTypingUsers(activeRoomId);
   const { onKeystroke, onStopTyping } = useSendTyping(activeRoomId);
   useNotifications();
-  const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnostics | null>(null);
-  const [roomDiagnosticsLoading, setRoomDiagnosticsLoading] = useState(false);
-  const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
+  const {
+    roomDiagnostics,
+    roomDiagnosticsLoading,
+    diagnosticsPopupOpen,
+    setDiagnosticsPopupOpen,
+  } = useRoomDiagnostics(accessToken, activeRoomId, messages.length, userId);
 
   // INS-020 iPad layout — when running on an iPad (native Tauri iOS
   // build or web browser with iPad-class touch screen), force the
@@ -201,27 +189,8 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [showHelp, setShowHelp] = useState(false);
   const [placeBannerDismissed, setPlaceBannerDismissed] = useState(false);
   // INS-070 — admin gate + Extension Library modal visibility.
-  const [isInstanceAdmin, setIsInstanceAdmin] = useState(false);
+  const isInstanceAdmin = useInstanceAdmin(accessToken);
   const [extensionCatalogOpen, setExtensionCatalogOpen] = useState(false);
-  useEffect(() => {
-    if (!accessToken) {
-      setIsInstanceAdmin(false);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { checkAdmin } = await import("../../api/concord");
-        const result = await checkAdmin(accessToken);
-        if (!cancelled) setIsInstanceAdmin(result.is_admin);
-      } catch {
-        if (!cancelled) setIsInstanceAdmin(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken]);
 
   // ── Navigation stack (replaces the flat scroll-snap page-depth enum) ──
   //
@@ -233,32 +202,23 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // the live model. The desktop multi-column layout reads selection from the
   // server/source/DM stores directly and is byte-identical to before — it
   // never consumed the per-tab `pageView` or the overlay state.
-  const navStack = useNavStack((s) => s.stack);
-  const navOverlay = useNavStack((s) => s.overlay);
-  const navResetToLevel = useNavStack((s) => s.resetToLevel);
-  const navSetOverlay = useNavStack((s) => s.setOverlay);
-  const navPop = useNavStack((s) => s.pop);
-
-  // The "mobileView" seen by the rest of ChatLayout:
-  //   - If an overlay is active, that overlay is the view.
-  //   - Otherwise, the top-of-stack frame's level is the view.
-  const mobileView: MobileView = navOverlay ?? navTop({ stack: navStack }).level;
-
-  // setMobileView — compatibility shim so all the existing call-sites keep
-  // working. Overlay views (dms/settings) set the navStack overlay;
-  // page-depth views clear the overlay and collapse/extend the stack so that
-  // level is on top. `resetToLevel` preserves branch context, so a
+  //
+  // The navStack ↔ stores bridge (mobileView / setMobileView /
+  // drill-in push helpers) lives in `useNavBridge`. `setMobileView` is a
+  // compatibility shim: overlay views (dms/settings) set the navStack
+  // overlay; page-depth views clear it and collapse/extend the stack via
+  // `resetToLevel`, which preserves branch context so a
   // server→channels→chat path popped back to "channels" lands on the SAME
-  // server's channel list rather than resetting to leftmost — the headline
-  // bug fix.
-  const setMobileView = useCallback((view: MobileView) => {
-    if (view === "dms" || view === "settings") {
-      navSetOverlay(view);
-    } else {
-      navSetOverlay(null);
-      navResetToLevel(view as NavLevel);
-    }
-  }, [navSetOverlay, navResetToLevel]);
+  // server's channel list rather than resetting to leftmost — the
+  // headline nav bug fix.
+  const {
+    navStack,
+    navPop,
+    mobileView,
+    setMobileView,
+    handleMobileChannelSelect,
+    handleMobileDMSelect,
+  } = useNavBridge(activeServerId);
 
   // Mobile account sheet (T003)
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
@@ -396,66 +356,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   }, [activeServerId, activeChannelId, dmActive, openLocal]);
 
   // Resizable channel sidebar (desktop only)
-  const SIDEBAR_MIN = 160;
-  const SIDEBAR_MAX = 400;
-  const SIDEBAR_DEFAULT = 224;
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const saved = localStorage.getItem("concord_sidebar_width");
-      if (saved) return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(saved)));
-    } catch {}
-    return SIDEBAR_DEFAULT;
-  });
-  const isDragging = useRef(false);
-
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    const startX = e.clientX;
-    const startWidth = sidebarWidth;
-
-    const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - startX;
-      const newWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startWidth + delta));
-      setSidebarWidth(newWidth);
-    };
-
-    const onUp = () => {
-      isDragging.current = false;
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [sidebarWidth]);
-
-  useEffect(() => {
-    try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
-  }, [sidebarWidth]);
+  const { sidebarWidth, handleResizeStart, SIDEBAR_MIN, SIDEBAR_MAX } =
+    useSidebarResize();
 
   useEffect(() => { setEditingMessage(null); setFormatPanelOpen(false); }, [activeRoomId, setFormatPanelOpen]);
-
-  // TASK 26: Track the most recently-active channel so the "Reconnect to
-  // last channel" quick action can restore it after the user has navigated
-  // away (DMs, settings, another server). Persisted in localStorage so it
-  // survives reloads. Only server channels are tracked — DMs reconnect via
-  // their own store already.
-  useEffect(() => {
-    if (!dmActive && activeServerId && activeChannelId) {
-      try {
-        localStorage.setItem(
-          lastChannelStorageKey(userId),
-          JSON.stringify({ serverId: activeServerId, roomId: activeChannelId }),
-        );
-      } catch {}
-    }
-  }, [dmActive, activeServerId, activeChannelId, userId]);
 
   const activeServer = useMemo(
     () => servers.find((s) => s.id === activeServerId),
@@ -473,36 +377,14 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // Rules gate state — tracks rules_text for the active server and whether
   // the current user has accepted it. Acceptance is persisted in localStorage
   // keyed by (userId, serverId) so it survives page reloads.
-  const [activeServerRulesText, setActiveServerRulesText] = useState<string | null>(null);
-  const [rulesAccepted, setRulesAccepted] = useState<boolean>(true);
-
-  useEffect(() => {
-    if (!activeServerId || !userId || !accessToken || dmActive) {
-      setActiveServerRulesText(null);
-      setRulesAccepted(true);
-      return;
-    }
-    // Use rules_text already in the store if present; otherwise fetch.
-    const storedRules = activeServer?.rules_text ?? undefined;
-    const resolve = (rulesText: string | null | undefined) => {
-      if (!rulesText) {
-        setActiveServerRulesText(null);
-        setRulesAccepted(true);
-        return;
-      }
-      setActiveServerRulesText(rulesText);
-      const accepted = localStorage.getItem(rulesAcceptedKey(userId, activeServerId)) === "1";
-      setRulesAccepted(accepted);
-    };
-    if (storedRules !== undefined) {
-      resolve(storedRules);
-    } else {
-      getServerRules(activeServerId, accessToken)
-        .then((data) => resolve(data.rules_text))
-        .catch(() => resolve(null));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeServerId, userId, accessToken, dmActive]);
+  const { activeServerRulesText, rulesAccepted, setRulesAccepted } =
+    useServerRulesGate(
+      activeServerId,
+      userId,
+      accessToken,
+      dmActive,
+      activeServer?.rules_text ?? undefined,
+    );
   // Friendly empty-channel placeholder. The verbose diagnostics block
   // used to render here directly, which made every empty room look
   // like an error report. Now the channel just invites the user to
@@ -667,12 +549,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   }, [serversLoaded, markAppReady]);
 
 
-  const startupRestoreHandled = useRef<string | null>(null);
-  const origSetActiveChannel = useServerStore((s) => s.setActiveChannel);
-  const setActiveServer = useServerStore((s) => s.setActiveServer);
-  const setActiveDM = useDMStore((s) => s.setActiveDM);
   const addToast = useToastStore((s) => s.addToast);
-  const setDMActive = useDMStore((s) => s.setDMActive);
 
   const loadCatalog = useExtensionStore((s) => s.loadCatalog);
 
@@ -691,110 +568,16 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     };
   }, [accessToken, serversLoaded, loadServers, loadConversations, loadCatalog]);
 
-  useEffect(() => {
-    if (!accessToken || !activeRoomId || messages.length > 0) {
-      setRoomDiagnostics(null);
-      setRoomDiagnosticsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setRoomDiagnosticsLoading(true);
-    getRoomDiagnostics(activeRoomId, accessToken)
-      .then((diag) => {
-        if (!cancelled) setRoomDiagnostics(diag);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setRoomDiagnostics({
-            room_id: activeRoomId,
-            user_id: userId ?? "",
-            binding: { kind: "unknown" },
-            inference: "diagnostic_request_failed",
-            summary: err instanceof Error ? err.message : "Room diagnostics failed",
-            steps: [],
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setRoomDiagnosticsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken, activeRoomId, messages.length, userId]);
-
-  useEffect(() => {
-    if (!serversLoaded || !userId) return;
-    if (startupRestoreHandled.current === userId) return;
-
-    try {
-      const raw = localStorage.getItem(lastChannelStorageKey(userId));
-      if (!raw) {
-        startupRestoreHandled.current = userId;
-        return;
-      }
-      const parsed = JSON.parse(raw) as { serverId?: string; roomId?: string };
-      const server = servers.find((s) => s.id === parsed.serverId);
-      const channel = server?.channels.find((c) => c.matrix_room_id === parsed.roomId);
-      if (!server || !channel) return;
-      startupRestoreHandled.current = userId;
-      setDMActive(false);
-      setActiveServer(server.id);
-      origSetActiveChannel(channel.matrix_room_id);
-      // Deep-link/refresh rehydrate: rebuild the navStack so a phone refresh
-      // inside a channel reopens the chat frame WITH a working back path
-      // (sources → servers → channels → chat) rather than landing on the
-      // top-of-stack `sources` root. Desktop ignores the stack, so this is a
-      // no-op there. `buildStackToLevel` synthesizes the intermediate frames.
-      useNavStack.getState().setStack(
-        buildStackToLevel("chat", {
-          serverId: server.id,
-          channelId: channel.matrix_room_id,
-        }),
-        null,
-      );
-    } catch {
-      startupRestoreHandled.current = userId;
-    }
-  }, [serversLoaded, userId, servers, setDMActive, setActiveServer, origSetActiveChannel]);
+  // Boot-restore the last channel + rebuild the navStack on refresh, and
+  // persist the active channel for next launch. (TASK 26 / deep-link
+  // rehydrate — see useNavRestore.)
+  useNavRestore(serversLoaded, userId, servers, dmActive, activeServerId, activeChannelId);
 
   useEffect(() => {
     if (accessToken && activeServerId) {
       loadMembers(activeServerId, accessToken);
     }
   }, [accessToken, activeServerId, loadMembers]);
-
-  // When selecting a channel on mobile, push a chat frame onto the nav
-  // stack (carrying the selected channel + active server context) so that
-  // `pop()` returns to THIS server's channel list. Selecting a sibling
-  // channel while already in chat is a `replaceTop` inside `push` (same
-  // level → no duplicate frame), so back still pops to the channel list
-  // exactly once.
-  const handleMobileChannelSelect = useCallback((roomId: string) => {
-    origSetActiveChannel(roomId);
-    useDMStore.getState().setDMActive(false);
-    useNavStack.getState().push({
-      level: "chat",
-      serverId: activeServerId,
-      channelId: roomId,
-      dmRoomId: null,
-    });
-  }, [origSetActiveChannel, activeServerId]);
-
-  // When selecting a DM on mobile, push a chat frame that is a DISTINCT
-  // branch (dmRoomId set, no serverId) per the spec — back pops out of the
-  // DM rather than into a server channel list.
-  const handleMobileDMSelect = useCallback((roomId: string) => {
-    setActiveDM(roomId);
-    useNavStack.getState().push({
-      level: "chat",
-      serverId: null,
-      channelId: null,
-      dmRoomId: roomId,
-    });
-  }, [setActiveDM]);
 
   /* ── TASK 26: Mobile dashboard quick actions ── */
 
@@ -970,77 +753,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // INS-047: restore the page-depth view when closing settings/DMs.
   const prevPageDepthRef = useRef<MobileView>("chat");
 
-  // Slide direction for the stack frame transition: forward when the
-  // stack got deeper (drill-in), back when it shrank (pop). Compared
-  // against the previous render's depth.
-  const navDepth = navStack.length;
-  const prevNavDepthRef = useRef(navDepth);
-  const navDirection: "forward" | "back" =
-    navDepth >= prevNavDepthRef.current ? "forward" : "back";
-  useEffect(() => {
-    prevNavDepthRef.current = navDepth;
-  }, [navDepth]);
-
-  // ── Browser / Android hardware-back integration ──
-  //
-  // The navStack is mirrored into the History API so that the browser back
-  // button and the Android hardware-back gesture pop the stack instead of
-  // leaving Concord. Each drill-in `push` adds one `history.pushState` entry
-  // carrying a `navDepth` token; a `popstate` (back) pops the navStack.
-  //
-  // Loop avoidance: `popstate` ONLY drives navStack.pop() — it never pushes.
-  // The depth-sync effect ONLY pushes when the stack grew ABOVE the depth
-  // already recorded in `history.state` — so the pop it itself causes (which
-  // lowers depth) never re-triggers a push. The `navDepth` token in
-  // `history.state` is the double-pop guard: a popstate that finds the stack
-  // already at-or-below the entry's depth is a no-op.
-  const popstateSyncingRef = useRef(false);
-  useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      const targetDepth =
-        e.state && typeof e.state.navDepth === "number"
-          ? (e.state.navDepth as number)
-          : 1;
-      const current = useNavStack.getState().stack.length;
-      // Only pop when the history entry we landed on is shallower than the
-      // live stack — guards against double-pop and forward-nav no-ops.
-      if (current > targetDepth) {
-        popstateSyncingRef.current = true;
-        // Collapse to the target depth (usually one pop, but a multi-entry
-        // back swipe can skip several frames at once).
-        let steps = current - targetDepth;
-        while (steps-- > 0) useNavStack.getState().pop();
-        popstateSyncingRef.current = false;
-      }
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  // Push a history entry whenever the stack deepens past what history knows.
-  // Skipped while a popstate is actively collapsing the stack (that motion
-  // is driven BY history, so re-recording it would corrupt the back chain).
-  useEffect(() => {
-    if (popstateSyncingRef.current) return;
-    const recorded =
-      window.history.state && typeof window.history.state.navDepth === "number"
-        ? (window.history.state.navDepth as number)
-        : 1;
-    if (navDepth > recorded) {
-      // Push ONE entry per level gained so browser/hardware back can step
-      // through each frame. A deep-link rehydrate jumps depth by several at
-      // once (root→chat); seeding an entry per intermediate level gives that
-      // refreshed-into-channel view a full back chain to sources.
-      for (let d = recorded + 1; d <= navDepth; d++) {
-        window.history.pushState({ navDepth: d }, "");
-      }
-    } else if (navDepth < recorded) {
-      // Stack shrank from a non-history source (in-app back button). Align
-      // the history token without adding/removing entries so the next browser
-      // back maps to the correct depth.
-      window.history.replaceState({ navDepth }, "");
-    }
-  }, [navDepth]);
+  // navStack ↔ History API mirroring (browser/Android hardware-back) +
+  // the drill-in / back slide-direction derivation. See useHistoryNav.
+  const { navDepth, navDirection } = useHistoryNav(navStack);
 
   // The chain MUST NOT be broken by any new ancestor introducing overflow:
   // visible or removing min-h-0 — that would let MessageInput's auto-grow
