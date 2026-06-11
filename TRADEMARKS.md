@@ -11,7 +11,9 @@ The following are unregistered and/or registered trademarks of TruStoryHnsl
 
 - The names **"Concord"** and **"Concorrd"** as applied to communication
   software and related services.
-- The Concord logo, app icon, splash artwork, and any derivative marks.
+- The Concord logo, app icon, and splash/branding artwork (the files under
+  `branding/`, `splash/`, `concord-definitive-icon.png`, and any derivative
+  marks).
 - Distinctive visual trade dress of the application.
 
 ## What the FSL license does and does not give you

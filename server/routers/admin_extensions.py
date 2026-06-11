@@ -34,7 +34,7 @@ runtime install pipeline in ``routers/extensions.py``
 The legacy endpoints are preserved here only so existing admin UIs
 keep working during the migration period; new code should not call
 them. The static-serve duplicate has already been removed (W3 mount
-is canonical). See the extension migration notes for context.
+is canonical). See PLAN.md INS-066-FUP-B for context.
 """
 
 # TODO(INS-NNN-followup): sunset legacy admin_extensions install/uninstall

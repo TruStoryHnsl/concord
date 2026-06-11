@@ -138,7 +138,7 @@ def read_federation() -> FederationSettings:
     """Read the federation section of the config file.
 
     Returns defaults if the file does not exist or is missing keys — this
-    lets fresh deployments survive even if the migration hasn't
+    lets fresh deployments survive even if the install.sh migration hasn't
     populated the file yet.
     """
     if not TUWUNEL_CONFIG_PATH.exists():

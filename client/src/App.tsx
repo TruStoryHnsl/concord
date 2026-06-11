@@ -1,12 +1,10 @@
-import { useEffect, useRef, useCallback, useState } from "react";
-import { LiveKitRoom } from "@livekit/components-react";
+import { useEffect, useRef, useCallback, useState, lazy, Suspense } from "react";
 import { useAuthStore } from "./stores/auth";
 import { useServerStore } from "./stores/server";
 import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession, MAX_RECONNECT_ATTEMPTS, RECONNECT_BASE_DELAY_MS } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
 import { useServerConfigStore } from "./stores/serverConfig";
-import { isDesktopMode } from "./api/serverUrl";
 import { joinVoiceSession } from "./components/voice/joinVoiceSession";
 import { usePlatform } from "./hooks/usePlatform";
 import { useServitudeLifecycle } from "./hooks/useServitudeLifecycle";
@@ -25,10 +23,15 @@ import { MarkReady } from "./components/MarkReady";
 import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
-import { CustomAudioRenderer } from "./components/voice/CustomAudioRenderer";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
-import { FloatingVideoTiles } from "./components/voice/FloatingVideoTiles";
-import { buildLiveKitAudioCaptureOptions } from "./voice/noiseGate";
+
+// Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
+// only `@livekit/components-react` consumer in App's render path. Lazy-
+// loading it defers the LiveKit vendor chunk until `voiceConnected` flips
+// true (first voice join) rather than paying it at cold start. The
+// `<BringingUpSplash/>` Suspense fallback is the repo's single canonical
+// loading animation.
+const VoiceRoomLayer = lazy(() => import("./components/voice/VoiceRoomLayer"));
 
 // Capture invite token immediately at module load — before React mounts,
 // before session restoration, before anything can clear the URL.
@@ -513,75 +516,32 @@ export default function App() {
     <>
       <ErrorBoundary>
         {voiceConnected && voiceToken && livekitUrl ? (
-          <LiveKitRoom
-            token={voiceToken}
-            serverUrl={livekitUrl}
-            connectOptions={{
-              autoSubscribe: true,
-              ...(iceServers.length > 0 && {
-                rtcConfig: {
-                  iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    ...iceServers,
-                  ],
-                },
-              }),
-            }}
-            audio={
-              micGranted && !isDesktopMode()
-                ? buildLiveKitAudioCaptureOptions({
-                    masterInputVolume,
-                    preferredInputDeviceId,
-                    echoCancellation,
-                    noiseSuppression,
-                    autoGainControl,
-                    inputNoiseGateEnabled,
-                    inputNoiseGateThresholdDb,
-                  })
-                : false
-            }
-            video={false}
-            options={{
-              // Do NOT set ``webAudioMix: true``. It was added in v0.2.4 on
-              // a wrong premise (it is NOT required for the local-mic
-              // processor — ``Room.acquireAudioContext`` always creates a
-              // room AudioContext, and both ``LocalParticipant.createTracks``
-              // and ``publishOrRepublishTrack`` call
-              // ``LocalAudioTrack.setAudioContext`` unconditionally). Its
-              // actual effect is to also propagate the room AudioContext to
-              // every REMOTE audio track — which then hits
-              // ``RemoteAudioTrack.attach``'s ``connectWebAudio`` branch and
-              // pipes the remote stream through ``ctx.destination`` in
-              // PARALLEL with our ``CustomAudioRenderer`` Tier 2 cloned-
-              // track chain. Two simultaneous outputs of the same track
-              // create comb-filter coloration that users perceive as a
-              // tinny / "two streams overlapping" sound. Leave it off and
-              // let CustomAudioRenderer be the sole remote-playback path.
-              audioCaptureDefaults: {
-                ...buildLiveKitAudioCaptureOptions({
-                  masterInputVolume,
-                  preferredInputDeviceId,
-                  echoCancellation,
-                  noiseSuppression,
-                  autoGainControl,
-                  inputNoiseGateEnabled,
-                  inputNoiseGateThresholdDb,
-                }),
-              },
-            }}
-            onDisconnected={handleVoiceDisconnect}
-            onError={handleVoiceError}
-            onMediaDeviceFailure={handleMediaDeviceFailure}
-            style={{ display: "contents" }}
-          >
-            <CustomAudioRenderer />
-            {/* Issue E (2026-04-18): floating picture-in-picture tiles so
-             *  camera/screen streams stay visible when the user navigates
-             *  away from the voice channel. Renders null when the user is
-             *  viewing the voice channel's docked UI. */}
-            <FloatingVideoTiles />
-            {shellContent}
-          </LiveKitRoom>
+          // Lazy LiveKit provider tree. The `fallback` is the *same*
+          // shellContent so the chat UI stays fully visible while the
+          // LiveKit vendor chunk streams in on first join — no visual
+          // disruption, the audio/video layer just wraps it once ready.
+          <Suspense fallback={shellContent}>
+            <VoiceRoomLayer
+              voiceToken={voiceToken}
+              livekitUrl={livekitUrl}
+              iceServers={iceServers}
+              micGranted={micGranted}
+              audioCaptureSettings={{
+                masterInputVolume,
+                preferredInputDeviceId,
+                echoCancellation,
+                noiseSuppression,
+                autoGainControl,
+                inputNoiseGateEnabled,
+                inputNoiseGateThresholdDb,
+              }}
+              onDisconnected={handleVoiceDisconnect}
+              onError={handleVoiceError}
+              onMediaDeviceFailure={handleMediaDeviceFailure}
+            >
+              {shellContent}
+            </VoiceRoomLayer>
+          </Suspense>
         ) : (
           shellContent
         )}

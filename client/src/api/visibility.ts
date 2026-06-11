@@ -2,7 +2,7 @@
  * Visibility API wrapper (F-VIS — per-server mesh-hop visibility).
  *
  * Thin wrapper around the `visibility_get_server` / `visibility_set_server`
- * Tauri commands exposed by the native IPC backend. The Rust side persists
+ * Tauri commands exposed by `src-tauri/src/lib.rs`. The Rust side persists
  * the per-server `max_hops` ceiling in the `visibility_meta` SQLite table
  * (schema v9) and broadcasts the change over the F3 gossipsub mesh.
  *
@@ -25,7 +25,7 @@ import { invoke } from "@tauri-apps/api/core";
  * servers will surface as UUID strings the renderer fetches from a
  * server-list endpoint.
  *
- * Kept in sync with the native visibility constants.
+ * Kept in sync with `src-tauri/src/porch/db.rs::VISIBILITY_SERVER_ID_*`.
  */
 export const VISIBILITY_SERVER_ID_PORCH = "porch";
 export const VISIBILITY_SERVER_ID_HOME = "home";

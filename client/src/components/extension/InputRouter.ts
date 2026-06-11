@@ -3,7 +3,7 @@
  *
  * Pure TypeScript, no React, no network calls. Checks whether a participant
  * with a given seat role is allowed to perform an action in a given session mode,
- * using the InputPermissions rules from the extension session contract §2.6.
+ * using the InputPermissions rules from docs/extensions/session-model.md §2.6.
  */
 
 export type Mode =
@@ -32,7 +32,7 @@ export interface InputPermissions {
 
 /**
  * Default InputPermissions per session mode.
- * Derived from the session-mode semantics and input-permission contract.
+ * Derived from session-model.md §2.2 (mode semantics) + §2.6 (input permissions).
  */
 export const DEFAULT_PERMISSIONS: Record<Mode, InputPermissions> = {
   /**

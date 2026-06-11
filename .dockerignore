@@ -13,27 +13,10 @@ server/.venv/
 **/target/
 
 # Tauri-generated Xcode/Android project files
-src-tauri/
-src-tvos/
+src-tauri/gen/
 
-# Public-export local-only material
-docs/
-branding/
-infra/
-patches/
-scripts/
-.github/
-.orrch/
-.superpowers/
-client/e2e/
-client/src/**/__tests__/
-client/src/test/
-server/tests/
-install.sh
-PLAN.md
-CHANGELOG.md
-CLA.md
-CONTRIBUTING.md
+# Tauri bundled native binaries (not needed for web/server Docker images)
+src-tauri/resources/
 
 # Build cache
 .build-cache/

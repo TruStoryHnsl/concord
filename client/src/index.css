@@ -17,7 +17,7 @@
   --color-on-surface: #f9f9fd;
   --color-on-surface-variant: #aaabaf;
 
-  /* ── Brand (Concord reference tokens).
+  /* ── Brand (Concord — reference tokens, see branding/BRAND.md).
          Not aliased to --color-primary because the existing Electric
          Indigo identity is load-bearing across the chat UI. Use
          text-brand-primary / bg-brand-primary explicitly where the
@@ -357,6 +357,34 @@ select {
   animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* ── Adaptive nav stack frame transitions ──
+   Phone drill-down: a freshly-pushed frame slides in from the right; a
+   pop reveals the frame beneath. Transform-only (GPU-cheap) and gated on
+   prefers-reduced-motion so low-end / motion-sensitive users get an
+   instant swap with no jank. Keyed remount drives the animation. */
+@keyframes navFrameInForward {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes navFrameInBack {
+  from { transform: translateX(-30%); }
+  to { transform: translateX(0); }
+}
+.nav-frame-forward {
+  animation: navFrameInForward 0.22s ease-out both;
+  will-change: transform;
+}
+.nav-frame-back {
+  animation: navFrameInBack 0.22s ease-out both;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-frame-forward,
+  .nav-frame-back {
+    animation: none;
+  }
+}
+
 /* ── Button Press Feedback ── */
 .btn-press {
   transition: transform 100ms ease, background-color 150ms ease, color 150ms ease;
@@ -418,7 +446,7 @@ select {
   /* max() floor so the bottom gap never collapses on viewports with no
      safe-area inset (e.g. desktop, where env() resolves to 0). This rule is
      intentionally UNLAYERED so it still wins over Tailwind's layered
-     padding utilities and applies uniformly. Previously this was
+     pb-*/py-*/p-* utilities and applies uniformly. Previously this was
      `env(safe-area-inset-bottom, 0px)` alone, which silently zeroed the
      bottom padding of every .safe-bottom element on desktop and slammed
      content flush to the container bottom edge (Explore Sources modal,

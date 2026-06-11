@@ -132,7 +132,8 @@ export function listBrowserPeers(): KnownPeer[] {
       source !== "qr" &&
       source !== "deeplink" &&
       source !== "matrix_room" &&
-      source !== "dht"
+      source !== "dht" &&
+      source !== "proximity"
     ) {
       continue;
     }
@@ -201,7 +202,7 @@ function persistBrowserPeers(peers: KnownPeer[]): WriteResult<undefined> {
  *   - `lastSeen` is advanced to "now" on every successful add.
  *
  * Validates the public-key hex length (64 chars) the same way the
- * native side does — see the native peer-store backend.
+ * native side does — see `src-tauri/src/servitude/peer_store.rs`.
  */
 export function addBrowserPeerFromCard(
   card: PeerCard,

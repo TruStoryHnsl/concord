@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://concordchat.net/schemas/concord-repo.v1.schema.json",
+  "title": "Concord Community Extension Repository Index (concord-repo/v1)",
+  "description": "Machine-checkable schema for the static-hostable repository index served at B/.well-known/concord-repo.json (or B/index.json). A single base URL B is the entire contract. URLs may be repo-relative for portability. Authoritative permission data lives in each bundle's manifest.json; the index permissions array is display-only and advisory.",
+  "type": "object",
+  "required": ["schema", "repo_id", "name", "extensions"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "description": "REQUIRED literal repository-protocol version. A client encountering an unknown major version MUST refuse the repo.",
+      "const": "concord-repo/v1"
+    },
+    "repo_id": {
+      "description": "Stable repository slug. Reverse-domain or kebab-case identifier.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "name": {
+      "description": "Human-facing repository name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri-reference"
+    },
+    "icon": {
+      "description": "Repo icon URL (absolute or repo-relative to B).",
+      "type": "string",
+      "format": "uri-reference"
+    },
+    "maintainer": {
+      "type": "string"
+    },
+    "updated_at": {
+      "description": "RFC3339 timestamp of the last index build.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "signing": {
+      "description": "Optional Tier-2 signing block (Ed25519 detached signature over the canonical index bytes with index_sig blanked and keys sorted). Drives the verified/unverified trust badge only; never gates install.",
+      "type": "object",
+      "required": ["public_key"],
+      "additionalProperties": true,
+      "properties": {
+        "public_key": {
+          "description": "Ed25519 public key, formatted 'ed25519:BASE64'.",
+          "type": "string",
+          "pattern": "^ed25519:[A-Za-z0-9+/]+={0,2}$"
+        },
+        "index_sig": {
+          "description": "Base64 detached signature over the canonical index.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      }
+    },
+    "extensions": {
+      "description": "All extensions published by this repo.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/extension" }
+    }
+  },
+  "definitions": {
+    "extension": {
+      "type": "object",
+      "required": ["id", "name", "latest", "versions"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "description": "Reverse-domain extension id; MUST match the bundle manifest.id.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$",
+          "maxLength": 200
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "icon": {
+          "description": "Icon name (e.g. a Material symbol) or URL.",
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "latest": {
+          "description": "SemVer of the default-install version. MUST appear in versions[].version.",
+          "type": "string",
+          "$ref": "#/definitions/semver"
+        },
+        "versions": {
+          "description": "Published versions, newest-first.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/version" }
+        }
+      }
+    },
+    "version": {
+      "type": "object",
+      "required": ["version", "bundle_url", "integrity"],
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "description": "SemVer of this published version.",
+          "$ref": "#/definitions/semver"
+        },
+        "bundle_url": {
+          "description": "URL of the bundle .zip (absolute or repo-relative to B). Fed verbatim to POST /api/extensions/install as remote_url.",
+          "type": "string",
+          "format": "uri-reference",
+          "minLength": 1
+        },
+        "integrity": {
+          "description": "Tier-1 (MANDATORY) SHA-384 Subresource-Integrity string for bundle.zip. Server recomputes post-fetch, pre-unpack, and rejects on mismatch.",
+          "type": "string",
+          "pattern": "^sha384-[A-Za-z0-9+/]+={0,2}$"
+        },
+        "min_concord_version": {
+          "description": "Minimum running Concord version this bundle supports (SemVer).",
+          "$ref": "#/definitions/semver"
+        },
+        "manifest_url": {
+          "description": "URL of the bundle's manifest.json (absolute or repo-relative).",
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "permissions": {
+          "description": "Display-only advisory permission list. The bundle's manifest.json is authoritative; clients MUST warn on mismatch.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "released_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "changelog": {
+          "type": "string"
+        }
+      }
+    },
+    "semver": {
+      "description": "Semantic Versioning 2.0.0 string (optionally with pre-release / build metadata).",
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+    }
+  }
+}
