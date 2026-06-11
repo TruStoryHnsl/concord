@@ -29,10 +29,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "../../api/servitude";
 import {
   fetchMeshGraph,
+  fetchLocalSpring,
   subscribeToMeshGraph,
   maxHopDistance,
   EMPTY_MESH_GRAPH,
+  EMPTY_LOCAL_SPRING,
   type MeshGraph,
+  type LocalSpring,
+  type SpringTier,
 } from "../../api/meshGraph";
 import { fetchPeerSwarmStatus } from "../../api/peerSwarm";
 import { useInstanceNameStore } from "../../stores/instanceName";
@@ -71,6 +75,14 @@ export function MeshMap() {
     () => new Set<MeshLayerId>(["concord"]),
   );
 
+  // W1.3 / F4b — local-spring (one-hop-up) governance. CONSERVATIVE
+  // DEFAULT OFF: a fresh install does not surface friend-of-friend nodes.
+  // The operator opts in here, choosing the minimum LAN-peer trust tier
+  // whose remote neighbors get exposed.
+  const [springEnabled, setSpringEnabled] = useState(false);
+  const [springMinTier, setSpringMinTier] = useState<SpringTier>("friend");
+  const [spring, setSpring] = useState<LocalSpring>(EMPTY_LOCAL_SPRING);
+
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refetch = useCallback(async () => {
@@ -89,6 +101,23 @@ export function MeshMap() {
       setHydrated(true);
     }
   }, []);
+
+  // Re-pull the local-spring whenever governance changes OR the graph
+  // moves. When disabled, the native command short-circuits to empty.
+  const refetchSpring = useCallback(async () => {
+    try {
+      const s = await fetchLocalSpring(springEnabled, springMinTier);
+      setSpring(s);
+    } catch (err) {
+      console.warn("[MeshMap] local-spring fetch failed:", err);
+      setSpring(EMPTY_LOCAL_SPRING);
+    }
+  }, [springEnabled, springMinTier]);
+
+  useEffect(() => {
+    if (!isNative) return;
+    void refetchSpring();
+  }, [isNative, refetchSpring]);
 
   // Hydrate once: local peer id (center node) + initial snapshot.
   useEffect(() => {
@@ -118,13 +147,14 @@ export function MeshMap() {
       if (refetchTimer.current) clearTimeout(refetchTimer.current);
       refetchTimer.current = setTimeout(() => {
         void refetch();
+        void refetchSpring();
       }, 300);
     });
     return () => {
       unsub();
       if (refetchTimer.current) clearTimeout(refetchTimer.current);
     };
-  }, [isNative, refetch]);
+  }, [isNative, refetch, refetchSpring]);
 
   const concordOn = enabledLayers.has("concord");
   const graphMaxHop = useMemo(() => maxHopDistance(graph), [graph]);
@@ -138,6 +168,17 @@ export function MeshMap() {
   // viewer). Unreachable nodes (hopDistance == null) are hidden — they're
   // adversarial-island artifacts, not part of the operator's reachable
   // mesh.
+  // W1.3 — reached-via lookup: for each one-hop-up node the spring
+  // surfaced, the (short) LAN peer it's reached through. Empty unless
+  // governance is enabled (the native command short-circuits to empty).
+  const reachedViaByPeer = useMemo<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    for (const n of spring.nodes) {
+      if (!m.has(n.peerId)) m.set(n.peerId, shortPeerId(n.reachedVia));
+    }
+    return m;
+  }, [spring]);
+
   const nodes = useMemo<MeshNode[]>(() => {
     if (!concordOn) return [];
     const hostLabel = instanceName.trim() || "This device";
@@ -150,10 +191,17 @@ export function MeshMap() {
         continue;
       }
       if (hop == null) continue; // unreachable island — drop
-      if (hop > hopScale) continue; // beyond the slider window
+      const reachedVia = reachedViaByPeer.get(n.peerId);
+      const isOneHopUp = reachedVia != null;
+      // A one-hop-up node the spring surfaced is shown even if it sits
+      // beyond the slider window — exposing it IS the point of the
+      // governance opt-in. Other nodes respect the hop-scale filter.
+      if (hop > hopScale && !isOneHopUp) continue;
       out.push({
         id: n.peerId,
-        label: shortPeerId(n.peerId),
+        label: isOneHopUp
+          ? `${shortPeerId(n.peerId)} · via ${reachedVia}`
+          : shortPeerId(n.peerId),
         hop,
         // W1.1 has no per-node trust info in the topology graph itself
         // (that's F3's peer-store cross-ref, a follow-up). Render every
@@ -167,7 +215,7 @@ export function MeshMap() {
       out.unshift({ id: localId, label: hostLabel, hop: 0, kind: "host" });
     }
     return out;
-  }, [graph, concordOn, hopScale, instanceName, localId]);
+  }, [graph, concordOn, hopScale, instanceName, localId, reachedViaByPeer]);
 
   // Edges, filtered to those whose BOTH endpoints survived the node
   // filter. MeshCanvas uses {from,to}; our graph uses {a,b}.
@@ -225,6 +273,38 @@ export function MeshMap() {
               : visiblePeerCount === 0
                 ? "No mesh peers in range"
                 : `${visiblePeerCount} node${visiblePeerCount === 1 ? "" : "s"} within ${hopScale} hop${hopScale === 1 ? "" : "s"}`}
+          </span>
+        </div>
+        {/* W1.3 / F4b — one-hop-up (local-spring) governance. Off by
+            default; opt-in exposes LAN peers' remote neighbors at/above
+            the selected trust tier, each labeled "via <lan-peer>". */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-2 text-[10px] font-label uppercase tracking-widest text-on-surface-variant whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              data-testid="mesh-spring-toggle"
+              checked={springEnabled}
+              onChange={(e) => setSpringEnabled(e.target.checked)}
+              className="accent-primary"
+            />
+            One-hop-up
+          </label>
+          <select
+            data-testid="mesh-spring-tier"
+            value={springMinTier}
+            disabled={!springEnabled}
+            onChange={(e) => setSpringMinTier(e.target.value as SpringTier)}
+            className="text-xs font-label bg-surface-variant/40 rounded px-2 py-1 text-on-surface disabled:opacity-40"
+            aria-label="Minimum trust tier for one-hop-up exposure"
+          >
+            <option value="friend">Friends+</option>
+            <option value="close_friend">Close friends+</option>
+            <option value="supertrusted">Supertrusted only</option>
+          </select>
+          <span className="text-[10px] font-label text-on-surface-variant/60">
+            {springEnabled
+              ? `${spring.nodes.length} one-hop-up`
+              : "friend-of-friend off"}
           </span>
         </div>
         <div className="flex items-center gap-3">

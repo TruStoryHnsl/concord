@@ -136,6 +136,79 @@ export function subscribeToMeshGraph(onChanged: () => void): () => void {
   };
 }
 
+// ---------------------------------------------------------------------------
+// W1.3 / F4b — local-spring (one-hop-up) render
+// ---------------------------------------------------------------------------
+
+/**
+ * Trust tier a LAN peer must hold for its remote neighbors to be surfaced
+ * as one-hop-up nodes (friend-of-friend opt-in). Mirrors the native
+ * `SpringTier` / `TrustTier`. Ordered weakest → strongest.
+ */
+export type SpringTier = "recent" | "friend" | "close_friend" | "supertrusted";
+
+/** Raw wire shape from the Rust `mesh_local_spring` command (snake_case). */
+interface OneHopUpNodeWire {
+  peer_id: string;
+  reached_via: string;
+}
+
+interface LocalSpringWire {
+  nodes: OneHopUpNodeWire[];
+}
+
+/**
+ * One surfaced one-hop-up node: a remote neighbor of a LAN peer, labeled
+ * with the LAN peer it was reached through. The render shows it as
+ * "reached-via-&lt;reachedVia&gt;".
+ */
+export interface OneHopUpNode {
+  /** libp2p PeerId of the one-hop-up node (hop distance exactly 2). */
+  peerId: string;
+  /** libp2p PeerId of the LAN peer through which it is reachable. */
+  reachedVia: string;
+}
+
+/** The local-spring slice — the set of one-hop-up nodes to render. */
+export interface LocalSpring {
+  nodes: OneHopUpNode[];
+}
+
+/** The empty spring — the conservative default (governance off) / web mode. */
+export const EMPTY_LOCAL_SPRING: LocalSpring = { nodes: [] };
+
+/**
+ * Fetch the local-spring (one-hop-up) slice. Surfaces hop=2 nodes reachable
+ * through the operator's LAN peers, gated by the per-trust-tier governance
+ * toggle.
+ *
+ * - `enabled` is the master governance switch. **The conservative default
+ *   is `false`** — pass `false` and the result is always empty (no
+ *   friend-of-friend exposure). The caller's settings toggle drives this.
+ * - `minTier` is the lowest trust tier a LAN peer must hold for its remote
+ *   neighbors to be surfaced (only LAN peers at/above this tier become
+ *   spring roots).
+ *
+ * Native-only — resolves to an empty spring on web (no swarm).
+ */
+export async function fetchLocalSpring(
+  enabled: boolean,
+  minTier: SpringTier = "friend",
+): Promise<LocalSpring> {
+  if (!isTauri() || !enabled) return EMPTY_LOCAL_SPRING;
+  const { invoke } = await import("@tauri-apps/api/core");
+  const wire = await invoke<LocalSpringWire>("mesh_local_spring", {
+    enabled,
+    minTier,
+  });
+  return {
+    nodes: wire.nodes.map((n) => ({
+      peerId: n.peer_id,
+      reachedVia: n.reached_via,
+    })),
+  };
+}
+
 /**
  * The maximum hop distance present in a graph (excluding unreachable
  * `null` nodes). Drives the upper bound of the hop-scale slider. Returns
