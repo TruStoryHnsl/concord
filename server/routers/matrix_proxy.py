@@ -22,6 +22,7 @@ Filed under F1 of the 2026-05-18 password-leak pentest report.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict, deque
 
@@ -33,9 +34,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["matrix-proxy"])
 
-# Upstream homeserver. Hard-coded service name on the docker network;
-# concord-api always runs alongside tuwunel.
-CONDUWUIT_URL = "http://conduwuit:6167"
+# Upstream homeserver. Prefer the explicit MATRIX_HOMESERVER_URL env, which is
+# set by both the docker-compose stack (http://conduwuit:6167) and the
+# single-image build (http://127.0.0.1:6167). The bare compose service name
+# only resolves on a docker bridge network — in the single image everything is
+# loopback, so the old hard-coded "conduwuit" host failed DNS and 502'd every
+# login. Fall back to the compose name for legacy deployments that don't set it.
+CONDUWUIT_URL = os.getenv("MATRIX_HOMESERVER_URL", "http://conduwuit:6167")
 
 # Per-IP login rate limit. 30 attempts per 5-minute sliding window
 # tolerates legitimate password typos + form re-submits while making
