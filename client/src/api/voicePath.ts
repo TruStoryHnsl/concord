@@ -123,6 +123,17 @@ export async function selectVoicePath(
   if (!node) {
     return { path: "livekit_sfu", reason: "browser_libp2p_not_running" };
   }
+  // No remote participants named → there is no mesh to form. A solo join
+  // (the common case, and what `joinVoiceSession` sends today since the
+  // roster→peer resolution is still a follow-up) must ride the LiveKit
+  // SFU. Without this guard an empty list trivially passed every check
+  // below and returned `libp2p_mesh`, so the join committed to the mesh
+  // transport with no LiveKit room — and the LiveKit-based voice UI then
+  // crashed with "No room provided". Browser mesh media is only viable
+  // once real peers are present (the Phase 9 cases below).
+  if (participants.length === 0) {
+    return { path: "livekit_sfu", reason: "no_remote_participants" };
+  }
   if (participants.length > 8) {
     return { path: "livekit_sfu", reason: "above_cap_8" };
   }
