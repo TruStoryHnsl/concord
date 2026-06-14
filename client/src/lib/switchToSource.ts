@@ -128,10 +128,15 @@ export function switchToSource(
   // `useMatrixSync` (keyed on `[client]`) tears down the old sync loop
   // and starts the new one. No page reload.
   if (target.accessToken && target.userId) {
+    // rebindSources:false — switching the active instance must NOT rescope
+    // the persisted source set to the target's user id, or the other
+    // instance's tile gets filtered out ("clicking a tile deletes the
+    // other"). The multi-instance source set is preserved across switches.
     useAuthStore.getState().login(
       target.accessToken,
       target.userId,
       target.deviceId ?? "",
+      { rebindSources: false },
     );
   }
 
