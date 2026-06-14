@@ -108,10 +108,7 @@ export function LoginForm() {
           // prior session — surfaced in the message + the reset affordance below.
           const status = (totpErr as { status?: number })?.status;
           if (status !== 404) {
-            setError(
-              "Couldn't verify your account status. Check your connection — and " +
-              "if this keeps happening, use “Reset local data” below and try again.",
-            );
+            setError("Couldn't verify your account status — check your connection and try again.");
             setLoading(false);
             return;
           }
@@ -159,30 +156,6 @@ export function LoginForm() {
     } finally {
       setForgotBusy(false);
     }
-  };
-
-  // Clears this client's local state (sessions, sources, cached Matrix stores)
-  // and reloads. Recovers from stale state left by a prior session or an
-  // instance reset, without needing browser devtools. Local only — touches
-  // nothing on the server.
-  const handleResetLocalData = () => {
-    const done = () => window.location.reload();
-    try {
-      window.localStorage?.clear();
-      window.sessionStorage?.clear();
-      if (typeof window.indexedDB?.databases === "function") {
-        window.indexedDB
-          .databases()
-          .then((dbs) => {
-            for (const d of dbs) if (d.name) window.indexedDB.deleteDatabase(d.name);
-          })
-          .finally(done);
-        return;
-      }
-    } catch {
-      // best-effort
-    }
-    done();
   };
 
   const handleTOTPVerify = async (e: React.FormEvent) => {
@@ -453,19 +426,6 @@ export function LoginForm() {
             )}
           </div>
         )}
-
-        {/* Local recovery — clears this browser's stored sessions/sources/cache
-            and reloads. Server-side state is untouched. Useful when a prior
-            session or an instance reset left stale local data. */}
-        <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={handleResetLocalData}
-            className="text-on-surface-variant/50 hover:text-on-surface-variant text-xs transition-colors font-label"
-          >
-            Reset local data
-          </button>
-        </div>
           </>
           /* end normal login/register */
         )}

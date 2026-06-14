@@ -126,6 +126,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isLoggedIn: true,
         isLoading: false,
       });
+      // Validate the restored token in the background. If the homeserver
+      // rejects it (e.g. the instance was reset, or the session was revoked),
+      // self-heal by logging out so a normal page load lands cleanly on the
+      // login screen instead of hanging on "Connecting…" behind a dead token.
+      // ONLY auth failures clear the session — a network error / server-down
+      // leaves a valid session intact (the SDK retries sync).
+      client
+        .whoami()
+        .catch((err: { errcode?: string; httpStatus?: number }) => {
+          if (err?.errcode === "M_UNKNOWN_TOKEN" || err?.httpStatus === 401) {
+            // Only if this is still the active session (avoid clobbering a
+            // login that happened while whoami was in flight).
+            if (get().accessToken === accessToken) {
+              get().logout();
+            }
+          }
+        });
       return true;
     } catch {
       localStorage.removeItem(STORAGE_KEY);
