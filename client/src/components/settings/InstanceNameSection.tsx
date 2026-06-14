@@ -44,9 +44,8 @@ export function InstanceNameSection() {
           Instance name
         </h3>
         <p className="text-xs text-on-surface-variant">
-          Sets the name this device shows on its source rail and broadcasts
-          to peers. Editable in the desktop app; web instances take their
-          name from the docker stack configuration.
+          Web instances inherit their name from the docker stack's
+          configuration — there's no runtime field here.
         </p>
       </section>
     );

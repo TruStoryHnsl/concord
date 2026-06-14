@@ -30,7 +30,11 @@ interface SourceContextMenuProps {
   x: number;
   y: number;
   onClose: () => void;
+  /** True when this source is the instance the client runs against. The
+   *  local instance can't be disconnected, so "Close connection" is hidden. */
+  isLocalInstance?: boolean;
   onOpen: (sourceId: string) => void;
+  onToggleEnabled: (sourceId: string) => void;
   onOpenSettings: (sourceId: string) => void;
   onCloseConnection: (sourceId: string) => void;
 }
@@ -40,7 +44,9 @@ export function SourceContextMenu({
   x,
   y,
   onClose,
+  isLocalInstance = false,
   onOpen,
+  onToggleEnabled,
   onOpenSettings,
   onCloseConnection,
 }: SourceContextMenuProps) {
@@ -111,6 +117,14 @@ export function SourceContextMenu({
       />
 
       <MenuItem
+        label={source.enabled ? "Hide from sidebar" : "Show in sidebar"}
+        onClick={() => {
+          onToggleEnabled(source.id);
+          onClose();
+        }}
+      />
+
+      <MenuItem
         label="Settings"
         onClick={() => {
           onOpenSettings(source.id);
@@ -120,7 +134,11 @@ export function SourceContextMenu({
 
       <div className="h-px bg-outline-variant/15 my-1" />
 
-      {confirmClose ? (
+      {isLocalInstance ? (
+        <div className="px-3 py-2 text-xs text-on-surface-variant/70">
+          This is your home instance — it can't be disconnected.
+        </div>
+      ) : confirmClose ? (
         <div className="px-3 py-2 space-y-2">
           <p className="text-xs text-on-surface-variant">
             Sever the connection and delete data from {sourceLabel}?

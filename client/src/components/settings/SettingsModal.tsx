@@ -18,48 +18,100 @@ import { ConnectorsTab } from "./ConnectorsTab";
 import { AdminTab } from "./AdminTab";
 import { ServerSettingsContent } from "./ServerSettingsModal";
 
-type TabDef = {
-  key: string;
+/**
+ * INS-012 + Settings makeover (#5): Unified settings panel.
+ *
+ * The legacy panel rendered every category as a flat strip of pill
+ * buttons stacked above the content, which scaled badly: 12 user tabs
+ * plus a server picker plus N server tabs all competed for the same
+ * horizontal band, and related controls (Audio vs. Voice, Profile vs.
+ * Identity vs. Connections) had no visual relationship.
+ *
+ * The makeover replaces that with a real settings layout: a scannable
+ * left rail of *grouped* categories beside a single scrolling content
+ * pane. Groups collapse the long list into ~6 headed sections so the
+ * navigation reads top-to-bottom instead of wrapping. Each leaf is the
+ * same self-contained tab component as before — this is a navigation /
+ * information-architecture reorganization, not a control rewrite, so
+ * every existing control and its behavior is preserved verbatim.
+ *
+ * Responsive: on wide viewports the rail sits beside the content
+ * (two-pane). On narrow / mobile viewports the rail becomes a
+ * drill-in list — tapping a category swaps to its content with a back
+ * affordance — so the controls always get full width.
+ *
+ * Server settings stay a first-class concern: admin servers (and any
+ * server opened via a context menu) surface as a "Server Settings"
+ * group whose items are that server's per-server tabs. A compact server
+ * picker selects which server the group reflects.
+ */
+
+type LeafKey =
+  | "audio"
+  | "voice"
+  | "notifications"
+  | "profile"
+  | "users"
+  | "connections"
+  | "appearance"
+  | "node"
+  | "connectors"
+  | "hosting"
+  | "about"
+  | "admin"
+  | "server-general"
+  | "server-members"
+  | "server-invite"
+  | "server-bans"
+  | "server-whitelist"
+  | "server-webhooks"
+  | "server-moderation"
+  | "server-federation";
+
+type LeafDef = {
+  key: LeafKey;
   label: string;
   icon: string;
-  group: "user" | "server";
+  /** Optional one-line description shown under the label in the rail. */
+  hint?: string;
+};
+
+type GroupDef = {
+  id: string;
+  label: string;
+  /** Leading icon for the group header. */
+  icon: string;
+  items: LeafDef[];
 };
 
 const EMPTY_MEMBERS: never[] = [];
 
-// Pure helper — compute server settings tabs for a given server/member context
-function buildServerTabs(
+// Pure helper — compute server settings tabs (leaves) for a given
+// server/member context. Unchanged from the legacy panel so the server
+// settings surface keeps identical visibility rules.
+function buildServerLeaves(
   server: { id: string; owner_id: string; federated?: boolean; visibility?: string },
   members: { user_id: string; role: string }[],
   userId: string | null,
-): TabDef[] {
+): LeafDef[] {
   if (server.federated) {
-    return [{ key: "server-federation", label: "Federation", icon: "language", group: "server" }];
+    return [{ key: "server-federation", label: "Federation", icon: "language" }];
   }
   const myMember = members.find((m) => m.user_id === userId);
   const isOwner = server.owner_id === userId;
   const isAdmin = isOwner || myMember?.role === "admin";
-  const tabs: TabDef[] = [
-    { key: "server-general", label: "General", icon: "settings", group: "server" },
-    { key: "server-members", label: "Members", icon: "group", group: "server" },
+  const leaves: LeafDef[] = [
+    { key: "server-general", label: "General", icon: "settings" },
+    { key: "server-members", label: "Members", icon: "group" },
   ];
-  if (isAdmin) tabs.push({ key: "server-invite", label: "Invite", icon: "person_add", group: "server" });
-  tabs.push({ key: "server-bans", label: "Bans", icon: "block", group: "server" });
-  if (server.visibility === "private") tabs.push({ key: "server-whitelist", label: "Whitelist", icon: "verified_user", group: "server" });
-  tabs.push({ key: "server-webhooks", label: "Webhooks", icon: "webhook", group: "server" });
-  if (isAdmin) tabs.push({ key: "server-moderation", label: "Moderation", icon: "gavel", group: "server" });
-  return tabs;
+  if (isAdmin) leaves.push({ key: "server-invite", label: "Invite", icon: "person_add" });
+  leaves.push({ key: "server-bans", label: "Bans", icon: "block" });
+  if (server.visibility === "private") leaves.push({ key: "server-whitelist", label: "Whitelist", icon: "verified_user" });
+  leaves.push({ key: "server-webhooks", label: "Webhooks", icon: "webhook" });
+  if (isAdmin) leaves.push({ key: "server-moderation", label: "Moderation", icon: "gavel" });
+  return leaves;
 }
 
-/**
- * INS-012: Unified settings panel — a single navigable interface
- * that contains both User Settings and Server Settings as sibling
- * sections with clear visual separation.
- *
- * Admin servers are always surfaced in the sidebar regardless of which
- * tab is active, so admins can switch between user and server settings
- * without losing their server context.
- */
 export function SettingsPanel() {
   const activeTab = useSettingsStore((s) => s.settingsTab);
   const setTab = useSettingsStore((s) => s.setSettingsTab);
@@ -69,7 +121,22 @@ export function SettingsPanel() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const userId = useAuthStore((s) => s.userId);
   const [isAdmin, setIsAdmin] = useState(false);
-  const { isTauri, isMobile, isTV } = usePlatform();
+  const { isTauri, isTV, hasTouchOnly } = usePlatform();
+
+  // Track viewport width so the shell can flip between the two-pane
+  // (rail + content) desktop layout and the drill-in mobile layout. We
+  // key off a media-query-ish breakpoint rather than `isMobile` so the
+  // desktop web app at a narrow window also gets the drill-in behavior.
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setNarrow(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const tvFocusProps = isTV
     ? ({ "data-focusable": "true", "data-focus-group": "tv-main" } as const)
@@ -78,7 +145,7 @@ export function SettingsPanel() {
   const servers = useServerStore((s) => s.servers);
   const membersByServer = useServerStore((s) => s.members);
 
-  // Servers where user is owner or has the admin role
+  // Servers where the user is owner or has the admin role.
   const adminServers = useMemo(
     () =>
       servers.filter((s) => {
@@ -88,75 +155,158 @@ export function SettingsPanel() {
     [servers, membersByServer, userId],
   );
 
-  // Tab sets per admin server
-  const adminServerTabs = useMemo(() => {
-    const map = new Map<string, TabDef[]>();
+  // Server-settings leaves per admin server.
+  const adminServerLeaves = useMemo(() => {
+    const map = new Map<string, LeafDef[]>();
     for (const server of adminServers) {
-      map.set(server.id, buildServerTabs(server, membersByServer[server.id] ?? EMPTY_MEMBERS, userId));
+      map.set(server.id, buildServerLeaves(server, membersByServer[server.id] ?? EMPTY_MEMBERS, userId));
     }
     return map;
   }, [adminServers, membersByServer, userId]);
 
-  // If serverSettingsId points to a non-admin server (opened via context menu),
-  // still show that server's section so the user doesn't lose context.
+  // If serverSettingsId points to a non-admin server (opened via a
+  // context menu), still surface that server's section so the user
+  // doesn't lose context after landing here from a gear click.
   const contextServer =
-    serverSettingsId && !adminServerTabs.has(serverSettingsId)
+    serverSettingsId && !adminServerLeaves.has(serverSettingsId)
       ? (servers.find((s) => s.id === serverSettingsId) ?? null)
       : null;
-  const contextServerTabs = useMemo(
+  const contextServerLeaves = useMemo(
     () =>
       contextServer
-        ? buildServerTabs(contextServer, membersByServer[contextServer.id] ?? EMPTY_MEMBERS, userId)
+        ? buildServerLeaves(contextServer, membersByServer[contextServer.id] ?? EMPTY_MEMBERS, userId)
         : [],
     [contextServer, membersByServer, userId],
   );
 
-  // Tabs for whichever server is currently active in the content pane
-  const activeServerTabs = serverSettingsId
-    ? (adminServerTabs.get(serverSettingsId) ?? contextServerTabs)
+  // Leaves for whichever server is currently active in the content pane.
+  const activeServerLeaves = serverSettingsId
+    ? (adminServerLeaves.get(serverSettingsId) ?? contextServerLeaves)
     : [];
 
-  const userTabs = useMemo(() => {
-    const tabs: TabDef[] = [
-      { key: "audio", label: "Audio", icon: "headphones", group: "user" },
-      { key: "voice", label: "Voice", icon: "graphic_eq", group: "user" },
-      { key: "notifications", label: "Notifications", icon: "notifications", group: "user" },
-      { key: "profile", label: "Profile", icon: "person", group: "user" },
-      { key: "users", label: "Users", icon: "manage_accounts", group: "user" },
-      { key: "connections", label: "Connections", icon: "link", group: "user" },
-      { key: "appearance", label: "Appearance", icon: "palette", group: "user" },
+  // Grouped user-settings navigation. Groups collapse the formerly-flat
+  // 12-item strip into a handful of scannable headed sections.
+  const userGroups = useMemo<GroupDef[]>(() => {
+    const groups: GroupDef[] = [
+      {
+        id: "audio-voice",
+        label: "Audio & Voice",
+        icon: "graphic_eq",
+        items: [
+          { key: "audio", label: "Audio", icon: "headphones", hint: "Output & normalization" },
+          { key: "voice", label: "Voice", icon: "mic", hint: "Input & processing" },
+        ],
+      },
+      {
+        id: "account",
+        label: "Account",
+        icon: "account_circle",
+        items: [
+          { key: "profile", label: "Profile", icon: "person", hint: "Name, avatar, security" },
+          { key: "users", label: "Identity", icon: "manage_accounts", hint: "Logins & trust" },
+          { key: "connections", label: "Connections", icon: "link", hint: "Linked instances & peers" },
+        ],
+      },
+      {
+        id: "app",
+        label: "App",
+        icon: "tune",
+        items: [
+          { key: "notifications", label: "Notifications", icon: "notifications" },
+          { key: "appearance", label: "Appearance", icon: "palette", hint: "Theme & text size" },
+        ],
+      },
+    ];
+
+    // Instance group — hosting plus the native-only node/connectors.
+    const instanceItems: LeafDef[] = [
+      { key: "hosting", label: "Hosting", icon: "dns", hint: "Keep your server online" },
     ];
     if (isTauri) {
-      // INS-022: Node tab is visible on mobile Tauri too — the embedded
-      // servitude module runs on mobile (foreground-active; backgrounded
-      // pauses are handled by the app-level lifecycle hook).
-      tabs.push({ key: "node", label: "Node", icon: "dns", group: "user" });
-      // F7 / W2.4 — external-mesh connectors (Reticulum, Meshtastic, LoRa).
-      // Native-only: connectors run in the swarm, not the browser.
-      tabs.push({ key: "connectors", label: "Connectors", icon: "device_hub", group: "user" });
+      // INS-022: Node is visible on mobile Tauri too — the embedded
+      // servitude module runs on mobile.
+      instanceItems.push({ key: "node", label: "Node", icon: "lan", hint: "Embedded homeserver" });
+      // F7 / W2.4 — external-mesh connectors (Reticulum, Meshtastic,
+      // LoRa). Native-only: connectors run in the swarm, not the browser.
+      instanceItems.push({ key: "connectors", label: "Connectors", icon: "device_hub", hint: "Mesh & radio bridges" });
     }
-    tabs.push({ key: "hosting", label: "Hosting", icon: "dns", group: "user" });
-    tabs.push({ key: "about", label: "About", icon: "info", group: "user" });
-    return tabs;
-  }, [isTauri, isMobile, isAdmin]);
+    groups.push({ id: "instance", label: "Instance", icon: "hub", items: instanceItems });
 
-  const adminTab: TabDef | null = useMemo(
-    () => (isAdmin ? { key: "admin", label: "Admin", icon: "shield_person", group: "user" } : null),
-    [isAdmin],
+    if (isAdmin) {
+      groups.push({
+        id: "admin",
+        label: "Administration",
+        icon: "shield_person",
+        items: [{ key: "admin", label: "Admin", icon: "shield_person", hint: "Server administration" }],
+      });
+    }
+
+    groups.push({
+      id: "about",
+      label: "About",
+      icon: "info",
+      items: [{ key: "about", label: "About", icon: "info" }],
+    });
+
+    return groups;
+  }, [isTauri, isAdmin]);
+
+  // Set of all user-settings leaf keys (used to distinguish user vs.
+  // server context when auto-selecting tabs).
+  const userLeafKeys = useMemo(
+    () => new Set<string>(userGroups.flatMap((g) => g.items.map((i) => i.key))),
+    [userGroups],
   );
 
-  const userTabKeys = useMemo(
-    () => new Set<string>([...userTabs.map((t) => t.key), ...(adminTab ? [adminTab.key] : [])]),
-    [adminTab, userTabs],
-  );
+  // Server-settings group, if any server is in context.
+  const serverGroup = useMemo<GroupDef | null>(() => {
+    const options: { server: (typeof servers)[0]; leaves: LeafDef[] }[] = [];
+    for (const server of adminServers) {
+      const leaves = adminServerLeaves.get(server.id);
+      if (leaves && leaves.length > 0) options.push({ server, leaves });
+    }
+    if (
+      contextServer &&
+      contextServerLeaves.length > 0 &&
+      !options.some((o) => o.server.id === contextServer.id)
+    ) {
+      options.push({ server: contextServer, leaves: contextServerLeaves });
+    }
+    if (options.length === 0) return null;
 
-  // Auto-select first server tab when server context activates and active tab isn't valid
+    const selected = options.find((o) => o.server.id === serverSettingsId) ?? null;
+    return {
+      id: "server",
+      label: "Server Settings",
+      icon: "dns",
+      items: selected ? selected.leaves : [],
+    };
+  }, [adminServers, adminServerLeaves, contextServer, contextServerLeaves, serverSettingsId, servers]);
+
+  const serverPickerOptions = useMemo(() => {
+    const opts: { id: string; name: string }[] = [];
+    for (const server of adminServers) {
+      const leaves = adminServerLeaves.get(server.id);
+      if (leaves && leaves.length > 0) opts.push({ id: server.id, name: server.name });
+    }
+    if (
+      contextServer &&
+      contextServerLeaves.length > 0 &&
+      !opts.some((o) => o.id === contextServer.id)
+    ) {
+      opts.push({ id: contextServer.id, name: contextServer.name });
+    }
+    return opts;
+  }, [adminServers, adminServerLeaves, contextServer, contextServerLeaves]);
+
+  // Auto-select the first server tab when server context activates and
+  // the active tab isn't a valid server leaf.
   useEffect(() => {
-    if (!serverSettingsId || activeServerTabs.length === 0) return;
-    if (activeServerTabs.some((t) => t.key === activeTab)) return;
-    if (userTabKeys.has(activeTab)) return;
-    setTab(activeServerTabs[0].key as typeof activeTab);
-  }, [activeTab, serverSettingsId, activeServerTabs, setTab, userTabKeys]);
+    if (!serverSettingsId || activeServerLeaves.length === 0) return;
+    if (activeServerLeaves.some((t) => t.key === activeTab)) return;
+    if (userLeafKeys.has(activeTab)) return;
+    setTab(activeServerLeaves[0].key as typeof activeTab);
+  }, [activeTab, serverSettingsId, activeServerLeaves, setTab, userLeafKeys]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -174,211 +324,237 @@ export function SettingsPanel() {
   const isServerTab = activeTab.startsWith("server-");
   const serverSubTab = isServerTab ? activeTab.replace("server-", "") : null;
 
-  // User tab click — no longer clears server context so admin sections stay visible
-  const handleSelectTab = (tab: typeof activeTab) => {
-    setTab(tab);
+  // Selecting a user-settings leaf. We do NOT clear server context so
+  // the admin server section stays highlighted in the rail; it only
+  // clears on close (preserving the legacy navigation contract).
+  const handleSelectTab = (tab: LeafKey) => {
+    setTab(tab as typeof activeTab);
   };
 
-  // Server tab click — set which server's content to show and switch tab
-  const handleSelectServerTab = (serverId: string, tab: typeof activeTab) => {
+  // Selecting a server-settings leaf — set which server's content to
+  // show, then switch to that leaf.
+  const handleSelectServerTab = (serverId: string, tab: LeafKey) => {
     setServerSettingsId(serverId);
-    setTab(tab);
+    setTab(tab as typeof activeTab);
   };
 
-  const tabBtnClass = (active: boolean) =>
-    `btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap transition-all font-label ${
-      active
-        ? "bg-surface-container-highest text-on-surface"
-        : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-    }`;
+  // On narrow layouts the rail and content are separate "screens". We
+  // show the content screen whenever a leaf has been chosen; the back
+  // button returns to the rail screen. `showContentScreen` starts true
+  // so deep-links (e.g. openServerSettings) land directly on content.
+  const [showContentScreen, setShowContentScreen] = useState(true);
 
-  const filledIcon = { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' };
+  const allGroups = useMemo(
+    () => (serverGroup ? [...userGroups, serverGroup] : userGroups),
+    [userGroups, serverGroup],
+  );
 
-  // Render the single "Server settings" row: a server picker that
-  // determines which server's tab strip expands below. Collapses N
-  // Server-scoped sections down to one row, reducing the Settings tab
-  // bar's vertical footprint regardless of how many servers the user
-  // administers. Non-admin servers opened via "context menu → Server
-  // settings" appear in the picker too, so the current-server context
-  // isn't lost when the user lands in SettingsPanel from a gear click.
-  const serverPickerOptions = useMemo(() => {
-    const opts: { server: (typeof servers)[0]; tabs: TabDef[] }[] = [];
-    for (const server of adminServers) {
-      const tabs = adminServerTabs.get(server.id);
-      if (tabs && tabs.length > 0) opts.push({ server, tabs });
+  // Find the active leaf's label for the content header.
+  const activeLeafLabel = useMemo(() => {
+    for (const g of allGroups) {
+      const found = g.items.find((i) => i.key === activeTab);
+      if (found) return found.label;
     }
-    if (
-      contextServer &&
-      contextServerTabs.length > 0 &&
-      !opts.some((o) => o.server.id === contextServer.id)
-    ) {
-      opts.push({ server: contextServer, tabs: contextServerTabs });
+    if (isServerTab) {
+      // Server leaf not yet materialized into the visible group (e.g.
+      // before the picker resolves) — fall back to a readable label.
+      const sub = serverSubTab ?? "";
+      return sub ? sub.charAt(0).toUpperCase() + sub.slice(1) : "Server";
     }
-    return opts;
-  }, [adminServers, adminServerTabs, contextServer, contextServerTabs]);
+    return "Settings";
+  }, [allGroups, activeTab, isServerTab, serverSubTab]);
 
-  const selectedServerOption =
-    serverPickerOptions.find((o) => o.server.id === serverSettingsId) ?? null;
-
-  const renderServerRow = () => {
-    if (serverPickerOptions.length === 0) return null;
-    return (
-      <div>
-        <div className="border-t border-outline-variant/10 mx-4" />
-        <div className="px-4 pt-2 pb-1">
-          <span className="text-xs font-label font-medium text-on-surface-variant/60 uppercase tracking-wider">
-            Server Settings
-          </span>
-        </div>
-        <div className="flex items-center gap-1 px-4 pb-2 overflow-x-auto">
-          {/* Server picker — a native <select> so we get the OS dropdown
-             for free (including mobile pickers and TV focus handling)
-             without rebuilding a combobox. */}
-          <label className="flex-shrink-0">
-            <span className="sr-only">Select server</span>
-            <select
-              value={serverSettingsId ?? ""}
-              onChange={(e) => {
-                const id = e.target.value;
-                if (!id) {
-                  setServerSettingsId(null);
-                  return;
-                }
-                const opt = serverPickerOptions.find((o) => o.server.id === id);
-                if (!opt) return;
-                const firstServerTab = opt.tabs[0];
-                const stayingOnSameKey = opt.tabs.some(
-                  (t) => t.key === activeTab,
-                );
-                handleSelectServerTab(
-                  id,
-                  (stayingOnSameKey
-                    ? activeTab
-                    : firstServerTab.key) as typeof activeTab,
-                );
-              }}
-              {...tvFocusProps}
-              className="btn-press flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm whitespace-nowrap bg-surface-container-high text-on-surface border border-outline-variant/20 focus:outline-none focus:border-primary/40"
-            >
-              <option value="">Select server…</option>
-              {serverPickerOptions.map(({ server }) => (
-                <option key={server.id} value={server.id}>
-                  {server.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {/* Tabs for the selected server (if any). Collapsing N rows
-             into one means the user only sees tabs relevant to their
-             current selection, not every server they admin. */}
-          {selectedServerOption?.tabs.map((tab) => {
-            const active =
-              activeTab === tab.key && serverSettingsId === selectedServerOption.server.id;
-            return (
-              <button
-                key={tab.key}
-                onClick={() =>
-                  handleSelectServerTab(
-                    selectedServerOption.server.id,
-                    tab.key as typeof activeTab,
-                  )
-                }
-                {...tvFocusProps}
-                className={tabBtnClass(active)}
-              >
-                <span
-                  className="material-symbols-outlined text-base"
-                  style={active ? filledIcon : undefined}
-                >
-                  {tab.icon}
-                </span>
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
+  const selectLeaf = (group: GroupDef, leaf: LeafDef) => {
+    if (group.id === "server") {
+      // The server picker drives which server the group reflects; the
+      // leaves already belong to the selected server.
+      const sel = serverPickerOptions.find((o) => o.id === serverSettingsId);
+      if (sel) handleSelectServerTab(sel.id, leaf.key);
+    } else {
+      handleSelectTab(leaf.key);
+    }
+    if (narrow) setShowContentScreen(true);
   };
 
-  return (
-    <div className="flex-1 flex flex-col min-h-0">
-      {/* Tab bar with grouped sections */}
-      <div className="flex flex-col bg-surface-container-low overflow-x-auto">
-        {/* User Settings group */}
-        <div className="px-4 pt-2 pb-1">
-          <span className="text-xs font-label font-medium text-on-surface-variant/60 uppercase tracking-wider">
-            User Settings
-          </span>
-        </div>
-        <div className="flex items-center gap-1 px-4 pb-1 overflow-x-auto">
-          {userTabs.map((tab) => {
-            const active = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => handleSelectTab(tab.key as typeof activeTab)}
-                {...tvFocusProps}
-                className={tabBtnClass(active)}
-              >
-                <span
-                  className="material-symbols-outlined text-base"
-                  style={active ? filledIcon : undefined}
+  // ----- Rail (category list) -----
+  const rail = (
+    <nav
+      aria-label="Settings categories"
+      className="flex flex-col gap-5 p-3"
+      data-testid="settings-rail"
+    >
+      {allGroups.map((group) => (
+        <div key={group.id} className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 px-2 pb-0.5">
+            <span className="material-symbols-outlined text-base text-on-surface-variant/70">
+              {group.icon}
+            </span>
+            <span className="text-xs font-label font-semibold text-on-surface-variant/70 uppercase tracking-wider">
+              {group.label}
+            </span>
+          </div>
+
+          {/* Server group gets a compact picker above its leaves so the
+             user chooses which server the section reflects. */}
+          {group.id === "server" && serverPickerOptions.length > 0 && (
+            <div className="px-1 pb-1">
+              <label className="block">
+                <span className="sr-only">Select server</span>
+                <select
+                  value={serverSettingsId ?? ""}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (!id) {
+                      setServerSettingsId(null);
+                      return;
+                    }
+                    const opt = serverPickerOptions.find((o) => o.id === id);
+                    if (!opt) return;
+                    // Keep the active server leaf if it still applies,
+                    // otherwise jump to the new server's first leaf.
+                    const sourceLeaves =
+                      adminServerLeaves.get(id) ??
+                      (contextServer?.id === id ? contextServerLeaves : []);
+                    const staying = sourceLeaves.some((l) => l.key === activeTab);
+                    handleSelectServerTab(
+                      id,
+                      (staying ? activeTab : sourceLeaves[0]?.key ?? "server-general") as LeafKey,
+                    );
+                    if (narrow) setShowContentScreen(true);
+                  }}
+                  {...tvFocusProps}
+                  className="w-full px-3 py-2 rounded-xl text-sm bg-surface-container-high text-on-surface border border-outline-variant/20 focus:outline-none focus:border-primary/40"
                 >
-                  {tab.icon}
-                </span>
-                {tab.label}
-              </button>
-            );
-          })}
-          {adminTab && (
-            <button
-              onClick={() => handleSelectTab("admin")}
-              {...tvFocusProps}
-              className={tabBtnClass(activeTab === "admin")}
-            >
-              <span
-                className="material-symbols-outlined text-base"
-                style={activeTab === "admin" ? filledIcon : undefined}
-              >
-                {adminTab.icon}
-              </span>
-              {adminTab.label}
-            </button>
+                  <option value="">Select server…</option>
+                  {serverPickerOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           )}
+
+          {group.items.map((leaf) => {
+            const active =
+              activeTab === leaf.key &&
+              (group.id !== "server" || serverSettingsId != null);
+            return (
+              <button
+                key={leaf.key}
+                onClick={() => selectLeaf(group, leaf)}
+                {...tvFocusProps}
+                aria-current={active ? "page" : undefined}
+                className={`btn-press group/leaf flex items-center gap-3 w-full text-left px-2.5 py-2 rounded-xl transition-colors ${
+                  active
+                    ? "bg-surface-container-highest text-on-surface"
+                    : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                }`}
+              >
+                <span
+                  className={`material-symbols-outlined text-xl flex-shrink-0 ${
+                    active ? "text-primary" : "text-on-surface-variant/80"
+                  }`}
+                  style={
+                    active
+                      ? { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' }
+                      : undefined
+                  }
+                >
+                  {leaf.icon}
+                </span>
+                <span className="min-w-0 flex flex-col">
+                  <span className="text-sm font-label leading-tight truncate">{leaf.label}</span>
+                  {leaf.hint && (
+                    <span className="text-xs text-on-surface-variant/60 leading-tight truncate">
+                      {leaf.hint}
+                    </span>
+                  )}
+                </span>
+                {narrow && (
+                  <span className="material-symbols-outlined text-lg text-on-surface-variant/40 ml-auto flex-shrink-0">
+                    chevron_right
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
+      ))}
+    </nav>
+  );
 
-        {/* Single collapsed "Server Settings" row — the picker drives
-           which server's tabs are visible below, rather than rendering
-           one row per admin server. Reduces vertical clutter when the
-           user admins multiple servers. */}
-        {renderServerRow()}
-      </div>
+  // ----- Content pane -----
+  const content = (
+    <div
+      key={`${serverSettingsId ?? "user"}:${activeTab}`}
+      className="mx-auto w-full max-w-2xl p-6"
+      data-testid="settings-content"
+    >
+      {/* User settings tabs */}
+      {activeTab === "audio" && <AudioTab />}
+      {activeTab === "voice" && <VoiceTab />}
+      {activeTab === "notifications" && <NotificationsTab />}
+      {activeTab === "profile" && <ProfileTab />}
+      {activeTab === "users" && <UsersTab />}
+      {activeTab === "connections" && <UserConnectionsTab />}
+      {activeTab === "appearance" && <AppearanceTab />}
+      {activeTab === "node" && <NodeHostingTab />}
+      {activeTab === "connectors" && <ConnectorsTab />}
+      {activeTab === "hosting" && <HostingTab />}
+      {activeTab === "about" && <AboutTab />}
+      {activeTab === "admin" && isAdmin && <AdminTab />}
 
-      {/* Tab content */}
-      <div key={`${serverSettingsId ?? "user"}:${activeTab}`} className="flex-1 overflow-y-auto min-h-0 p-6">
-        {/* User settings tabs */}
-        {activeTab === "audio" && <AudioTab />}
-        {activeTab === "voice" && <VoiceTab />}
-        {activeTab === "notifications" && <NotificationsTab />}
-        {activeTab === "profile" && <ProfileTab />}
-        {activeTab === "users" && <UsersTab />}
-        {activeTab === "connections" && <UserConnectionsTab />}
-        {activeTab === "appearance" && <AppearanceTab />}
-        {activeTab === "node" && <NodeHostingTab />}
-        {activeTab === "connectors" && <ConnectorsTab />}
-        {activeTab === "hosting" && <HostingTab />}
-        {activeTab === "about" && <AboutTab />}
-        {activeTab === "admin" && isAdmin && <AdminTab />}
+      {/* Server settings tabs — delegated to ServerSettingsContent */}
+      {isServerTab && serverSettingsId && accessToken && (
+        <ServerSettingsContent serverId={serverSettingsId} activeTab={serverSubTab!} />
+      )}
+    </div>
+  );
 
-        {/* Server settings tabs — delegated to ServerSettingsContent */}
-        {isServerTab && serverSettingsId && accessToken && (
-          <ServerSettingsContent
-            serverId={serverSettingsId}
-            activeTab={serverSubTab!}
-          />
+  // ----- Layout -----
+  // Wide: two-pane (rail beside scrolling content).
+  // Narrow: drill-in (rail screen ↔ content screen with a back button).
+  if (narrow) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 bg-surface">
+        {showContentScreen ? (
+          <>
+            <div className="h-12 flex items-center gap-2 px-2 bg-surface-container-low flex-shrink-0 border-b border-outline-variant/10">
+              <button
+                onClick={() => setShowContentScreen(false)}
+                {...tvFocusProps}
+                className="btn-press flex items-center justify-center w-9 h-9 rounded-full text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+                aria-label="Back to settings categories"
+              >
+                <span className="material-symbols-outlined text-xl">arrow_back</span>
+              </button>
+              <h2 className="font-headline font-semibold text-on-surface truncate">
+                {activeLeafLabel}
+              </h2>
+            </div>
+            <div className="flex-1 overflow-y-auto min-h-0">{content}</div>
+          </>
+        ) : (
+          <div className="flex-1 overflow-y-auto min-h-0">{rail}</div>
         )}
       </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex min-h-0 bg-surface">
+      {/* Left rail */}
+      <aside
+        className={`flex-shrink-0 ${
+          hasTouchOnly ? "w-72" : "w-64"
+        } border-r border-outline-variant/10 bg-surface-container-low/40 overflow-y-auto`}
+      >
+        {rail}
+      </aside>
+      {/* Content pane */}
+      <div className="flex-1 overflow-y-auto min-h-0">{content}</div>
     </div>
   );
 }

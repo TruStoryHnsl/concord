@@ -132,10 +132,10 @@ export function TunnelHardeningSection() {
           Tunnel hardening (P2P)
         </h4>
         <p className="text-xs text-on-surface-variant">
-          Restricts inbound P2P connections to tunnel interfaces
-          (WireGuard, Tailscale, or operator-supplied CIDRs). Available in
-          the desktop app, which accepts inbound peer connections; the web
-          build is outbound-only.
+          The browser build can't be an inbound P2P peer, so the
+          tunnel-only inbound gate doesn't apply here. Native installs
+          can rejected non-tunnel inbound connections from the Settings
+          panel.
         </p>
       </div>
     );
