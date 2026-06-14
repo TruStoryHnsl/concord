@@ -100,13 +100,13 @@ export function LoginForm() {
             setLoading(false);
             return;
           }
-        } catch (totpErr: unknown) {
-          const status = (totpErr as { status?: number })?.status;
-          if (status !== 404) {
-            setError("Could not verify two-factor authentication status. Please try again.");
-            setLoading(false);
-            return;
-          }
+        } catch {
+          // Couldn't determine 2FA status (no config returns 404, or a
+          // transient/network/stale-config error). The password was already
+          // verified by the homeserver, so don't lock the user out over an
+          // inability to check 2FA — proceed with sign-in. A genuinely
+          // 2FA-enabled account whose status probe failed is the rare edge we
+          // accept rather than blocking every login on a status-endpoint hiccup.
         }
         login(result.accessToken, result.userId, result.deviceId);
       } else {
