@@ -66,11 +66,13 @@ export function Avatar({ userId, size = "md", showPresence = false }: AvatarProp
         <img
           src={avatarUrl}
           alt=""
-          className={`${sizeClasses[size]} rounded-full object-cover`}
+          loading="lazy"
+          decoding="async"
+          className={`${sizeClasses[size]} avatar-img rounded-full object-cover ring-1 ring-[var(--edge-subtle)]`}
         />
       ) : (
         <div
-          className={`${sizeClasses[size]} ${hashColor(userId)} rounded-full flex items-center justify-center font-bold text-on-surface`}
+          className={`${sizeClasses[size]} ${hashColor(userId)} rounded-full flex items-center justify-center font-bold text-on-surface ring-1 ring-[var(--edge-subtle)]`}
         >
           {initial}
         </div>

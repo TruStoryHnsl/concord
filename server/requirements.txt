@@ -9,7 +9,9 @@ annotated-types==0.7.0
 anyio==4.13.0
 attrs==26.1.0
 certifi==2026.5.20
+cffi==2.0.0
 click==8.4.1
+cryptography==49.0.0
 email-validator==2.3.0
 fastapi==0.136.3
 frozenlist==1.8.0
@@ -26,6 +28,7 @@ propcache==0.5.2
 protobuf==7.35.0
 pydantic==2.13.4
 pydantic_core==2.46.4
+pycparser==3.0
 PyJWT==2.13.0
 pyotp==2.9.0
 qrcode==8.2

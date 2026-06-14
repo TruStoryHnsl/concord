@@ -1638,9 +1638,21 @@ class RemintRequest(BaseModel):
     encrypted: bool = Field(
         default=False,
         description=(
-            "If True, snapshot the ledger encrypted (placeholder — base64 "
-            "today, real encryption in a follow-up pillar). If False, "
-            "transfer ownership in plaintext."
+            "If True, the ledger snapshot is sealed under AES-256-GCM with "
+            "a key derived from ``passphrase`` (scrypt). The server stores "
+            "ciphertext only — the plaintext roster/media list is never "
+            "written to disk. If False, transfer ownership in plaintext "
+            "base64."
+        ),
+    )
+    passphrase: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=1024,
+        description=(
+            "Required when ``encrypted=True``: the secret used to seal the "
+            "ledger snapshot. Only a holder of this passphrase can later "
+            "recover the snapshot. Ignored when ``encrypted=False``."
         ),
     )
 
@@ -1659,6 +1671,14 @@ class RemintResponse(BaseModel):
             "values are stringified integer channel IDs."
         ),
     )
+    room_id_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Mapping of old Matrix room id -> newly-minted Matrix room id "
+            "for each rehydrated channel. These are REAL rooms created "
+            "against the homeserver, not placeholders."
+        ),
+    )
     member_count_preserved: int = Field(
         default=0,
         description=(
@@ -1674,6 +1694,7 @@ async def remint_ownership(
     server_id: str,
     body: RemintRequest,
     user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-mint a place into a new owner.
@@ -1689,21 +1710,25 @@ async def remint_ownership(
     ``admin`` on the new place. The new owner is the caller of this
     endpoint and is the sole ``owner`` on the new place.
 
-    Channels are rehydrated onto the new place with fresh
-    ``matrix_room_id`` values — the old Matrix rooms belong to the
-    old place and the new owner has no permission to send into them.
-    The response includes a ``channel_id_mapping`` so the client can
-    rewire any cached references from old channel IDs to new ones.
+    Channels are rehydrated onto the new place with REAL freshly-minted
+    ``matrix_room_id`` values created against the homeserver via
+    ``create_matrix_room`` — the old Matrix rooms belong to the old
+    place and the new owner has no permission to send into them. The
+    response includes a ``channel_id_mapping`` (old channel id -> new
+    channel id) and a ``room_id_mapping`` (old Matrix room id -> new
+    Matrix room id) so the client can rewire cached references.
 
-    Encryption: ``encrypted=True`` is not yet implemented and will
-    return ``501 ENCRYPTION_NOT_AVAILABLE`` rather than silently
-    writing a plaintext payload tagged as encrypted. Pass
-    ``encrypted=False`` for an unencrypted ownership transfer.
+    Encryption: ``encrypted=True`` seals the ledger snapshot under
+    AES-256-GCM with a key derived from the caller-supplied
+    ``passphrase`` (scrypt). The server persists ciphertext only — the
+    plaintext roster/media list is never written to disk. A passphrase
+    of at least 8 characters is required; omitting it returns
+    ``400 OWNERSHIP_TRANSFER_FAILED``.
     """
     import base64
     import json
-    import secrets
     from models import PlaceLedgerHeader, SoundboardClip
+    from services.remint_crypto import seal_snapshot, RemintCryptoError
 
     server = await db.get(Server, server_id)
     if not server:
@@ -1728,15 +1753,14 @@ async def remint_ownership(
             status_code=400,
         )
 
-    # C-1: encrypted re-mint is not implemented. Reject loudly rather
-    # than silently writing plaintext into a row tagged ``encrypted=True``.
-    # Keeps the API contract honest and leaves room for a real encryption
-    # backend to slot in later without a schema lie in the interim.
-    if body.encrypted:
+    # Encrypted re-mint requires a passphrase to derive the sealing key.
+    # Reject up front (before any DB writes) so a missing passphrase is a
+    # clean 400 no-op rather than a half-built place.
+    if body.encrypted and not body.passphrase:
         raise ConcordError(
-            "ENCRYPTION_NOT_AVAILABLE",
-            "Encrypted re-mint is not yet implemented. Pass encrypted=false for an unencrypted ownership transfer.",
-            status_code=501,
+            "OWNERSHIP_TRANSFER_FAILED",
+            "Encrypted re-mint requires a passphrase (encrypted=True).",
+            status_code=400,
         )
 
     # Snapshot the ledger of the old place. Per the design, only
@@ -1785,12 +1809,6 @@ async def remint_ownership(
         "media_filenames": media_filenames,
     }
 
-    snapshot_json = json.dumps(snapshot, sort_keys=True).encode("utf-8")
-    # Plaintext path only — encrypted path is rejected above until an
-    # encryption backend lands. The base64 wrapping keeps the column
-    # shape stable so a future encrypted payload is a drop-in.
-    payload = base64.b64encode(snapshot_json).decode("ascii")
-
     # Create the new place record. Carry over the human-facing fields
     # so the new owner doesn't have to re-name everything.
     new_server = Server(
@@ -1813,6 +1831,7 @@ async def remint_ownership(
     # with the snapshot format — fail loudly rather than produce a
     # silently-broken shell place.
     channel_id_mapping: dict[str, str] = {}
+    room_id_mapping: dict[str, str] = {}
     snapshot_channels = snapshot.get("channels")
     if old_channels and not snapshot_channels:
         raise ConcordError(
@@ -1822,21 +1841,30 @@ async def remint_ownership(
         )
 
     for ch_entry in snapshot_channels or []:
-        # Generate a fresh Matrix room ID. We cannot reuse the old
-        # room because (a) the Channel.matrix_room_id column has a
-        # UNIQUE constraint, and (b) the new owner has no permission
-        # to post into the prior owner's Matrix rooms. A real Matrix
-        # room should be minted via services.matrix_admin.create_matrix_room
-        # in a follow-up — for now use a placeholder with a clearly
-        # unique suffix so the row is distinguishable and the UNIQUE
-        # constraint is satisfied. This leaves a TODO for the Matrix
-        # room-creation integration.
-        # TODO(remint-matrix-rooms): call create_matrix_room() here
-        # once the re-mint flow is wired to the caller's access token.
-        fresh_room_id = (
-            f"!remint-{new_server.id}-{secrets.token_hex(6)}:placeholder.local"
-        )
+        # Mint a REAL fresh Matrix room against the homeserver. We cannot
+        # reuse the old room because (a) Channel.matrix_room_id has a
+        # UNIQUE constraint, and (b) the new owner has no permission to
+        # post into the prior owner's rooms. The room is created under the
+        # CALLER's access token (the current owner doing the re-mint); the
+        # client invites/transfers as needed afterward.
+        try:
+            fresh_room_id = await create_matrix_room(
+                access_token,
+                f"{new_server.name} - {ch_entry['name']}",
+            )
+        except Exception as exc:  # noqa: BLE001 — surface as a clean upstream error
+            logger.warning(
+                "Re-mint failed to create Matrix room for channel %r: %s",
+                ch_entry.get("name"), exc,
+            )
+            await db.rollback()
+            raise ConcordError(
+                "MATRIX_UPSTREAM",
+                "Re-mint could not create a Matrix room on the homeserver.",
+                status_code=502,
+            ) from exc
         old_id = ch_entry.get("id")
+        old_room_id = ch_entry.get("matrix_room_id")
         new_channel = Channel(
             server_id=new_server.id,
             matrix_room_id=fresh_room_id,
@@ -1848,6 +1876,8 @@ async def remint_ownership(
         await db.flush()  # populate new_channel.id
         if old_id is not None:
             channel_id_mapping[str(old_id)] = str(new_channel.id)
+        if old_room_id:
+            room_id_mapping[str(old_room_id)] = fresh_room_id
 
     # H-2: Rehydrate the member roster. Same "loud fail" rule: if
     # the old place had members but the snapshot is missing the
@@ -1894,6 +1924,30 @@ async def remint_ownership(
         ))
         seen_user_ids.add(prior_user_id)
 
+    # Record the REAL old->new Matrix room mapping into the manifest so a
+    # later restore can rewire references to the rooms that now exist.
+    snapshot["room_id_mapping"] = room_id_mapping
+
+    snapshot_json = json.dumps(snapshot, sort_keys=True).encode("utf-8")
+    if body.encrypted:
+        # Seal the snapshot: AES-256-GCM under a scrypt-derived key. The
+        # server stores CIPHERTEXT ONLY — the plaintext roster/media list
+        # is never persisted for an encrypted re-mint. Only a holder of
+        # the passphrase can later recover it.
+        try:
+            sealed = seal_snapshot(snapshot_json, body.passphrase or "")
+        except RemintCryptoError as exc:
+            await db.rollback()
+            raise ConcordError(
+                "OWNERSHIP_TRANSFER_FAILED",
+                f"Encrypted re-mint failed to seal the ledger snapshot: {exc}",
+                status_code=400,
+            ) from exc
+        payload = base64.b64encode(sealed).decode("ascii")
+    else:
+        # Plaintext path: base64-of-JSON, visible to anyone with DB access.
+        payload = base64.b64encode(snapshot_json).decode("ascii")
+
     # Persist the snapshot header
     header = PlaceLedgerHeader(
         new_place_id=new_server.id,
@@ -1920,5 +1974,6 @@ async def remint_ownership(
         encrypted=body.encrypted,
         media_filenames_preserved=len(media_filenames),
         channel_id_mapping=channel_id_mapping,
+        room_id_mapping=room_id_mapping,
         member_count_preserved=len(seen_user_ids),
     )

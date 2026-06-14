@@ -1,29 +1,6 @@
 import { create } from "zustand";
 import { startVoiceSession, endVoiceSession } from "../api/concord";
-import { isTauri } from "../api/servitude";
 import { useAuthStore } from "./auth";
-
-/**
- * Tear down an active mesh-mode voice call for `roomId`. Dispatches to
- * the native (`voice_mesh_leave` Tauri command → Rust webrtc-rs
- * teardown) or web (browser `leaveMesh` → close every RTCPeerConnection,
- * stop mic, detach remote audio) plane. Fire-and-forget; teardown
- * failures are logged, not surfaced — the call is already over from the
- * user's perspective.
- */
-async function teardownMesh(roomId: string): Promise<void> {
-  try {
-    if (isTauri()) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("voice_mesh_leave", { roomId });
-    } else {
-      const { leaveMesh } = await import("../libp2p/voiceMesh");
-      await leaveMesh(roomId);
-    }
-  } catch (err) {
-    console.debug("[voice] mesh teardown failed (ignored)", err);
-  }
-}
 
 const VOICE_SESSION_KEY = "concord_voice_session";
 const VOICE_STATS_SESSION_KEY = "concord_voice_stats_session";
@@ -226,16 +203,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   },
 
   disconnect: () => {
-    // Tear down the mesh media plane if this session used it. The
-    // LiveKit path is torn down by <LiveKitRoom>'s own unmount; the
-    // mesh path has no React component owning its lifecycle, so the
-    // store is the one place that always runs on disconnect. We read
-    // the transport + room id BEFORE the `set` below clears them.
-    const { transport, roomName } = get();
-    if (transport === "libp2p_mesh" && roomName) {
-      void teardownMesh(roomName);
-    }
-
     // End stats tracking (fire-and-forget)
     const sessionId = get().statsSessionId || Number(sessionStorage.getItem(VOICE_STATS_SESSION_KEY) || 0);
     if (sessionId) {
