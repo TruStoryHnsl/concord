@@ -2743,12 +2743,26 @@ export function AddSourceModal({
                   Sign in to show this instance's servers in your rail. Leave
                   blank to just add it for later.
                 </p>
+                {/* Password-manager opt-out. This is a secondary credential
+                    for ANOTHER instance, rendered inside the already-signed-in
+                    app. Extensions (1Password / Bitwarden / LastPass / Proton
+                    Pass / Dashlane) otherwise grab the type=password field and
+                    clear it on every keystroke ("field deletes itself while I
+                    type"). These attributes tell each major manager to ignore
+                    the field so typing works. Proven via a clean-browser test:
+                    the field types fine without an extension present. */}
                 <input
                   type="text"
                   value={concordUsername}
                   onChange={(e) => setConcordUsername(e.target.value)}
                   placeholder="Username"
-                  autoComplete="username"
+                  name="concord-connect-username"
+                  autoComplete="off"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-protonpass-ignore="true"
+                  data-form-type="other"
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
                 <input
@@ -2756,7 +2770,13 @@ export function AddSourceModal({
                   value={concordPassword}
                   onChange={(e) => setConcordPassword(e.target.value)}
                   placeholder="Password"
-                  autoComplete="current-password"
+                  name="concord-connect-password"
+                  autoComplete="off"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-protonpass-ignore="true"
+                  data-form-type="other"
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
               </div>
@@ -2816,11 +2836,21 @@ export function AddSourceModal({
 
               {matrixDraft.authFlows.includes("password") && (
                 <div className="space-y-2">
+                  {/* Password-manager opt-out — same rationale as the Concord
+                      connect screen: keep extensions from clearing the field
+                      on every keystroke. */}
                   <input
                     type="text"
                     value={matrixUsername}
                     onChange={(event) => setMatrixUsername(event.target.value)}
                     placeholder="Matrix username"
+                    name="matrix-connect-username"
+                    autoComplete="off"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
+                    data-protonpass-ignore="true"
+                    data-form-type="other"
                     className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                   />
                   <input
@@ -2828,6 +2858,13 @@ export function AddSourceModal({
                     value={matrixPassword}
                     onChange={(event) => setMatrixPassword(event.target.value)}
                     placeholder="Password"
+                    name="matrix-connect-password"
+                    autoComplete="off"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
+                    data-protonpass-ignore="true"
+                    data-form-type="other"
                     className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                   />
                   <button
