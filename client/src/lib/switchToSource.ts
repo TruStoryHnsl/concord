@@ -24,6 +24,20 @@ import { useServerConfigStore } from "../stores/serverConfig";
 import { useSourcesStore } from "../stores/sources";
 import { isLocalInstanceSource } from "./sourceIdentity";
 
+/** Recover the live session's deviceId from the persisted concord_session
+ *  blob — AuthState doesn't expose it directly. */
+function readSessionDeviceId(): string | undefined {
+  if (typeof window === "undefined" || !window.localStorage) return undefined;
+  try {
+    const raw = window.localStorage.getItem("concord_session");
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { deviceId?: string };
+    return parsed.deviceId;
+  } catch {
+    return undefined;
+  }
+}
+
 export function switchToSource(sourceId: string): void {
   const sources = useSourcesStore.getState();
   const target = sources.sources.find((s) => s.id === sourceId);
@@ -53,7 +67,8 @@ export function switchToSource(sourceId: string): void {
       sources.updateSource(current.id, {
         accessToken: auth.accessToken,
         userId: auth.userId,
-        deviceId: auth.deviceId ?? current.deviceId,
+        // deviceId isn't on AuthState; recover it from the persisted session.
+        deviceId: readSessionDeviceId() ?? current.deviceId,
       });
     }
   }
