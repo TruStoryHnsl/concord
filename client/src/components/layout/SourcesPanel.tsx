@@ -488,7 +488,14 @@ export function SourcesPanel({
       updateSource(id, { enabled: true });
     }
     onSourceSelect?.(id);
-    switchToSource(id);
+    // A foreign source with no stored session can't be switched into —
+    // switchToSource reports "needs-auth" instead of swapping into a
+    // token/instance mismatch. Route the user to the connect/sign-in
+    // flow so they can authenticate (then its servers join the rail).
+    const result = switchToSource(id);
+    if (result === "needs-auth") {
+      useSettingsStore.getState().requestAddSource();
+    }
   };
 
   // INS-069 — lazy-fetch per-instance branding for any source whose
