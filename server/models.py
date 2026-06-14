@@ -193,17 +193,6 @@ class SoundboardClip(Base):
     license_url: Mapped[str | None] = mapped_column(String, nullable=True)  # canonical license URL
     attribution: Mapped[str | None] = mapped_column(String, nullable=True)  # original author/uploader
 
-    # Effects board: an optional screenspace visual effect paired with this
-    # clip. Stored as a JSON string (the client's `EffectMetadata`:
-    # {"visualId": "confetti", "config": {...}, "version": 1}). NULL for a
-    # plain sound-only clip — every existing row stays valid without a
-    # data migration. When set with a real visualId the clip plays a
-    # visual (with or without the sound); the client decides sound-only /
-    # visual-only / both from the combination of this field + the clip's
-    # file. Kept as TEXT (not a JSON column) so SQLite stores it portably
-    # and the server never needs to parse it — it round-trips opaquely.
-    effect_metadata: Mapped[str | None] = mapped_column(String, nullable=True)
-
     server: Mapped["Server"] = relationship()
 
 

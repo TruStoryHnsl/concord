@@ -80,7 +80,6 @@ import {
   writePendingSourceSso,
   type MatrixSourceDraft,
 } from "../sources/matrixSourceAuth";
-import { switchToSource } from "../../lib/switchToSource";
 import { useFormatStore } from "../../stores/format";
 import { useBootReadyStore } from "../../stores/bootReady";
 import { useInstanceAdmin } from "./chatLayout/useInstanceAdmin";
@@ -1926,9 +1925,7 @@ export function SourceServerBrowser({
       });
       setAuthPassword("");
       addToast(`Connected ${label}`, "success");
-      // Connecting to a library means going to it: switch the active
-      // instance to this source (re-points homeserver + session, reloads).
-      switchToSource(source.id);
+      await loadSourceDirectory();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sign in";
       setPublicRoomsError(message);
@@ -2273,9 +2270,7 @@ export function AddSourceModal({
         });
         clearPendingSourceSso();
         clearPendingSourceSsoQueryParams();
-        // Switch the active instance to the source we just authed into,
-        // rather than dropping back onto the local one.
-        switchToSource(pending.sourceId);
+        onSourceAdded();
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Source login failed";

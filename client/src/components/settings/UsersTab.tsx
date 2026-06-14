@@ -37,8 +37,9 @@ import {
   type UserProfile,
   type Provenance,
 } from "../../api/userProfile";
-import { useAuthStore } from "../../stores/auth";
 import { isTauri } from "../../api/servitude";
+import { useSettingsStore } from "../../stores/settings";
+import { SUPERUSER_BACKUP_ANCHOR_ID } from "./SuperuserBackupSection";
 
 /** Map provenance variant to a (label, Tailwind class tuple). */
 const PROVENANCE_META: Record<
@@ -71,13 +72,6 @@ export function UsersTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // The account you're signed in with. This IS your identity on this
-  // instance — it's shown as a known user, not something you have to
-  // "create". The localpart (before the homeserver) is the handle.
-  const userId = useAuthStore((s) => s.userId);
-  const loginHandle = userId ? userId.split(":")[0].replace("@", "") : null;
-  const native = isTauri();
-
   /** Inline rename state. `null` means no row is being renamed. */
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -90,15 +84,18 @@ export function UsersTab() {
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState("");
 
+  const setSettingsTab = useSettingsStore((s) => s.setSettingsTab);
+
+  /** Native: jump to the Profile tab's keychain-backup section. */
+  const handleClaimSuperuser = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.location.hash = `#${SUPERUSER_BACKUP_ANCHOR_ID}`;
+    }
+    setSettingsTab("profile");
+  }, [setSettingsTab]);
+
   const refresh = useCallback(async () => {
     setError(null);
-    // The porch profile store is native-only. On web there are no local
-    // profiles to manage — the identity banner above is the whole surface.
-    if (!isTauri()) {
-      setProfiles([]);
-      setLoading(false);
-      return;
-    }
     try {
       const list = await userProfileList();
       setProfiles(list);
@@ -182,45 +179,14 @@ export function UsersTab() {
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
         <h2 className="text-xl font-display font-semibold text-on-surface">
-          Identity
+          Users
         </h2>
         <p className="text-sm text-on-surface-variant max-w-prose">
-          Your superuser is your root identity on this instance — it owns the
-          keychain that syncs to your other devices. Additional identities let
-          you keep separate sets of credentials.
+          Profiles let you keep your Concord credentials separated. One
+          profile can be marked <strong>Primary</strong> — its keychain
+          is what relays to other devices.
         </p>
       </header>
-
-      {loginHandle && (
-        <div className="rounded-lg bg-surface-container-high border border-primary/30 px-3 py-3 flex items-center gap-3">
-          <span className="material-symbols-outlined text-primary text-2xl">
-            shield_person
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-on-surface">
-              Signed in as {loginHandle}
-            </div>
-            <div className="text-xs text-on-surface-variant">
-              {native
-                ? "Claim this login as your superuser to make it your root identity across your devices."
-                : "This is the account you're connected with on this instance."}
-            </div>
-          </div>
-          {native && (
-            <button
-              type="button"
-              onClick={() => {
-                setCreateDraft(loginHandle);
-                setCreating(true);
-              }}
-              className="flex-shrink-0 px-3 py-1.5 text-sm rounded-lg bg-primary text-on-primary hover:opacity-90"
-              data-testid="users-tab-claim-superuser"
-            >
-              Claim as superuser
-            </button>
-          )}
-        </div>
-      )}
 
       {error && (
         <div
@@ -407,60 +373,72 @@ export function UsersTab() {
         })}
       </ul>
 
-      {native && (
-        <div className="pt-2 border-t border-outline-variant/20">
-          {creating ? (
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={createDraft}
-                maxLength={MAX_DISPLAY_NAME_LEN}
-                autoFocus
-                onChange={(e) => setCreateDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    void handleCreate();
-                  } else if (e.key === "Escape") {
-                    setCreating(false);
-                    setCreateDraft("");
-                  }
-                }}
-                placeholder="Identity name"
-                aria-label="Identity name"
-                data-testid="users-tab-create-input"
-                className="bg-surface-container text-on-surface rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <button
-                type="button"
-                onClick={() => void handleCreate()}
-                data-testid="users-tab-create-save"
-                disabled={createDraft.trim().length === 0}
-                className="px-3 py-1 text-sm rounded bg-primary text-on-primary hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                onClick={() => {
+      <div className="pt-2 border-t border-outline-variant/20">
+        {creating ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={createDraft}
+              maxLength={MAX_DISPLAY_NAME_LEN}
+              autoFocus
+              onChange={(e) => setCreateDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  void handleCreate();
+                } else if (e.key === "Escape") {
                   setCreating(false);
                   setCreateDraft("");
-                }}
-                className="px-3 py-1 text-sm rounded text-on-surface-variant hover:bg-surface-container-high"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
+                }
+              }}
+              placeholder="New profile name"
+              aria-label="New profile name"
+              data-testid="users-tab-create-input"
+              className="bg-surface-container text-on-surface rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
+            />
             <button
               type="button"
-              onClick={() => setCreating(true)}
-              data-testid="users-tab-create-start"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high text-on-surface hover:opacity-90"
+              onClick={() => void handleCreate()}
+              data-testid="users-tab-create-save"
+              disabled={createDraft.trim().length === 0}
+              className="px-3 py-1 text-sm rounded bg-primary text-on-primary hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <span className="material-symbols-outlined text-base">add</span>
-              Add identity
+              Create
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false);
+                setCreateDraft("");
+              }}
+              className="px-3 py-1 text-sm rounded text-on-surface-variant hover:bg-surface-container-high"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            data-testid="users-tab-create-start"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high text-on-surface hover:opacity-90"
+          >
+            <span className="material-symbols-outlined text-base">add</span>
+            Create profile
+          </button>
+        )}
+      </div>
+
+      {isTauri() && (
+        <div className="pt-2 border-t border-outline-variant/20">
+          <button
+            type="button"
+            onClick={handleClaimSuperuser}
+            data-testid="users-tab-claim-superuser"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high text-on-surface hover:opacity-90"
+          >
+            <span className="material-symbols-outlined text-base">key</span>
+            Claim as superuser
+          </button>
         </div>
       )}
     </div>

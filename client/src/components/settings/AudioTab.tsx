@@ -80,7 +80,8 @@ export function AudioTab() {
               Audio Normalization
             </h4>
             <p className="text-xs text-on-surface-variant mt-0.5">
-              Level out loud and quiet speakers to a consistent volume.
+              Compresses dynamic range so loud and quiet speakers sound more
+              even
             </p>
           </div>
           <button
