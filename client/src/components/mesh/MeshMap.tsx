@@ -22,13 +22,7 @@
  *   2. **Stay current** by subscribing to `mesh_graph_changed`; each
  *      notification triggers a debounced re-pull.
  *
- * Web / docker build: there is no local swarm, so `fetchMeshGraph` sources
- * the graph over HTTP from `GET /api/mesh/topology` (the docker node's
- * federation-derived topology + hub relay/backup role), and the
- * subscription polls that endpoint on a timer. The map renders the same
- * way as native — the docker hub at the center, its federated neighbors at
- * hop 1 — plus a hub-role banner. See `client/src/api/meshGraph.ts` and
- * `server/routers/mesh.py`.
+ * Web build: no swarm, so this renders the shared "web mode" empty state.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -188,21 +182,19 @@ export function MeshMap() {
     void refetchMeshtastic();
   }, [refetchMeshtastic]);
 
-  // Hydrate once: local peer id (center node) + initial snapshot. Runs on
-  // BOTH native and web. On native, the local peer id comes from the swarm
-  // status command; on web there is no swarm, so the center node renders
-  // from the server-assembled topology (its hop-0 node IS this instance)
-  // and the instance-name label.
+  // Hydrate once: local peer id (center node) + initial snapshot.
   useEffect(() => {
+    if (!isNative) {
+      setHydrated(true);
+      return;
+    }
     let cancelled = false;
     void (async () => {
-      if (isNative) {
-        try {
-          const status = await fetchPeerSwarmStatus();
-          if (!cancelled) setOurPeerId(status.ourPeerId);
-        } catch {
-          // Swarm not up — center node still renders with the instance name.
-        }
+      try {
+        const status = await fetchPeerSwarmStatus();
+        if (!cancelled) setOurPeerId(status.ourPeerId);
+      } catch {
+        // Swarm not up — center node still renders with the instance name.
       }
       if (!cancelled) await refetch();
     })();
@@ -211,16 +203,14 @@ export function MeshMap() {
     };
   }, [isNative, refetch]);
 
-  // Keep current. Native: debounced re-pull on the `mesh_graph_changed`
-  // push event. Web: the subscription polls the HTTP topology endpoint on
-  // a timer (see `subscribeToMeshGraph`), firing the same re-pull. The
-  // local-spring re-pull is native-only (no swarm on web).
+  // Keep current from the push event, debounced.
   useEffect(() => {
+    if (!isNative) return;
     const unsub = subscribeToMeshGraph(() => {
       if (refetchTimer.current) clearTimeout(refetchTimer.current);
       refetchTimer.current = setTimeout(() => {
         void refetch();
-        if (isNative) void refetchSpring();
+        void refetchSpring();
       }, 300);
     });
     return () => {
@@ -345,6 +335,20 @@ export function MeshMap() {
     });
   }, []);
 
+  if (!isNative) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-2">
+        <p className="text-sm text-on-surface-variant font-body">
+          This device is in web mode
+        </p>
+        <p className="text-xs text-on-surface-variant/60 font-label max-w-xs">
+          The mesh map needs the native swarm, which lives on your desktop
+          or mobile install. The browser can&apos;t see the mesh topology.
+        </p>
+      </div>
+    );
+  }
+
   if (!hydrated) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
@@ -374,40 +378,9 @@ export function MeshMap() {
                 : `${visiblePeerCount} node${visiblePeerCount === 1 ? "" : "s"} within ${hopScale} hop${hopScale === 1 ? "" : "s"}`}
           </span>
         </div>
-        {/* Web/docker hub-role banner. The browser sources the graph over
-            HTTP from the docker node, which acts as the mesh's relay +
-            encrypted-backup "big brother". Surface that role so the map
-            explains why this node matters. Native installs are not hubs,
-            so this is web-only and only shows when hub data is present. */}
-        {!isNative && graph.hub && (
-          <div
-            data-testid="mesh-hub-banner"
-            className="flex items-center gap-2 flex-wrap text-[10px] font-label uppercase tracking-widest"
-          >
-            <span
-              className={
-                graph.hub.relay
-                  ? "px-2 py-0.5 rounded bg-primary/15 text-primary"
-                  : "px-2 py-0.5 rounded bg-surface-variant/40 text-on-surface-variant/60"
-              }
-            >
-              {graph.hub.relay ? "Relay active" : "Relay off"}
-            </span>
-            <span className="px-2 py-0.5 rounded bg-surface-variant/40 text-on-surface-variant">
-              {graph.hub.backupBlobCount} encrypted backup
-              {graph.hub.backupBlobCount === 1 ? "" : "s"}
-            </span>
-            <span className="text-on-surface-variant/40 normal-case tracking-normal">
-              topology via {graph.hub.source === "rust_snapshot" ? "swarm" : "federation"}
-            </span>
-          </div>
-        )}
         {/* W1.3 / F4b — one-hop-up (local-spring) governance. Off by
             default; opt-in exposes LAN peers' remote neighbors at/above
-            the selected trust tier, each labeled "via <lan-peer>". Native
-            only — depends on the local swarm + LAN peer-store, which the
-            browser has no access to. */}
-        {isNative && (
+            the selected trust tier, each labeled "via <lan-peer>". */}
         <div className="flex items-center gap-3 flex-wrap">
           <label className="flex items-center gap-2 text-[10px] font-label uppercase tracking-widest text-on-surface-variant whitespace-nowrap cursor-pointer">
             <input
@@ -437,7 +410,6 @@ export function MeshMap() {
               : "friend-of-friend off"}
           </span>
         </div>
-        )}
         <div className="flex items-center gap-3">
           <label
             htmlFor="mesh-hop-slider"
