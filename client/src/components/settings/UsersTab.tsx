@@ -37,9 +37,6 @@ import {
   type UserProfile,
   type Provenance,
 } from "../../api/userProfile";
-import { isTauri } from "../../api/servitude";
-import { useSettingsStore } from "../../stores/settings";
-import { SUPERUSER_BACKUP_ANCHOR_ID } from "./SuperuserBackupSection";
 
 /** Map provenance variant to a (label, Tailwind class tuple). */
 const PROVENANCE_META: Record<
@@ -83,16 +80,6 @@ export function UsersTab() {
   /** Create-profile form state. */
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState("");
-
-  const setSettingsTab = useSettingsStore((s) => s.setSettingsTab);
-
-  /** Native: jump to the Profile tab's keychain-backup section. */
-  const handleClaimSuperuser = useCallback(() => {
-    if (typeof window !== "undefined") {
-      window.location.hash = `#${SUPERUSER_BACKUP_ANCHOR_ID}`;
-    }
-    setSettingsTab("profile");
-  }, [setSettingsTab]);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -427,20 +414,6 @@ export function UsersTab() {
           </button>
         )}
       </div>
-
-      {isTauri() && (
-        <div className="pt-2 border-t border-outline-variant/20">
-          <button
-            type="button"
-            onClick={handleClaimSuperuser}
-            data-testid="users-tab-claim-superuser"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high text-on-surface hover:opacity-90"
-          >
-            <span className="material-symbols-outlined text-base">key</span>
-            Claim as superuser
-          </button>
-        </div>
-      )}
     </div>
   );
 }
