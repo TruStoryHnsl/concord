@@ -24,6 +24,7 @@ import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
+import { EffectsOverlay } from "./effects/EffectsOverlay";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -559,6 +560,12 @@ export default function App() {
         )}
         <ToastContainer />
       </ErrorBoundary>
+      {/* Effects board overlay: a single fullscreen, pointer-events-none
+       *  canvas that plays screenspace visual effects fired from the
+       *  Effects panel (or broadcast by peers in voice). Mounted at the
+       *  app root so effects paint over the whole UI. Idle cost is zero —
+       *  the rAF loop only runs while an effect is active. */}
+      <EffectsOverlay />
       {launchOverlay}
     </>
   );

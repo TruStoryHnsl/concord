@@ -21,8 +21,14 @@ interface SettingsState {
   compressorRelease: number;
   makeupGain: number;
 
-  // Soundboard
+  // Soundboard / Effects
   soundboardVolume: number;
+  // Accessibility: when true (or when the OS prefers-reduced-motion is
+  // set), screenspace visual effects from the Effects board are
+  // suppressed locally — the paired sound (if any) still plays, only the
+  // canvas animation is skipped. Defaults off; the EffectsOverlay ORs
+  // this with the media query so either source disables motion.
+  reduceScreenEffects: boolean;
 
   // Per-user
   userVolumes: Record<string, number>;
@@ -87,6 +93,7 @@ interface SettingsState {
     value: number,
   ) => void;
   setSoundboardVolume: (v: number) => void;
+  setReduceScreenEffects: (v: boolean) => void;
   setUserVolume: (identity: string, volume: number) => void;
   toggleUserMuted: (identity: string) => void;
   setMasterInputVolume: (v: number) => void;
@@ -166,6 +173,7 @@ const defaults = {
   compressorRelease: 0.25,
   makeupGain: 1.5,
   soundboardVolume: 0.5,
+  reduceScreenEffects: false,
   userVolumes: {} as Record<string, number>,
   userMuted: {} as Record<string, boolean>,
   masterInputVolume: 1.0,
@@ -211,6 +219,7 @@ export const useSettingsStore = create<SettingsState>()(
       setNormalizationEnabled: (v) => set({ normalizationEnabled: v }),
       setCompressorParam: (key, value) => set({ [key]: value }),
       setSoundboardVolume: (v) => set({ soundboardVolume: v }),
+      setReduceScreenEffects: (v) => set({ reduceScreenEffects: v }),
       setUserVolume: (identity, volume) =>
         set((s) => ({
           userVolumes: { ...s.userVolumes, [identity]: volume },
