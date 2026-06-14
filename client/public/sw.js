@@ -20,8 +20,11 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      // Drop every cache this SW ever created.
+      // Drop every cache this SW ever created. Remember whether any
+      // existed — a non-empty set means we just replaced a *caching* SW
+      // that was serving a stale app shell to the open page.
       const keys = await caches.keys();
+      const replacedCachingSw = keys.length > 0;
       await Promise.all(keys.map((k) => caches.delete(k)));
       // Take control of open pages so the next navigation is handled
       // by this SW (or rather, by its unregistration).
@@ -29,11 +32,19 @@ self.addEventListener("activate", (event) => {
       // Unregister ourselves. Subsequent requests go straight to the
       // network without SW mediation.
       await self.registration.unregister();
-      // Deliberately DO NOT reload clients. Reloading here caused a
-      // visible splash flash on every page load that still had this
-      // SW registered: HTML paints → activate fires → reload → HTML
-      // paints again. Caches are already cleared above and we've
-      // unregistered, so the next navigation hits the network cleanly.
+      // If we just evicted a caching SW, the page on screen is still the
+      // stale cached shell — reload controlled windows ONCE so they pick
+      // up fresh network code. We only do this when caches actually
+      // existed: a clean install (this pass-through SW already present,
+      // no caches) skips the reload, so there is no splash flash on
+      // normal loads. Stuck-on-stale users auto-recover instead of
+      // needing a manual second refresh.
+      if (replacedCachingSw) {
+        const windows = await self.clients.matchAll({ type: "window" });
+        for (const client of windows) {
+          if ("navigate" in client) client.navigate(client.url);
+        }
+      }
     })(),
   );
 });

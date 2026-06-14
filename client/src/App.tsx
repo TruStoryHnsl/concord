@@ -24,6 +24,7 @@ import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
+import { EffectsOverlay } from "./effects/EffectsOverlay";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -150,6 +151,8 @@ export default function App() {
   // again whenever the user moves the slider in Settings → Appearance.
   const chatFontSize = useSettingsStore((s) => s.chatFontSize);
   const themePreset = useSettingsStore((s) => s.themePreset);
+  const logoColorPrimary = useSettingsStore((s) => s.logoColorPrimary);
+  const logoColorSecondary = useSettingsStore((s) => s.logoColorSecondary);
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.style.setProperty(
@@ -162,6 +165,16 @@ export default function App() {
     if (typeof document === "undefined") return;
     document.documentElement.setAttribute("data-theme", themePreset);
   }, [themePreset]);
+
+  // Mirror the user's logo colors into the logo CSS vars, overriding the
+  // theme defaults so the mark keeps its own identity (canon bronze/teal by
+  // default) regardless of the active menu theme.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.style.setProperty("--color-logo-primary", logoColorPrimary);
+    root.style.setProperty("--color-logo-secondary", logoColorSecondary);
+  }, [logoColorPrimary, logoColorSecondary]);
 
   // Mirror the theme's surface colour into the <meta name="theme-color">
   // tag so mobile browser chrome matches the active palette. The
@@ -547,6 +560,12 @@ export default function App() {
         )}
         <ToastContainer />
       </ErrorBoundary>
+      {/* Effects board overlay: a single fullscreen, pointer-events-none
+       *  canvas that plays screenspace visual effects fired from the
+       *  Effects panel (or broadcast by peers in voice). Mounted at the
+       *  app root so effects paint over the whole UI. Idle cost is zero —
+       *  the rAF loop only runs while an effect is active. */}
+      <EffectsOverlay />
       {launchOverlay}
     </>
   );
