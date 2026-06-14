@@ -150,6 +150,8 @@ export default function App() {
   // again whenever the user moves the slider in Settings → Appearance.
   const chatFontSize = useSettingsStore((s) => s.chatFontSize);
   const themePreset = useSettingsStore((s) => s.themePreset);
+  const logoColorPrimary = useSettingsStore((s) => s.logoColorPrimary);
+  const logoColorSecondary = useSettingsStore((s) => s.logoColorSecondary);
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.style.setProperty(
@@ -162,6 +164,16 @@ export default function App() {
     if (typeof document === "undefined") return;
     document.documentElement.setAttribute("data-theme", themePreset);
   }, [themePreset]);
+
+  // Mirror the user's logo colors into the logo CSS vars, overriding the
+  // theme defaults so the mark keeps its own identity (canon bronze/teal by
+  // default) regardless of the active menu theme.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.style.setProperty("--color-logo-primary", logoColorPrimary);
+    root.style.setProperty("--color-logo-secondary", logoColorSecondary);
+  }, [logoColorPrimary, logoColorSecondary]);
 
   // Mirror the theme's surface colour into the <meta name="theme-color">
   // tag so mobile browser chrome matches the active palette. The
