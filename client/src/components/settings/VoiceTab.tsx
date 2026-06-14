@@ -262,7 +262,7 @@ export function VoiceTab() {
         />
         <Toggle
           label="Speech Gate"
-          description="Mute the mic while your input stays below the threshold."
+          description="Suppresses mic audio below the selected dB threshold to reduce speaker bleed and room noise"
           checked={inputNoiseGateEnabled}
           onChange={setInputNoiseGateEnabled}
         />
@@ -281,7 +281,7 @@ export function VoiceTab() {
 
         <Toggle
           label="Voice Clarity"
-          description="Boost speech presence and even out loud and quiet syllables."
+          description="Lifts vocal presence (~3 kHz), softens harsh sibilance (~7 kHz), expands the dynamic range of speech so quiet syllables stay audible without loud peaks blowing out"
           checked={voiceClarityEnabled}
           onChange={setVoiceClarityEnabled}
         />

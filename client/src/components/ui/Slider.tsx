@@ -40,14 +40,14 @@ export function Slider({
         className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-container-highest
           [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5
           [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full
-          [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md
+          [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:[box-shadow:var(--shadow-sm)]
           [&::-webkit-slider-thumb]:hover:bg-zinc-200 [&::-webkit-slider-thumb]:transition-colors
           [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:h-3.5
           [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white
-          [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-md
+          [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:[box-shadow:var(--shadow-sm)]
           [&::-moz-range-thumb]:hover:bg-zinc-200 [&::-moz-range-thumb]:transition-colors"
         style={{
-          background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${percent}%, #3f3f46 ${percent}%, #3f3f46 100%)`,
+          background: `linear-gradient(to right, var(--color-primary) 0%, var(--color-primary) ${percent}%, var(--color-surface-container-highest) ${percent}%, var(--color-surface-container-highest) 100%)`,
         }}
       />
     </div>

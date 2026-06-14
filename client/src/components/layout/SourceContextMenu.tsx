@@ -31,7 +31,6 @@ interface SourceContextMenuProps {
   y: number;
   onClose: () => void;
   onOpen: (sourceId: string) => void;
-  onToggleEnabled: (sourceId: string) => void;
   onOpenSettings: (sourceId: string) => void;
   onCloseConnection: (sourceId: string) => void;
 }
@@ -42,7 +41,6 @@ export function SourceContextMenu({
   y,
   onClose,
   onOpen,
-  onToggleEnabled,
   onOpenSettings,
   onCloseConnection,
 }: SourceContextMenuProps) {
@@ -108,14 +106,6 @@ export function SourceContextMenu({
         label="Open"
         onClick={() => {
           onOpen(source.id);
-          onClose();
-        }}
-      />
-
-      <MenuItem
-        label={source.enabled ? "Hide from sidebar" : "Show in sidebar"}
-        onClick={() => {
-          onToggleEnabled(source.id);
           onClose();
         }}
       />
