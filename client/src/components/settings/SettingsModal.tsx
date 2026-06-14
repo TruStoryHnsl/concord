@@ -384,20 +384,12 @@ export function SettingsPanel() {
       data-testid="settings-rail"
     >
       {allGroups.map((group) => (
-        <div key={group.id} className="flex flex-col gap-1.5">
-          {/* Category header — a filled, primary-tinted icon chip + a bold
-              label, deliberately distinct from the (indented, plain) leaf rows
-              below so the rail reads as headers-over-items, not a flat list. */}
-          <div className="flex items-center gap-2.5 px-1 pb-0.5">
-            <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-primary/12 ring-1 ring-primary/20 flex-shrink-0">
-              <span
-                className="material-symbols-outlined text-lg text-primary"
-                style={{ fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20' }}
-              >
-                {group.icon}
-              </span>
+        <div key={group.id} className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 px-2 pb-0.5">
+            <span className="material-symbols-outlined text-base text-on-surface-variant/70">
+              {group.icon}
             </span>
-            <span className="text-[0.72rem] font-headline font-bold text-on-surface uppercase tracking-[0.13em]">
+            <span className="text-xs font-label font-semibold text-on-surface-variant/70 uppercase tracking-wider">
               {group.label}
             </span>
           </div>
@@ -444,9 +436,6 @@ export function SettingsPanel() {
             </div>
           )}
 
-          {/* Leaf rows — nested under the category via a left guide line +
-              indent, so they're visually subordinate to the header above. */}
-          <div className="flex flex-col gap-0.5 ml-3.5 pl-2.5 border-l border-outline-variant/15">
           {group.items.map((leaf) => {
             const active =
               activeTab === leaf.key &&
@@ -457,22 +446,19 @@ export function SettingsPanel() {
                 onClick={() => selectLeaf(group, leaf)}
                 {...tvFocusProps}
                 aria-current={active ? "page" : undefined}
-                className={`btn-press group/leaf relative flex items-center gap-2.5 w-full text-left px-2.5 py-1.5 rounded-lg transition-colors ${
+                className={`btn-press group/leaf flex items-center gap-3 w-full text-left px-2.5 py-2 rounded-xl transition-colors ${
                   active
                     ? "bg-surface-container-highest text-on-surface"
                     : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
                 }`}
               >
-                {active && (
-                  <span className="absolute -left-[0.72rem] top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full bg-primary" />
-                )}
                 <span
-                  className={`material-symbols-outlined text-lg flex-shrink-0 ${
-                    active ? "text-primary" : "text-on-surface-variant/70"
+                  className={`material-symbols-outlined text-xl flex-shrink-0 ${
+                    active ? "text-primary" : "text-on-surface-variant/80"
                   }`}
                   style={
                     active
-                      ? { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20' }
+                      ? { fontVariationSettings: '"FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24' }
                       : undefined
                   }
                 >
@@ -481,7 +467,7 @@ export function SettingsPanel() {
                 <span className="min-w-0 flex flex-col">
                   <span className="text-sm font-label leading-tight truncate">{leaf.label}</span>
                   {leaf.hint && (
-                    <span className="text-xs text-on-surface-variant/55 leading-tight truncate">
+                    <span className="text-xs text-on-surface-variant/60 leading-tight truncate">
                       {leaf.hint}
                     </span>
                   )}
@@ -494,7 +480,6 @@ export function SettingsPanel() {
               </button>
             );
           })}
-          </div>
         </div>
       ))}
     </nav>

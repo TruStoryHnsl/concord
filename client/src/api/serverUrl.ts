@@ -113,10 +113,33 @@ export function getApiBase(): string {
 }
 
 /**
- * Get the homeserver URL for Matrix client.
- * Web: window.location.origin, Desktop: stored server URL
+ * Get the homeserver URL for the Matrix client.
+ *
+ * Resolution order — symmetric with `getApiBase()` above:
+ *   1. `serverConfig` Zustand store `homeserver_url`. This is the
+ *      ACTIVE source's Matrix base. Without this, the web build pinned
+ *      every Matrix client to `window.location.origin` regardless of
+ *      which source was selected, so switching to another instance
+ *      kept the client on the origin homeserver while the API base
+ *      pointed at the new instance — the mismatch surfaced as
+ *      "Invalid or expired access token" the moment a foreign token
+ *      was used against the origin homeserver. Making the client
+ *      follow the active source is what lets the rail hot-swap between
+ *      instances (web AND native) without a full page reload.
+ *   2. Legacy `_serverUrl` module var (Tauri / direct `setServerUrl`).
+ *   3. Origin fallback — the plain single-instance web deployment with
+ *      no source selected (`config === null`) keeps talking to its own
+ *      origin exactly as before.
  */
 export function getHomeserverUrl(): string {
+  try {
+    const cfg = useServerConfigStore.getState().config;
+    if (cfg?.homeserver_url) {
+      return cfg.homeserver_url.replace(/\/$/, "");
+    }
+  } catch {
+    // Store not hydrated yet — fall through to legacy / origin.
+  }
   return _serverUrl || window.location.origin;
 }
 

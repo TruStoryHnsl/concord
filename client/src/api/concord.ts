@@ -38,6 +38,23 @@ export interface Server {
    * non-local rooms with a distinct color.
    */
   federated?: boolean;
+  /**
+   * Client-only marker: the id of the `ConcordSource` this server was
+   * fetched from. Set by the server store when aggregating servers
+   * across multiple connected instances. Undefined for servers from the
+   * active source loaded via the legacy `loadServers` path. Never sent
+   * on the wire.
+   */
+  sourceId?: string;
+  /**
+   * Client-only marker: true when this server belongs to a connected
+   * source that is NOT the active instance — i.e. a read-only rail tile
+   * fetched from another instance's `/servers`. The active Matrix client
+   * has no rooms for it, so clicking it must hot-swap to its source
+   * (`switchToSource`) before the chat/voice machinery can open it.
+   * Never sent on the wire.
+   */
+  foreign?: boolean;
 }
 
 export interface Invite {
@@ -226,6 +243,47 @@ export async function uninstallExtensionById(
 
 export async function listServers(accessToken: string): Promise<Server[]> {
   return apiFetch("/servers", {}, accessToken);
+}
+
+/**
+ * List servers from an EXPLICIT instance, bypassing the global active
+ * `getApiBase()` resolution. Used by the rail's multi-instance
+ * aggregation (`loadForeignServers`) to fetch each connected source's
+ * servers against that source's own `api_base` + token, regardless of
+ * which instance is currently active. Mirrors `apiFetch`'s error
+ * handling but never reads the active config.
+ */
+export async function listServersAt(
+  apiBase: string,
+  accessToken: string,
+): Promise<Server[]> {
+  const base = apiBase.replace(/\/+$/, "");
+  const resp = await fetch(`${base}/servers`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    let errcode: string | undefined;
+    try {
+      const body = await resp.json();
+      if (typeof body.detail === "string") detail = body.detail;
+      else if (typeof body.error === "string") detail = body.error;
+      if (typeof body.errcode === "string") errcode = body.errcode;
+    } catch {
+      /* non-JSON error body */
+    }
+    const err = new Error(detail) as Error & {
+      httpStatus?: number;
+      errcode?: string;
+    };
+    err.httpStatus = resp.status;
+    err.errcode = errcode;
+    throw err;
+  }
+  if (resp.status === 204 || resp.headers.get("content-length") === "0") {
+    return [];
+  }
+  return resp.json();
 }
 
 export async function createServer(

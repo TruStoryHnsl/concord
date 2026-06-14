@@ -22,6 +22,8 @@ import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
 import { useAuthStore } from "../../stores/auth";
 import { useSourcesStore } from "../../stores/sources";
+import { useSettingsStore } from "../../stores/settings";
+import { switchToSource } from "../../lib/switchToSource";
 import {
   useUnreadCounts,
   useHighlightCounts,
@@ -182,6 +184,24 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // `__TAURI_INTERNALS__` — canonical Tauri v2 global. See the
   // explanation in `client/src/api/serverUrl.ts`.
   const allSources = useSourcesStore((s) => s.sources);
+
+  // Multi-instance aggregation: servers fetched from OTHER connected
+  // sources (not the active instance). Rendered as read-only tiles after
+  // the active instance's servers; clicking one hot-swaps to its source.
+  const foreignServers = useServerStore((s) => s.foreignServers);
+  const sourceById = useMemo(() => {
+    const map = new Map<string, (typeof allSources)[number]>();
+    for (const src of allSources) map.set(src.id, src);
+    return map;
+  }, [allSources]);
+  const visibleForeign = useMemo(
+    () =>
+      foreignServers.filter((server) => {
+        const src = server.sourceId ? sourceById.get(server.sourceId) : undefined;
+        return Boolean(src?.enabled);
+      }),
+    [foreignServers, sourceById],
+  );
 
   // Which source platforms are enabled? Each platform type is independent.
   const enabledPlatforms = useMemo(() => {
@@ -431,6 +451,22 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     onServerSelect?.();
   };
 
+  // A foreign tile belongs to a NON-active instance, so the live Matrix
+  // client has no rooms for it. Clicking hot-swaps to its source (no page
+  // reload) and selects the picked server once that instance's servers
+  // load. If the source has no stored session, open the connect/sign-in
+  // flow instead of switching into a token mismatch.
+  const handleForeignServerClick = (server: (typeof foreignServers)[number]) => {
+    if (!server.sourceId) return;
+    const result = switchToSource(server.sourceId, server.id);
+    if (result === "needs-auth") {
+      useSettingsStore.getState().requestAddSource();
+      return;
+    }
+    setDMActive(false);
+    onServerSelect?.();
+  };
+
   const handleDMClick = () => {
     useServerStore.setState({ activeServerId: null, activeChannelId: null });
     setDMActive(true);
@@ -665,6 +701,69 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     );
   };
 
+  const renderForeignDesktopTile = (server: (typeof foreignServers)[number]) => {
+    const src = server.sourceId ? sourceById.get(server.sourceId) : undefined;
+    const label = src?.instanceName || src?.host || "another instance";
+    const badge = (label.charAt(0) || "?").toUpperCase();
+    return (
+      <div key={`foreign:${server.sourceId}:${server.id}`} className="relative group">
+        <button
+          onClick={() => handleForeignServerClick(server)}
+          title={`${server.name} — ${label} · click to switch`}
+          aria-label={`${server.name} on ${label} (switch instance)`}
+          className="btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold rounded-2xl hover:rounded-xl bg-surface-container-high/60 text-on-surface-variant ring-1 ring-secondary/30 hover:ring-secondary/60 hover:bg-surface-container-highest transition-all opacity-80 hover:opacity-100"
+        >
+          <ServerGlyph
+            server={server}
+            active={false}
+            fromConcordFederation={false}
+            size="desktop"
+          />
+        </button>
+        <div
+          className="absolute -top-0.5 -left-0.5 w-4 h-4 rounded-full border-2 border-surface flex items-center justify-center bg-secondary"
+          aria-hidden="true"
+        >
+          <span className="font-headline font-bold text-on-secondary" style={{ fontSize: "8px", lineHeight: 1 }}>
+            {badge}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderForeignMobileTile = (server: (typeof foreignServers)[number]) => {
+    const src = server.sourceId ? sourceById.get(server.sourceId) : undefined;
+    const label = src?.instanceName || src?.host || "another instance";
+    const badge = (label.charAt(0) || "?").toUpperCase();
+    return (
+      <button
+        key={`foreign:${server.sourceId}:${server.id}`}
+        onClick={() => handleForeignServerClick(server)}
+        title={`${server.name} — ${label} · click to switch`}
+        className="btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl text-on-surface hover:bg-surface-container-high transition-all opacity-90"
+      >
+        <div className="relative flex-shrink-0">
+          <ServerGlyph
+            server={server}
+            active={false}
+            fromConcordFederation={false}
+            size="mobile"
+          />
+          <div className="absolute -top-1 -left-1 w-4 h-4 bg-secondary rounded-full border-2 border-surface-container-low flex items-center justify-center">
+            <span className="font-headline font-bold text-on-secondary" style={{ fontSize: "8px", lineHeight: 1 }}>
+              {badge}
+            </span>
+          </div>
+        </div>
+        <span className="truncate font-body font-medium">{server.name}</span>
+        <span className="text-[10px] uppercase tracking-wider text-secondary/80 font-label ml-auto flex-shrink-0">
+          {label}
+        </span>
+      </button>
+    );
+  };
+
   // Mobile: full-width list view. The outer wrapper is a flex
   // column with a free spacer between the top and bottom rail stacks.
   // Anything dragged below the add tile becomes part of the bottom
@@ -720,6 +819,14 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
               <div className="space-y-0.5">
                 {topRailIds.map(renderMobileRailItem)}
               </div>
+              {visibleForeign.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-secondary/20 space-y-0.5">
+                  <p className="text-[10px] font-label font-medium text-secondary/70 uppercase tracking-widest px-3 pb-1">
+                    Other instances
+                  </p>
+                  {visibleForeign.map(renderForeignMobileTile)}
+                </div>
+              )}
               <div className="flex-1 min-h-4" aria-hidden="true" />
               <div className="space-y-0.5 pb-1">
                 {bottomRailIds.map(renderMobileRailItem)}
@@ -806,6 +913,14 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
             <div className="w-full flex flex-col items-center gap-2">
               {topRailIds.map(renderDesktopRailItem)}
             </div>
+            {visibleForeign.length > 0 && (
+              <>
+                <div className="w-8 h-px bg-secondary/25 my-1" title="Other connected instances" />
+                <div className="w-full flex flex-col items-center gap-2">
+                  {visibleForeign.map(renderForeignDesktopTile)}
+                </div>
+              </>
+            )}
             <div className="flex-1 min-h-4" aria-hidden="true" />
             <div className="w-full flex flex-col items-center gap-2 pb-1">
               {bottomRailIds.map(renderDesktopRailItem)}

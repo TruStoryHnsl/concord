@@ -561,6 +561,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       loadServers(accessToken),
       loadConversations(accessToken),
       loadCatalog(accessToken),
+      // Aggregate the OTHER connected instances' servers into the rail
+      // (multi-instance hot-swap). Independent of the active instance's
+      // own server load; a failure here never blocks app-ready.
+      useServerStore.getState().loadForeignServers(),
     ]).finally(() => {
       if (!cancelled) setServersLoaded(true);
     });
@@ -2236,6 +2240,13 @@ export function AddSourceModal({
   // Concord form state
   const [host, setHost] = useState("");
   const [token, setToken] = useState("");
+  // Optional Concord sign-in. A source must hold a session for its
+  // servers to appear in the aggregated rail (multi-instance hot-swap),
+  // so the connect screen offers username/password here. Left blank, the
+  // instance is still added (discovery only) but contributes no rail
+  // tiles until the user signs in.
+  const [concordUsername, setConcordUsername] = useState("");
+  const [concordPassword, setConcordPassword] = useState("");
 
   // Matrix form state
   const [matrixHost, setMatrixHost] = useState("");
@@ -2362,17 +2373,37 @@ export function AddSourceModal({
         const validation = await validateRes.json();
         if (!validation.valid) throw new Error("Invalid or expired invite token");
       }
+      // Authenticate when credentials were supplied so this instance's
+      // servers join the aggregated rail. Concord login IS Matrix login
+      // (proxied for rate-limiting), so reuse the same password flow the
+      // Matrix-source screen uses.
+      let session:
+        | { accessToken: string; userId: string; deviceId: string }
+        | null = null;
+      if (concordUsername.trim() && concordPassword) {
+        const { loginWithPasswordAtBaseUrl } = await import("../../api/matrix");
+        session = await loginWithPasswordAtBaseUrl(
+          config.homeserver_url,
+          concordUsername.trim(),
+          concordPassword,
+        );
+      }
       addSource({
         host: trimmed,
         instanceName: config.instance_name,
         inviteToken: token.trim(),
         apiBase: config.api_base,
         homeserverUrl: config.homeserver_url,
+        accessToken: session?.accessToken,
+        userId: session?.userId,
+        deviceId: session?.deviceId,
         status: "connected",
         enabled: true,
         platform: "concord",
         branding: config.branding,
       });
+      // Clear the password from form state immediately after use.
+      setConcordPassword("");
       onSourceAdded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't reach that host");
@@ -2707,12 +2738,34 @@ export function AddSourceModal({
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
               </div>
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/50 p-3 space-y-2">
+                <p className="text-xs text-on-surface-variant">
+                  Sign in to show this instance's servers in your rail. Leave
+                  blank to just add it for later.
+                </p>
+                <input
+                  type="text"
+                  value={concordUsername}
+                  onChange={(e) => setConcordUsername(e.target.value)}
+                  placeholder="Username"
+                  autoComplete="username"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+                <input
+                  type="password"
+                  value={concordPassword}
+                  onChange={(e) => setConcordPassword(e.target.value)}
+                  placeholder="Password"
+                  autoComplete="current-password"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
               <button
                 onClick={handleConnectConcord}
                 disabled={!host.trim()}
                 className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
               >
-                Connect
+                {concordUsername.trim() && concordPassword ? "Sign in & connect" : "Connect"}
               </button>
             </div>
           </>
