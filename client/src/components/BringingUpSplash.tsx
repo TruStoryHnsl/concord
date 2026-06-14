@@ -194,7 +194,6 @@ export function BringingUpSplash({
       >
         <video
           ref={videoRef}
-          src="/boot-splash.mp4"
           autoPlay
           muted
           loop
@@ -209,7 +208,18 @@ export function BringingUpSplash({
             transform: "translateZ(0)",
             backfaceVisibility: "hidden",
           }}
-        />
+        >
+          {/*
+            VP9-alpha WebM first — it carries a real alpha channel so the
+            mark renders with TRANSPARENCY (no opaque square) on Chromium
+            and Firefox. The H.264 mp4 (which composites onto #0c0e11 and
+            therefore shows a square box) stays as the fallback only for
+            engines without VP9-alpha support (e.g. Safari/WebKit). The
+            source order matters: the browser picks the first it can play.
+          */}
+          <source src="/boot-splash.webm" type="video/webm" />
+          <source src="/boot-splash.mp4" type="video/mp4" />
+        </video>
       </span>
       {spec.showBrand || spec.showStatus ? (
         <span className="flex flex-col items-center gap-1">
