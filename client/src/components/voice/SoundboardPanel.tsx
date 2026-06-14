@@ -16,6 +16,10 @@ import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useSettingsStore } from "../../stores/settings";
 import { Slider } from "../ui/Slider";
+import { fireEffect } from "../../effects/store";
+import { broadcastEffect } from "../../effects/broadcast";
+import { parseEffectMetadata, getEffectDefinition } from "../../effects/registry";
+import { EffectAuthor } from "./EffectAuthor";
 
 interface SoundboardPanelProps {
   serverId: string;
@@ -42,6 +46,7 @@ export function SoundboardPanel({
   const [showUpload, setShowUpload] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showAuthor, setShowAuthor] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editingClipId, setEditingClipId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
@@ -94,6 +99,31 @@ export function SoundboardPanel({
 
   const playClip = useCallback(
     async (clip: SoundboardClip) => {
+      // Effects board: fire the paired visual locally + broadcast it to
+      // peers in the voice room, regardless of whether the clip also has
+      // a sound. The sound (when present) still rides the published
+      // "soundboard" audio track so peers hear it; the data packet only
+      // carries the visual descriptor. Fired BEFORE audio so the visual
+      // and the sound feel simultaneous.
+      const meta = parseEffectMetadata(clip.effect_metadata);
+      if (meta?.visualId) {
+        fireEffect(meta);
+        void broadcastEffect(participantRef.current, meta);
+      }
+
+      // Visual-only items carry no audio file — there's nothing to
+      // fetch/decode/play. The visual was already fired above; we're
+      // done. `has_sound === false` is the authoritative server signal;
+      // legacy clips default to true.
+      const isVisualOnly = clip.has_sound === false;
+
+      if (isVisualOnly) {
+        // Briefly flash the playing state for UI feedback, then clear.
+        setPlayingId(clip.id);
+        window.setTimeout(() => setPlayingId((id) => (id === clip.id ? null : id)), 400);
+        return;
+      }
+
       if (playingId) return; // prevent overlapping playback
       setPlayingId(clip.id);
 
@@ -248,6 +278,8 @@ export function SoundboardPanel({
 
   const soundboardVolume = useSettingsStore((s) => s.soundboardVolume);
   const setSoundboardVolume = useSettingsStore((s) => s.setSoundboardVolume);
+  const reduceScreenEffects = useSettingsStore((s) => s.reduceScreenEffects);
+  const setReduceScreenEffects = useSettingsStore((s) => s.setReduceScreenEffects);
 
   if (loading) {
     return (
@@ -261,12 +293,12 @@ export function SoundboardPanel({
       <div className="flex items-center justify-between px-4 py-2 bg-surface-container">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
-            Soundboard
+            Effects
           </span>
           <button
             onClick={() => setShowVolume(!showVolume)}
             className={`text-xs transition-colors ${showVolume ? "text-primary" : "text-on-surface-variant hover:text-on-surface"}`}
-            title="Soundboard volume"
+            title="Effects volume"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
@@ -283,16 +315,23 @@ export function SoundboardPanel({
             </button>
           )}
           <button
-            onClick={() => { setShowLibrary(!showLibrary); if (!showLibrary) setShowUpload(false); }}
+            onClick={() => { setShowLibrary(!showLibrary); if (!showLibrary) { setShowUpload(false); setShowAuthor(false); } }}
             className={`text-xs transition-colors ${showLibrary ? "text-primary" : "text-on-surface-variant hover:text-on-surface"}`}
           >
             {showLibrary ? "Close" : "Browse"}
           </button>
           <button
-            onClick={() => { setShowUpload(!showUpload); if (!showUpload) setShowLibrary(false); }}
+            onClick={() => { setShowAuthor(!showAuthor); if (!showAuthor) { setShowUpload(false); setShowLibrary(false); } }}
+            className={`text-xs transition-colors ${showAuthor ? "text-primary" : "text-on-surface-variant hover:text-on-surface"}`}
+            title="Create a screenspace effect"
+          >
+            {showAuthor ? "Cancel" : "+ Effect"}
+          </button>
+          <button
+            onClick={() => { setShowUpload(!showUpload); if (!showUpload) { setShowLibrary(false); setShowAuthor(false); } }}
             className="text-xs text-on-surface-variant hover:text-on-surface transition-colors"
           >
-            {showUpload ? "Cancel" : "+ Upload"}
+            {showUpload ? "Cancel" : "+ Sound"}
           </button>
         </div>
       </div>
@@ -301,7 +340,7 @@ export function SoundboardPanel({
       {showVolume && (
         <div className="px-4 py-2">
           <Slider
-            label="Soundboard Volume"
+            label="Effects Volume"
             value={soundboardVolume}
             min={0}
             max={2}
@@ -309,6 +348,18 @@ export function SoundboardPanel({
             onChange={setSoundboardVolume}
             formatValue={(v) => `${Math.round(v * 100)}%`}
           />
+          {/* Accessibility: suppress screenspace visuals locally. The
+              paired sound still plays; only the canvas animation is
+              skipped. The overlay also honours OS prefers-reduced-motion. */}
+          <label className="flex items-center justify-between gap-2 mt-2 cursor-pointer">
+            <span className="text-xs text-on-surface-variant">Reduce screen effects</span>
+            <input
+              type="checkbox"
+              checked={reduceScreenEffects}
+              onChange={(e) => setReduceScreenEffects(e.target.checked)}
+              className="accent-primary"
+            />
+          </label>
         </div>
       )}
 
@@ -320,6 +371,19 @@ export function SoundboardPanel({
             setClips((prev) => [...prev, clip]);
             setShowUpload(false);
           }}
+        />
+      )}
+
+      {/* Effect authoring: pick a built-in visual, tune it, optionally
+          attach a sound, name + save. Live-previews on the local screen. */}
+      {showAuthor && (
+        <EffectAuthor
+          serverId={serverId}
+          onSaved={(clip) => {
+            setClips((prev) => [...prev, clip]);
+            setShowAuthor(false);
+          }}
+          onCancel={() => setShowAuthor(false)}
         />
       )}
 
@@ -345,8 +409,9 @@ export function SoundboardPanel({
       {/* Clip grid — scales down as clip count grows */}
       {clips.length === 0 ? (
         <div className="px-4 py-6 text-on-surface-variant text-xs text-center">
-          <div className="text-2xl mb-1">🔊</div>
-          No clips yet. Upload one or browse the library.
+          <div className="text-2xl mb-1">🎉</div>
+          No effects yet. Create one with <span className="text-on-surface">+ Effect</span>,
+          add a sound, or browse the library.
         </div>
       ) : (
         <div className="p-2 max-h-48 overflow-y-auto">
@@ -375,7 +440,11 @@ export function SoundboardPanel({
                     }`}
                     title={playingId === clip.id ? "Click to stop" : clip.keybind ? `${clip.name} [${clip.keybind}]` : clip.name}
                   >
-                    {clip.name}
+                    {(() => {
+                      const meta = parseEffectMetadata(clip.effect_metadata);
+                      const glyph = meta?.visualId ? getEffectDefinition(meta.visualId)?.glyph : null;
+                      return glyph ? `${glyph} ${clip.name}` : clip.name;
+                    })()}
                   </button>
                   {/* Edit mode overlay */}
                   {editMode && canDelete && (
