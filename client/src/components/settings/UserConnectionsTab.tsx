@@ -92,18 +92,17 @@ export function UserConnectionsTab() {
       />
 
       <ConnectionCard
-        brand="reticulum"
-        title="Reticulum"
-        subtitle="Reach a peer over the Reticulum network by destination hash. Requires the native build with the reticulum transport enabled."
-        action="Connect"
-        onAction={() => requestAddSource("reticulum")}
-      />
-
-      <ConnectionCard
         brand="slack"
         title="Slack"
-        subtitle="Bridge a Slack workspace into Concord. The bridge isn't built yet; this card is a placeholder for it and does nothing when clicked."
-        action="Not available"
+        subtitle="Preloaded release target"
+        action="Soon"
+        disabled
+      />
+      <ConnectionCard
+        brand="reticulum"
+        title="Reticulum"
+        subtitle="Preloaded release target"
+        action="Soon"
         disabled
       />
 

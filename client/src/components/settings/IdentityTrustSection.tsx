@@ -38,9 +38,8 @@ export function IdentityTrustSection() {
             Identity & trust edges
           </h4>
           <p className="text-xs text-on-surface-variant mt-1">
-            Declares signed trust edges that merge your profile across two
-            servers. Available in the desktop app, which holds the signing
-            key.
+            Available on the native build only. The browser tab can't sign
+            trust declarations with this install's hero key.
           </p>
         </div>
       </div>

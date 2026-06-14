@@ -13,22 +13,13 @@
  *      disconnected, an announce folded in). The map uses it as a cheap
  *      "re-pull the snapshot" signal, debounced so a burst coalesces.
  *
- * Web build: the browser has no swarm, so it sources the graph over HTTP
- * from the server's `GET /api/mesh/topology` endpoint instead (the docker
- * node assembles a real topology from its federation neighbors + hub role
- * — see `server/routers/mesh.py`). `fetchMeshGraph()` GETs that endpoint
- * and `subscribeToMeshGraph()` polls it on a timer. The two surfaces
- * (native Tauri command, web HTTP) return the SAME `MeshGraph` shape, so
- * `MeshMap` renders identically either way.
+ * Web build: the browser has no swarm, so this surface is no-op on web —
+ * `fetchMeshGraph()` resolves to an empty graph and `subscribeToMeshGraph`
+ * never fires. Consumers should guard with `isTauri()` themselves; the API
+ * stays callable so call sites don't need conditional imports.
  */
 
 import { isTauri } from "./servitude";
-import { getApiBase } from "./serverUrl";
-
-/** Web poll interval for the HTTP topology endpoint (ms). The docker
- * node's federation-derived topology changes slowly (an admin editing the
- * allowlist), so a 5s poll is ample and cheap. */
-const WEB_POLL_INTERVAL_MS = 5000;
 
 /** One node in the mesh graph as the Rust side serializes it (snake_case). */
 interface MeshGraphNodeWire {
@@ -47,34 +38,6 @@ interface MeshGraphEdgeWire {
 interface MeshGraphWire {
   nodes: MeshGraphNodeWire[];
   edges: MeshGraphEdgeWire[];
-}
-
-/**
- * Raw wire shape from the web `GET /api/mesh/topology` endpoint. Extends
- * the native snapshot with this node's hub (relay/backup) role so the web
- * map can surface the docker node's "big brother" infrastructure status.
- */
-interface MeshTopologyWire extends MeshGraphWire {
-  hub_enabled: boolean;
-  relay: boolean;
-  backup_blob_count: number;
-  source: string;
-}
-
-/**
- * The docker node's hub (relay + backup) role, surfaced on the web map.
- * `null` on native (the desktop install is not a hub) and until the first
- * web fetch resolves.
- */
-export interface MeshHubRole {
-  /** `CONCORD_HUB` is set — this node relays + stores encrypted backups. */
-  hubEnabled: boolean;
-  /** This node relays mesh traffic for others (== hubEnabled today). */
-  relay: boolean;
-  /** Count of encrypted backup blobs held (count only — never identities). */
-  backupBlobCount: number;
-  /** Where the graph came from: `rust_snapshot` (real libp2p) or `federation`. */
-  source: string;
 }
 
 /** A node in the assembled mesh graph (camelCase, UI-facing). */
@@ -100,34 +63,17 @@ export interface MeshGraphEdge {
 export interface MeshGraph {
   nodes: MeshGraphNode[];
   edges: MeshGraphEdge[];
-  /**
-   * The local node's hub (relay/backup) role. Present only on the web /
-   * docker build (sourced from `GET /api/mesh/topology`); `undefined` on
-   * native, where the desktop install is not a hub. Lets the map surface
-   * the docker node's "big brother" relay + backup status.
-   */
-  hub?: MeshHubRole;
 }
 
 /** The empty graph — the correct "no mesh / web mode" state. */
 export const EMPTY_MESH_GRAPH: MeshGraph = { nodes: [], edges: [] };
 
 /**
- * One-shot mesh-graph snapshot.
- *
- * - **Native** (Tauri): reads the in-process libp2p graph via the
- *   `mesh_graph_snapshot` command. Errors propagate.
- * - **Web / docker**: GETs `/api/mesh/topology`, the server-assembled
- *   topology (federation neighbors + hub role). The `hub` field carries
- *   the docker node's relay/backup status. A network/HTTP error resolves
- *   to the empty graph (the map shows a graceful empty state) rather than
- *   throwing — the web map must never hard-crash on a transient fetch
- *   failure.
+ * One-shot mesh-graph snapshot. Native-only — resolves to an empty graph
+ * on web (no swarm to assemble). Native command errors propagate.
  */
 export async function fetchMeshGraph(): Promise<MeshGraph> {
-  if (!isTauri()) {
-    return fetchMeshGraphWeb();
-  }
+  if (!isTauri()) return EMPTY_MESH_GRAPH;
   const { invoke } = await import("@tauri-apps/api/core");
   const wire = await invoke<MeshGraphWire>("mesh_graph_snapshot");
   return {
@@ -140,61 +86,16 @@ export async function fetchMeshGraph(): Promise<MeshGraph> {
 }
 
 /**
- * Web/docker mesh-graph fetch over HTTP. Maps the snake_case wire shape
- * (matching `server/routers/mesh.py`) into the camelCase UI type and
- * attaches the hub role. On any error, returns the empty graph so the map
- * renders its graceful empty state.
- */
-async function fetchMeshGraphWeb(): Promise<MeshGraph> {
-  try {
-    const resp = await fetch(`${getApiBase()}/mesh/topology`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!resp.ok) {
-      console.warn(
-        `[meshGraph] /api/mesh/topology returned ${resp.status}`,
-      );
-      return EMPTY_MESH_GRAPH;
-    }
-    const wire = (await resp.json()) as MeshTopologyWire;
-    return {
-      nodes: (wire.nodes ?? []).map((n) => ({
-        peerId: n.peer_id,
-        hopDistance: n.hop_distance,
-      })),
-      edges: (wire.edges ?? []).map((e) => ({ a: e.a, b: e.b })),
-      hub: {
-        hubEnabled: !!wire.hub_enabled,
-        relay: !!wire.relay,
-        backupBlobCount: wire.backup_blob_count ?? 0,
-        source: wire.source ?? "federation",
-      },
-    };
-  } catch (err) {
-    console.warn(
-      "[meshGraph] web topology fetch failed:",
-      err instanceof Error ? err.message : err,
-    );
-    return EMPTY_MESH_GRAPH;
-  }
-}
-
-/**
  * Subscribe to mesh-graph change notifications. The callback fires (with
- * no argument — it's a "re-pull" signal) every time the topology may have
- * moved. Returns a teardown the caller MUST invoke on unmount.
+ * no argument — it's a "re-pull" signal) every time the native topology
+ * moves. Returns a teardown the caller MUST invoke on unmount.
  *
- * - **Native** (Tauri): wires the push-based `mesh_graph_changed` event;
- *   the callback fires exactly when the swarm topology changes.
- * - **Web / docker**: the browser has no push channel, so it POLLS the
- *   HTTP topology endpoint on a fixed interval (`WEB_POLL_INTERVAL_MS`),
- *   firing the callback on each tick so the map re-pulls. The teardown
- *   clears the interval.
+ * Native-only by design — on web the listener is never wired and the
+ * returned teardown is a no-op.
  */
 export function subscribeToMeshGraph(onChanged: () => void): () => void {
   if (!isTauri()) {
-    const handle = setInterval(onChanged, WEB_POLL_INTERVAL_MS);
-    return () => clearInterval(handle);
+    return () => {};
   }
 
   let teardown: (() => void) | null = null;

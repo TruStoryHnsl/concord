@@ -455,18 +455,6 @@ export interface SoundboardClip {
   license_url?: string | null;
   /** Original uploader's name on the source platform. Required for CC-BY etc. */
   attribution?: string | null;
-  /**
-   * Effects board: opaque JSON string describing an optional screenspace
-   * visual effect paired with this clip — the serialised `EffectMetadata`
-   * ({@link src/effects/types.ts}). `null`/absent ⇒ a plain sound-only
-   * clip. When set with a real `visualId`, the clip fires a visual (with
-   * or without the sound). A clip with `effect_metadata` set and an
-   * empty/absent audio file is a visual-only item.
-   */
-  effect_metadata?: string | null;
-  /** False for a visual-only effects item (no audio file). Defaults true
-   *  for legacy/sound clips that predate the field. */
-  has_sound?: boolean;
 }
 
 /** INS-073: list every clip on the instance.
@@ -496,14 +484,10 @@ export async function uploadSoundboardClip(
   name: string,
   file: File,
   accessToken: string,
-  /** Effects board: optional serialised EffectMetadata to pair a visual
-   *  with the uploaded sound (sound+visual item). Omit for sound-only. */
-  effectMetadata?: string | null,
 ): Promise<SoundboardClip> {
   const formData = new FormData();
   formData.append("name", name);
   formData.append("file", file);
-  if (effectMetadata) formData.append("effect_metadata", effectMetadata);
 
   const resp = await fetch(`${getBase()}/soundboard/${serverId}`, {
     method: "POST",
@@ -521,41 +505,12 @@ export async function uploadSoundboardClip(
 
 export async function updateSoundboardClip(
   clipId: number,
-  updates: {
-    name?: string;
-    keybind?: string;
-    /** Effects board: set/replace the paired visual (serialised
-     *  EffectMetadata), or pass "" to clear it back to sound-only.
-     *  Omit the key entirely to leave any existing effect untouched. */
-    effect_metadata?: string;
-  },
+  updates: { name?: string; keybind?: string },
   accessToken: string,
-): Promise<{ status: string; name: string; keybind: string | null; effect_metadata: string | null }> {
+): Promise<{ status: string; name: string; keybind: string | null }> {
   return apiFetch(
     `/soundboard/${clipId}`,
     { method: "PATCH", body: JSON.stringify(updates) },
-    accessToken,
-  );
-}
-
-/**
- * Effects board: create a visual-only effects item (no sound). The server
- * stores a clip with `effect_metadata` set and an empty audio filename;
- * the client renders it as a pure screenspace visual.
- */
-export async function createVisualEffect(
-  serverId: string,
-  name: string,
-  effectMetadata: string,
-  accessToken: string,
-): Promise<SoundboardClip> {
-  return apiFetch(
-    `/soundboard/${serverId}/visual`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, effect_metadata: effectMetadata }),
-    },
     accessToken,
   );
 }

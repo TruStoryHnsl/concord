@@ -19,7 +19,7 @@ export function ToastContainer() {
         return (
           <div
             key={toast.id}
-            className={`px-4 py-2.5 rounded-xl text-sm font-body font-medium animate-[slideIn_0.3s_ease-out] elev-lg edge-hairline ${config.bg} ${config.text}`}
+            className={`px-4 py-2.5 rounded-xl text-sm font-body font-medium animate-[slideIn_0.3s_ease-out] ${config.bg} ${config.text}`}
           >
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">

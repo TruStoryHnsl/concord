@@ -22,7 +22,6 @@ import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
 import { useSourcesStore, type ConcordSource } from "../../stores/sources";
 import { usePeerStore } from "../../stores/peerStore";
-import { isTauri } from "../../api/servitude";
 import { useInstanceNameStore } from "../../stores/instanceName";
 import { useAvatarUrl } from "../../hooks/usePresence";
 import {
@@ -32,8 +31,6 @@ import {
 } from "../sources/sourceBrand";
 import { SourceContextMenu } from "./SourceContextMenu";
 import { disconnectSource } from "../../lib/disconnectSource";
-import { switchToSource } from "../../lib/switchToSource";
-import { isLocalInstanceSource } from "../../lib/sourceIdentity";
 
 const SOURCE_RAIL_STORAGE_KEY_PREFIX = "concord_source_rail_order";
 const ADD_SOURCE_TILE_ID = "__add_source_tile__";
@@ -469,28 +466,6 @@ export function SourcesPanel({
 
   const sources = rawSources;
 
-  // Porch visibility gate. The porch / local-home surface is a native
-  // concept: it only exists once a native app has created it and the
-  // account has at least one linked p2p device. In the web/docker build
-  // there is no porch until such a device is paired, so the intrinsic
-  // local tile stays hidden — a fresh web login lands directly on its
-  // Concord server instead of an empty "lives on your desktop" porch.
-  const knownPeers = usePeerStore((s) => s.knownPeers);
-  const showLocalTile = isTauri() || knownPeers.length > 0;
-
-  // Primary click on a source tile SWITCHES to that instance — re-points
-  // the active homeserver + session at the source and reloads (no-op if it
-  // is already active). It does NOT toggle the source on/off; toggling
-  // visibility lives in the right-click menu. Clicking always reveals the
-  // source first so a click can never hide the source you're trying to reach.
-  const handleOpenSource = (id: string) => {
-    if (!sources.find((s) => s.id === id)?.enabled) {
-      updateSource(id, { enabled: true });
-    }
-    onSourceSelect?.(id);
-    switchToSource(id);
-  };
-
   // INS-069 — lazy-fetch per-instance branding for any source whose
   // `branding` field is undefined. This populates the rail tile with
   // the upstream operator's chosen colours on first render after a
@@ -550,6 +525,10 @@ export function SourcesPanel({
     }),
   );
 
+  const handleToggle = (id: string) => {
+    toggleSource(id);
+    onSourceSelect?.(id);
+  };
 
   const [railOrder, setRailOrder] = useState<string[]>(() =>
     normalizeRailOrder(
@@ -617,7 +596,7 @@ export function SourcesPanel({
       <SortableSourceTile
         key={source.id}
         source={source}
-        onToggle={handleOpenSource}
+        onToggle={handleToggle}
         onContextMenu={(src, x, y) => setContextMenu({ source: src, x, y })}
       />
     );
@@ -653,9 +632,7 @@ export function SourcesPanel({
       x={contextMenu.x}
       y={contextMenu.y}
       onClose={() => setContextMenu(null)}
-      isLocalInstance={isLocalInstanceSource(contextMenu.source)}
-      onOpen={(id) => handleOpenSource(id)}
-      onToggleEnabled={(id) => toggleSource(id)}
+      onOpen={(id) => onSourceOpen?.(id)}
       onOpenSettings={(id) => {
         const src = sources.find((s) => s.id === id);
         if (src) handleOpenSettings(src);
@@ -676,7 +653,7 @@ export function SourcesPanel({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {/* Intrinsic Porch row — always FIRST, even when sources is empty.
               Local-only; not part of useSourcesStore.sources. */}
-          {showLocalTile && <MobileLocalRow onLocalOpen={onLocalOpen} />}
+          <MobileLocalRow onLocalOpen={onLocalOpen} />
           {sources.map((source) => {
             // Outer container: <div role="button"> instead of <button>. HTML
             // forbids interactive elements nested inside <button>, and the
@@ -772,11 +749,9 @@ export function SourcesPanel({
           above the sortable sources. NOT a row in useSourcesStore.sources
           (the porch is local, not a remote connection). NOT draggable —
           intentionally outside the SortableContext below. */}
-      {showLocalTile && (
-        <div className="w-full flex flex-col items-center gap-1.5 pb-1.5 flex-shrink-0">
-          <LocalTile onLocalOpen={onLocalOpen} />
-        </div>
-      )}
+      <div className="w-full flex flex-col items-center gap-1.5 pb-1.5 flex-shrink-0">
+        <LocalTile onLocalOpen={onLocalOpen} />
+      </div>
 
       {/* Source tiles — scrollable, top-down */}
       <DndContext
