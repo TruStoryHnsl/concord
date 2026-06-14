@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { LiveKitRoom } from "@livekit/components-react";
 import { CustomAudioRenderer } from "./CustomAudioRenderer";
 import { FloatingVideoTiles } from "./FloatingVideoTiles";
-import { EffectsBroadcastReceiver } from "../../effects/EffectsBroadcastReceiver";
 import { isDesktopMode } from "../../api/serverUrl";
 import { buildLiveKitAudioCaptureOptions } from "../../voice/noiseGate";
 
@@ -93,10 +92,6 @@ export default function VoiceRoomLayer({
       style={{ display: "contents" }}
     >
       <CustomAudioRenderer />
-      {/* Effects board: receive peer-broadcast visual effects and play
-       *  them on the local screen. The paired sound arrives via the
-       *  published "soundboard" audio track; this only carries visuals. */}
-      <EffectsBroadcastReceiver />
       {/* Issue E (2026-04-18): floating picture-in-picture tiles so
        *  camera/screen streams stay visible when the user navigates
        *  away from the voice channel. Renders null when the user is

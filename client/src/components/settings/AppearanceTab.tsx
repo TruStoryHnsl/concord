@@ -27,10 +27,13 @@ import {
   CHAT_FONT_SIZE_MIN,
   CHAT_FONT_SIZE_MAX,
   CHAT_FONT_SIZE_DEFAULT,
+  LOGO_COLOR_PRIMARY_DEFAULT,
+  LOGO_COLOR_SECONDARY_DEFAULT,
   THEME_PRESETS,
   type ThemePreset,
 } from "../../stores/settings";
 import { Slider } from "../ui/Slider";
+import { ConcordLogo } from "../brand/ConcordLogo";
 
 /**
  * Sample prose used in the live preview pane. Chosen to include
@@ -78,6 +81,14 @@ export function AppearanceTab() {
   const setChatFontSize = useSettingsStore((s) => s.setChatFontSize);
   const themePreset = useSettingsStore((s) => s.themePreset);
   const setThemePreset = useSettingsStore((s) => s.setThemePreset);
+  const logoColorPrimary = useSettingsStore((s) => s.logoColorPrimary);
+  const logoColorSecondary = useSettingsStore((s) => s.logoColorSecondary);
+  const setLogoColorPrimary = useSettingsStore((s) => s.setLogoColorPrimary);
+  const setLogoColorSecondary = useSettingsStore((s) => s.setLogoColorSecondary);
+  const resetLogoColors = useSettingsStore((s) => s.resetLogoColors);
+  const logoIsDefault =
+    logoColorPrimary.toLowerCase() === LOGO_COLOR_PRIMARY_DEFAULT &&
+    logoColorSecondary.toLowerCase() === LOGO_COLOR_SECONDARY_DEFAULT;
 
   // The numeric input is a plain controlled `<input type="number">`;
   // we forward every change through `setChatFontSize`, which clamps
@@ -182,7 +193,8 @@ export function AppearanceTab() {
               Color theme
             </h3>
             <p className="text-xs text-on-surface-variant mt-1">
-              Changes the application palette and the Concord logo colors together.
+              Sets the menu and interface palette. The logo keeps its own colors
+              (set below).
             </p>
           </div>
         </div>
@@ -219,6 +231,58 @@ export function AppearanceTab() {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      <section aria-labelledby="logo-colors-heading" className="flex flex-col gap-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <div>
+            <h3 id="logo-colors-heading" className="text-sm font-medium text-on-surface">
+              Logo colors
+            </h3>
+            <p className="text-xs text-on-surface-variant mt-1">
+              Sets the two colors of the Concord mark, independent of the menu
+              theme.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={resetLogoColors}
+            disabled={logoIsDefault}
+            className="btn-press text-xs text-on-surface-variant hover:text-on-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            data-testid="logo-colors-reset"
+          >
+            Reset to default
+          </button>
+        </div>
+        <div className="flex items-center gap-5 p-4 rounded-lg bg-surface-container border border-outline-variant/15">
+          <ConcordLogo size={72} className="flex-shrink-0" />
+          <div className="flex flex-col gap-3 min-w-0">
+            <label className="flex items-center gap-3 text-xs text-on-surface-variant">
+              <input
+                type="color"
+                value={logoColorPrimary}
+                onChange={(e) => setLogoColorPrimary(e.target.value)}
+                aria-label="Logo primary color"
+                className="w-8 h-8 rounded cursor-pointer bg-transparent border border-outline-variant/40"
+                data-testid="logo-color-primary"
+              />
+              <span>Upper color</span>
+              <span className="tabular-nums text-on-surface-variant/70">{logoColorPrimary}</span>
+            </label>
+            <label className="flex items-center gap-3 text-xs text-on-surface-variant">
+              <input
+                type="color"
+                value={logoColorSecondary}
+                onChange={(e) => setLogoColorSecondary(e.target.value)}
+                aria-label="Logo secondary color"
+                className="w-8 h-8 rounded cursor-pointer bg-transparent border border-outline-variant/40"
+                data-testid="logo-color-secondary"
+              />
+              <span>Lower color</span>
+              <span className="tabular-nums text-on-surface-variant/70">{logoColorSecondary}</span>
+            </label>
+          </div>
         </div>
       </section>
     </div>
