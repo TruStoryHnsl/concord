@@ -346,6 +346,13 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Bot init failed (webhooks will not work): %s", e)
 
+    # Create the env-configured owner/admin account (idempotent).
+    try:
+        await _bootstrap_owner()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Owner bootstrap failed: %s", e)
+
     # Seed default public server on first run
     try:
         await _seed_default_server()
@@ -439,6 +446,44 @@ def build_lobby_welcome_message(instance_name: str) -> str:
         "\n"
         "Post in **#general** with what device, browser, and room you were using when something broke.\n"
     )
+
+
+async def _bootstrap_owner():
+    """Create the env-configured owner account and grant it instance admin.
+
+    Lets an operator configure the owning user entirely through compose env:
+    set ``CONCORD_OWNER_USERNAME`` + ``CONCORD_OWNER_PASSWORD`` and the account
+    is created on first boot and made an instance admin (its Matrix id is added
+    to ADMIN_USER_IDS). Idempotent: if the account already exists the password
+    is left untouched and only the admin grant is (re)applied. No-op when the
+    two env vars aren't both set.
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+    username = os.getenv("CONCORD_OWNER_USERNAME", "").strip().lstrip("@").split(":")[0]
+    password = os.getenv("CONCORD_OWNER_PASSWORD", "")
+    if not username or not password:
+        return
+
+    from config import MATRIX_SERVER_NAME, ADMIN_USER_IDS
+    from services.matrix_admin import register_matrix_user
+
+    owner_id = f"@{username}:{MATRIX_SERVER_NAME}"
+    # Grant admin first so it holds even if the account already exists. The
+    # set is the same object admin.require_admin imports, so this is live.
+    ADMIN_USER_IDS.add(owner_id)
+
+    try:
+        await register_matrix_user(username, password)
+        logger.info("Bootstrapped owner account %s (instance admin)", owner_id)
+    except Exception as e:
+        msg = str(e).lower()
+        if "taken" in msg or "in use" in msg or "exclusive" in msg or "already" in msg:
+            logger.info("Owner account %s already exists; admin grant ensured", owner_id)
+        else:
+            logger.warning("Owner account bootstrap for %s failed: %s", owner_id, e)
 
 
 async def _seed_default_server():
