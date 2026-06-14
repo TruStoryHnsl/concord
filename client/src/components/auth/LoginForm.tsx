@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { loginWithPassword } from "../../api/matrix";
-import { registerUser, validateInvite, getInstanceInfo, getTOTPStatus, loginVerifyTOTP } from "../../api/concord";
+import { registerUser, validateInvite, getInstanceInfo, getTOTPStatus, loginVerifyTOTP, forgotPassword } from "../../api/concord";
 import { useAuthStore } from "../../stores/auth";
 import { INVITE_STORAGE_KEY } from "../../App";
 import { ConcordLogo } from "../brand/ConcordLogo";
@@ -16,9 +16,13 @@ export function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [validatingInvite, setValidatingInvite] = useState(false);
   const [instanceName, setInstanceName] = useState("Concord");
-  const [showDownloads, setShowDownloads] = useState(false);
+  const [instanceDomain, setInstanceDomain] = useState<string | null>(null);
   const [openRegistration, setOpenRegistration] = useState(false);
   const [firstBoot, setFirstBoot] = useState(false);
+  // Forgot-password flow (recovery-email based; anti-enumeration response).
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
   /**
    * Set to true when the admin account was just created in this page session
    * (first_boot was true before registration, false after).
@@ -43,6 +47,7 @@ export function LoginForm() {
           setInstanceName(info.name);
           document.title = info.name;
         }
+        if (info.instance_domain) setInstanceDomain(info.instance_domain);
         setOpenRegistration(info.open_registration ?? false);
         if (info.first_boot) {
           setFirstBoot(true);
@@ -129,6 +134,25 @@ export function LoginForm() {
     }
   };
 
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = username.trim();
+    if (!name) return;
+    setForgotBusy(true);
+    try {
+      // Build the Matrix user id when only a localpart was entered.
+      const domain = instanceDomain || window.location.hostname;
+      const userId = name.startsWith("@") ? name : `@${name}:${domain}`;
+      const res = await forgotPassword(userId);
+      setForgotMsg(res.message);
+    } catch {
+      // Anti-enumeration: never reveal failures either. Show the same line.
+      setForgotMsg("If a recovery email is on file, you'll receive a reset link.");
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
   const handleTOTPVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingLogin || totpCode.length !== 6) return;
@@ -183,9 +207,12 @@ export function LoginForm() {
         ) : (
         <>
         <ConcordLogo size={80} className="mx-auto mb-5" />
-        <h1 className="text-3xl font-headline font-bold text-on-surface text-center mb-2">
+        <h1 className="text-3xl font-headline font-bold text-on-surface text-center mb-0.5">
           {instanceName}
         </h1>
+        <p className="text-center text-xs text-on-surface-variant/60 mb-3 font-label tracking-wide">
+          powered by Concord
+        </p>
 
         {/* ── OPEN_REGISTRATION warning banner (post first-boot) ── */}
         {showRegBanner && firstBootJustCompleted && openRegistration && (
@@ -288,12 +315,14 @@ export function LoginForm() {
             className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
             required
           />
-          {/* Invite token — only visible in register mode. Not required
-              when the server has OPEN_REGISTRATION enabled. */}
-          {mode === "register" && (
+          {/* Invite token — only shown when registration actually needs one:
+              closed registration, or when an invite link pre-filled a token.
+              When the instance has open registration, the field is hidden
+              entirely — a free-to-join server should never ask for a token. */}
+          {mode === "register" && (!openRegistration || inviteToken) && (
             <input
               type="text"
-              placeholder={openRegistration ? "Invite token (optional)" : "Invite token"}
+              placeholder="Invite token"
               value={inviteToken}
               onChange={(e) => setInviteToken(e.target.value)}
               className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body font-mono tracking-wider"
@@ -341,34 +370,56 @@ export function LoginForm() {
           </div>
         </form>
 
-        {/* Download client — hidden on native builds (the user IS the native client).
-            `__TAURI_INTERNALS__` is the canonical Tauri v2 global; see the
-            comment in `client/src/api/serverUrl.ts` for the history. */}
-        {!("__TAURI_INTERNALS__" in window) && (
-        <div className="mt-8 text-center">
-          {!showDownloads ? (
-            <button
-              onClick={() => setShowDownloads(true)}
-              className="text-on-surface-variant hover:text-on-surface text-sm transition-colors font-label"
-            >
-              Download Client
-            </button>
-          ) : (
-            <div className="flex justify-center gap-4 text-sm animate-[fadeSlideUp_0.3s_ease-out] font-label">
-              <a href="/downloads/Concord Setup.exe" className="text-on-surface-variant hover:text-primary transition-colors">
-                Windows
-              </a>
-              <span className="text-outline-variant">|</span>
-              <a href="/downloads/Concord.AppImage" className="text-on-surface-variant hover:text-primary transition-colors">
-                Linux
-              </a>
-              <span className="text-outline-variant">|</span>
-              <a href="/downloads/Concord-mac.zip" className="text-on-surface-variant hover:text-primary transition-colors">
-                macOS
-              </a>
-            </div>
-          )}
-        </div>
+        {/* Forgot password — login mode only. Opens an inline recovery-email
+            reset request (anti-enumeration: the response never reveals whether
+            the account exists or has recovery configured). */}
+        {mode === "login" && (
+          <div className="mt-5 text-center">
+            {forgotMode ? (
+              <div className="text-left space-y-3 animate-[fadeSlideUp_0.3s_ease-out]">
+                {forgotMsg ? (
+                  <p className="text-sm text-on-surface-variant font-body">{forgotMsg}</p>
+                ) : (
+                  <form onSubmit={handleForgot} className="space-y-3">
+                    <p className="text-xs text-on-surface-variant font-body">
+                      Enter your username — if a recovery email is on file, we'll
+                      send a reset link.
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="Username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="w-full px-4 py-3 bg-surface-container rounded-xl text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:bg-surface-container-high transition-all font-body"
+                      autoFocus
+                    />
+                    <button
+                      type="submit"
+                      disabled={forgotBusy || !username.trim()}
+                      className="w-full py-3 primary-glow text-on-primary font-headline font-semibold rounded-xl transition-all hover:brightness-110 disabled:opacity-40 shadow-lg shadow-primary/20"
+                    >
+                      {forgotBusy ? "Sending..." : "Send reset link"}
+                    </button>
+                  </form>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setForgotMode(false); setForgotMsg(""); }}
+                  className="text-on-surface-variant hover:text-on-surface text-sm transition-colors font-label"
+                >
+                  Back to login
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setForgotMode(true)}
+                className="text-on-surface-variant hover:text-on-surface text-sm transition-colors font-label"
+              >
+                Forgot password?
+              </button>
+            )}
+          </div>
         )}
           </>
           /* end normal login/register */

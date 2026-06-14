@@ -1029,6 +1029,16 @@ export async function getRecoveryEmailStatus(
   return apiFetch("/user/recovery-email-status", {}, accessToken);
 }
 
+// Public, no-auth, anti-enumeration: always returns the same message whether or
+// not the account exists / has a recovery email on file. Sends a reset link to
+// the recovery email when one is configured.
+export async function forgotPassword(userId: string): Promise<{ message: string }> {
+  return apiFetch("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
 // --- Bug Reports ---
 
 export async function submitBugReport(
