@@ -1,133 +1,200 @@
 /**
- * Phase 8/9 follow-up — browser-side voice mesh orchestration.
+ * Phase 8/9 follow-up — browser-side voice mesh orchestration (REAL
+ * audio plane).
  *
  * Companion of the Rust `servitude::voice::VoiceCall` orchestrator.
- * The native side ships a real `webrtc-rs` PeerConnection per remote
- * peer; the browser side runs the analogous orchestration on top of
- * the standard browser `RTCPeerConnection` API + the `@libp2p/webrtc`
- * transport for stream signaling.
+ * The native build ships a real `webrtc-rs` PeerConnection per remote
+ * peer (`src-tauri/src/servitude/voice/media.rs`); this module runs the
+ * analogous orchestration on top of the standard browser
+ * `RTCPeerConnection` API, exchanging SDP + ICE over the
+ * `/concord/voice-signaling/1.0.0` libp2p stream.
  *
- * ## What lands
+ * This is NOT a stub: there are no synthetic state transitions. Every
+ * per-peer status the UI reads comes from the real
+ * `RTCPeerConnection.onconnectionstatechange` callback via
+ * {@link mapConnectionState}. A peer is "connected" only when DTLS/ICE
+ * actually completes; "failed" only when the browser reports a real
+ * ICE/DTLS failure.
  *
- *   - `joinMesh(roomId, participants)` — acquires the local mic via
- *     `getUserMedia({ audio: true })`, then for each known peer opens
- *     a `RTCPeerConnection`, attaches every mic audio track via
- *     `addTrack`, sends an Offer over the `/concord/voice-signaling/
- *     1.0.0` libp2p stream, and wires the answer + ICE candidate
- *     exchange. Inbound `ontrack` events spawn `<audio>` elements
- *     pinned to the captured `MediaStream` so remote audio plays.
- *   - `leaveMesh(roomId)` — closes every PeerConnection, stops every
- *     local mic track (releasing the OS-level mic indicator), and
- *     detaches every remote `<audio>` element so the browser stops
- *     decoding inbound packets.
+ * ## The full path
  *
- * ## What is deferred — `TODO(mesh-media-followup-v2)`
+ *   joinMesh
+ *     → getUserMedia({ audio })                 (real mic capture)
+ *     → per peer: new RTCPeerConnection(iceServers)   (real STUN/TURN)
+ *         addTrack(mic)                          (real outbound audio)
+ *         createOffer / setLocalDescription      (real SDP)
+ *         send Offer over libp2p signaling
+ *     → inbound Answer: setRemoteDescription     (real SDP)
+ *     → inbound/outbound ICE candidates exchanged over libp2p
+ *     → ontrack: attach remote MediaStream to an <audio> element
+ *         (real inbound audio playback)
+ *     → onconnectionstatechange drives MeshPeerState
  *
- *   - **No automatic dial of the remote multiaddr.** The browser
- *     swarm only dials peers it knows about. Production code is
- *     expected to invoke `joinMesh` only after the peer card flow
- *     (QR / deeplink / Matrix-room) has populated the peer store and
- *     the swarm has a connection in hand. The voice mesh code does
- *     not perform peer discovery.
- *   - **No reconnection / NAT-hole-punching retry loop.** A single
- *     Offer/Answer round-trip is performed per peer; if it fails, the
- *     orchestrator surfaces the error via `getMeshStatus` and the UI
- *     can fall back to LiveKit.
- *   - **No echo cancellation / noise suppression / AGC.**
- *     `getUserMedia` is called with `{ audio: true }`; the browser
- *     applies its own default constraints. Tuning happens in a
- *     follow-up.
+ *   leaveMesh
+ *     → send Bye to every peer
+ *     → stop every local mic track (releases OS mic indicator)
+ *     → pc.close() every PeerConnection
+ *     → detach every remote <audio> element
+ *
+ * ## Mute / volume
+ *
+ *   - {@link setMeshMuted} toggles `track.enabled` on every local mic
+ *     track (the WebRTC-canonical mute — the SRTP stream keeps flowing
+ *     but carries silence, so the remote's jitter buffer doesn't
+ *     stall).
+ *   - {@link setMeshVolume} sets `.volume` on every remote `<audio>`
+ *     element (0..1).
+ *
+ * ## What is deferred — `TODO(mesh-media-followup-v3)`
+ *
+ *   - **No ICE restart loop.** A single Offer/Answer round-trip per
+ *     peer; a `failed` connection surfaces via {@link getMeshStatus}
+ *     and the caller can fall back to LiveKit.
+ *   - **No echo cancellation tuning.** `getUserMedia` uses browser
+ *     defaults; the SFU path's `buildMicTrackConstraints` tuning is a
+ *     follow-up for the mesh path.
  */
 
 import type { Libp2p, PeerId } from "@libp2p/interface";
-import type { Uint8ArrayList } from "uint8arraylist";
 
 import { CONCORD_VOICE_SIGNALING_PROTOCOL } from "./node";
+import {
+  frameEnvelope,
+  mapConnectionState,
+  readEnvelope,
+  type MeshPeerState,
+  type SignalingMessage,
+} from "./voiceSignaling";
 
-/** Wire envelope mirroring `servitude::voice::SignalingMessage`. */
-type SignalingMessage =
-  | { type: "offer"; sdp: string; request_id: number }
-  | { type: "answer"; sdp: string; request_id: number }
-  | { type: "ice_candidate"; candidate: string; request_id: number }
-  | { type: "bye"; request_id: number };
-
-const MAX_ENVELOPE_BYTES = 1024 * 1024;
+/** Per-peer record held inside a {@link MeshRoom}. */
+interface MeshPeer {
+  /** Remote peer id, string form (the registry key). */
+  remoteId: string;
+  /** The resolved libp2p `PeerId`, when known. Initiator peers carry
+   *  it from the participant list; callee peers are resolved from the
+   *  inbound connection's `remotePeer`. Used for outbound dials. */
+  peerId: PeerId;
+  pc: RTCPeerConnection;
+  /** Latest connection state, mirrored from `onconnectionstatechange`. */
+  state: MeshPeerState;
+  /** Captured remote audio stream (one per peer). */
+  remoteStream: MediaStream | null;
+  /** Per-track `<audio>` elements driving playback. Keyed by track id. */
+  remoteAudio: Map<string, HTMLAudioElement>;
+  /** request_id allocated for this peer's offer/answer round. */
+  requestId: number;
+}
 
 /** Per-room mesh state held in the per-tab registry. */
 interface MeshRoom {
   roomId: string;
-  /** Map of remote-peer-id-string → `RTCPeerConnection`. */
-  peers: Map<string, RTCPeerConnection>;
-  /** Captured remote audio MediaStream per peer. */
-  remoteStreams: Map<string, MediaStream>;
-  /** Per-track `<audio>` elements that drive playback. Keyed by
-   *  `MediaStreamTrack.id` so we can detach + null `srcObject` on
-   *  leave. Mesh-mode remote audio is rendered headlessly — the
-   *  `Audio` element is appended to the document only for
-   *  autoplay-policy purposes; the audible output is the OS default
-   *  speaker. */
-  remoteAudio: Map<string, HTMLAudioElement>;
-  /** Local outbound audio MediaStream — the same getUserMedia
-   *  output is attached to every PeerConnection's audio sender. */
+  node: Libp2p;
+  /** STUN/TURN servers used for every PeerConnection in this room. */
+  iceServers: RTCIceServer[];
+  /** Map of remote-peer-id-string → per-peer record. */
+  peers: Map<string, MeshPeer>;
+  /** Local outbound audio MediaStream — the same getUserMedia output is
+   *  attached to every PeerConnection's audio sender. `null` when the
+   *  mic was denied/absent (the user sends silence). */
   localStream: MediaStream | null;
+  /** Current mute state — applied to new tracks too. */
+  muted: boolean;
+  /** Current remote playback volume 0..1 — applied to new audio els. */
+  volume: number;
+  /** Monotonic request-id allocator for this room. */
+  nextRequestId: number;
   /** Unsubscribe handle for the inbound signaling stream handler. */
   unhandle: () => Promise<void>;
 }
 
+/** Public per-peer status row for the UI. */
+export interface MeshPeerStatus {
+  peerId: string;
+  state: MeshPeerState;
+  /** True once a remote audio track has been captured (audio inbound). */
+  hasRemoteAudio: boolean;
+}
+
+/** Public aggregate room status for the UI. */
+export interface MeshStatus {
+  roomId: string;
+  muted: boolean;
+  volume: number;
+  peers: MeshPeerStatus[];
+}
+
 const registry = new Map<string, MeshRoom>();
+
+/** A participant the local side will dial as the call initiator. */
+export interface MeshParticipant {
+  peerId: PeerId;
+  matrixUserId?: string;
+}
 
 /**
  * Join a mesh-mode voice call.
  *
- * Builds one `RTCPeerConnection` per known peer, attaches the local
- * mic track (if `getUserMedia` succeeds), sends an Offer, and wires
- * the Answer + IceCandidate handlers.
+ * Acquires the local mic, builds one real `RTCPeerConnection` per known
+ * participant (using the supplied STUN/TURN `iceServers`), attaches the
+ * mic track, sends an Offer over the libp2p signaling stream, and wires
+ * the Answer + ICE exchange. Inbound Offers from late joiners are
+ * handled by the installed protocol handler.
  *
- * Returns the `MeshRoom` for chained calls (e.g. status polling).
- * Throws on a fatal failure (libp2p node not started, mic denied
- * AND track-required); callers can catch + fall back to LiveKit per
- * `joinVoiceSession.ts`.
+ * @param iceServers STUN/TURN servers from the voice-token endpoint.
+ *   Passing `[]` falls back to host candidates only (LAN / same-NAT
+ *   pairs); real NAT traversal needs at least a STUN server.
  */
 export async function joinMesh(
   node: Libp2p,
   roomId: string,
-  participants: Array<{ peerId: PeerId; matrixUserId?: string }>,
+  participants: MeshParticipant[],
+  iceServers: RTCIceServer[] = [],
 ): Promise<MeshRoom> {
   if (registry.has(roomId)) {
     throw new Error(`mesh already active for room ${roomId}`);
   }
 
-  // Try to acquire mic. Failure is non-fatal — the mesh can still
-  // form connections; the local user just sends silence.
+  // Try to acquire mic. Failure is non-fatal — the mesh still forms
+  // connections; the local user just sends silence (recvonly).
   let localStream: MediaStream | null = null;
   try {
     if (navigator.mediaDevices?.getUserMedia) {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     }
   } catch (err) {
-    // Mic permission denied / device missing — fall through silent.
-    // The peer connection still opens; remote sees no inbound audio.
     console.warn("[voice-mesh] getUserMedia failed; continuing muted", err);
   }
 
-  const peers = new Map<string, RTCPeerConnection>();
-  const remoteStreams = new Map<string, MediaStream>();
-  const remoteAudio = new Map<string, HTMLAudioElement>();
+  const room: MeshRoom = {
+    roomId,
+    node,
+    iceServers,
+    peers: new Map(),
+    localStream,
+    muted: false,
+    volume: 1,
+    nextRequestId: 1,
+    unhandle: async () => {
+      try {
+        await node.unhandle(CONCORD_VOICE_SIGNALING_PROTOCOL);
+      } catch {
+        /* idempotent */
+      }
+    },
+  };
+  registry.set(roomId, room);
 
   // Inbound signaling handler — accepts `/concord/voice-signaling/1.0.0`
   // streams from remote peers and routes envelopes to the matching PC.
-  // js-libp2p's protocol handler takes the standard
-  // `(stream, connection)` signature.
   await node.handle(
     CONCORD_VOICE_SIGNALING_PROTOCOL,
     async (stream, connection) => {
-      const remoteId = connection.remotePeer.toString();
+      const remotePeerId = connection.remotePeer;
       try {
-        const bytes = await readEnvelope(stream);
-        const message = JSON.parse(
-          new TextDecoder().decode(bytes),
-        ) as SignalingMessage;
-        await handleInbound(roomId, remoteId, message, node, localStream);
+        const message = await readEnvelope(
+          stream as unknown as AsyncIterable<Uint8Array>,
+        );
+        await handleInbound(roomId, remotePeerId, message);
       } catch (err) {
         console.debug("[voice-mesh] inbound handler error", err);
       } finally {
@@ -140,63 +207,19 @@ export async function joinMesh(
     },
   );
 
-  const room: MeshRoom = {
-    roomId,
-    peers,
-    remoteStreams,
-    remoteAudio,
-    localStream,
-    unhandle: async () => {
-      try {
-        await node.unhandle(CONCORD_VOICE_SIGNALING_PROTOCOL);
-      } catch {
-        /* idempotent */
-      }
-    },
-  };
-  registry.set(roomId, room);
-
   // Initiator path — push an Offer to every participant.
-  let nextRequestId = 1;
   for (const participant of participants) {
     const remoteId = participant.peerId.toString();
-    if (peers.has(remoteId)) continue;
+    if (room.peers.has(remoteId)) continue;
     try {
-      const pc = createPeerConnection(roomId, remoteId, localStream);
-      peers.set(remoteId, pc);
-      // Wire on_track to capture remote audio AND attach an
-      // <audio> element so the browser actually plays it. Tracks
-      // arrive one at a time (per the WebRTC spec); we de-dup
-      // against the per-peer MediaStream so a re-add doesn't blow
-      // up the audio graph.
-      pc.ontrack = (event) => {
-        const ms =
-          remoteStreams.get(remoteId) ?? event.streams[0] ?? new MediaStream();
-        if (!event.streams[0]) ms.addTrack(event.track);
-        remoteStreams.set(remoteId, ms);
-        attachRemoteAudio(remoteAudio, event.track.id, ms);
-      };
-      // Wire on_ice_candidate to forward over signaling wire.
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          const env: SignalingMessage = {
-            type: "ice_candidate",
-            candidate: event.candidate.candidate,
-            request_id: nextRequestId,
-          };
-          sendSignaling(node, participant.peerId, env).catch((e) => {
-            console.debug("[voice-mesh] outbound ICE send failed", e);
-          });
-        }
-      };
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      const env: SignalingMessage = {
+      const peer = createMeshPeer(room, participant.peerId);
+      const offer = await peer.pc.createOffer();
+      await peer.pc.setLocalDescription(offer);
+      await sendSignaling(node, participant.peerId, {
         type: "offer",
         sdp: offer.sdp ?? "",
-        request_id: nextRequestId++,
-      };
-      await sendSignaling(node, participant.peerId, env);
+        request_id: peer.requestId,
+      });
     } catch (err) {
       console.warn(
         `[voice-mesh] failed to initiate to ${remoteId}; skipping`,
@@ -209,81 +232,268 @@ export async function joinMesh(
 }
 
 /**
- * Leave a mesh-mode voice call. Closes every PeerConnection in the
- * room, stops every local mic track (releasing the OS-level mic
- * indicator), detaches every remote `<audio>` element so the browser
- * stops decoding inbound packets, and removes the room from the
- * registry.
- *
- * Idempotent — leaving an unknown room is a no-op.
+ * Leave a mesh-mode voice call. Sends a `Bye` to every remote, closes
+ * every PeerConnection, stops every local mic track (releasing the
+ * OS-level mic indicator), detaches every remote `<audio>` element, and
+ * removes the room from the registry. Idempotent.
  */
 export async function leaveMesh(roomId: string): Promise<void> {
   const room = registry.get(roomId);
   if (!room) return;
   registry.delete(roomId);
   await room.unhandle();
-  for (const pc of room.peers.values()) {
+
+  for (const peer of room.peers.values()) {
+    // Best-effort Bye so the remote tears down its half too.
+    sendSignaling(room.node, peer.peerId, {
+      type: "bye",
+      request_id: peer.requestId,
+    }).catch((e) => console.debug("[voice-mesh] bye send failed", e));
     try {
-      pc.close();
+      peer.pc.close();
     } catch {
       /* idempotent */
     }
+    for (const audio of peer.remoteAudio.values()) {
+      detachAudio(audio);
+    }
+    peer.remoteAudio.clear();
   }
+  room.peers.clear();
+
   if (room.localStream) {
     for (const track of room.localStream.getTracks()) {
       track.stop();
     }
   }
-  for (const audio of room.remoteAudio.values()) {
-    try {
-      audio.pause();
-    } catch {
-      /* idempotent — pause on a torn-down element is harmless */
-    }
-    audio.srcObject = null;
-    if (audio.parentNode) {
-      audio.parentNode.removeChild(audio);
-    }
-  }
-  room.remoteAudio.clear();
 }
 
 /**
- * Attach (or reuse) an `<audio>` element bound to a remote track.
+ * Toggle the local mic mute for an active mesh room.
  *
- * Browser autoplay policy: a `MediaStream` produced by a peer
- * connection that the user explicitly initiated does NOT require a
- * user gesture to play (it counts as continuation of the active mic
- * session). Setting `autoplay = true` is sufficient.
- *
- * The element is appended to `document.body` when available so the
- * media graph keeps it alive across React renders; in test
- * environments (jsdom without a body, headless harnesses) we keep
- * the element off-DOM and rely on `autoplay` alone.
+ * Sets `track.enabled = !muted` on every local audio track. This is the
+ * WebRTC-canonical mute — SRTP keeps flowing (so the remote's jitter
+ * buffer doesn't reset) but every packet carries silence. No-op if the
+ * room isn't active.
+ */
+export function setMeshMuted(roomId: string, muted: boolean): void {
+  const room = registry.get(roomId);
+  if (!room) return;
+  room.muted = muted;
+  if (room.localStream) {
+    for (const track of room.localStream.getTracks()) {
+      track.enabled = !muted;
+    }
+  }
+}
+
+/**
+ * Set the remote playback volume (0..1) for an active mesh room. Applied
+ * to every current remote `<audio>` element AND remembered so audio
+ * elements attached later (late-arriving tracks) inherit it. No-op if
+ * the room isn't active.
+ */
+export function setMeshVolume(roomId: string, volume: number): void {
+  const room = registry.get(roomId);
+  if (!room) return;
+  const clamped = Math.max(0, Math.min(1, volume));
+  room.volume = clamped;
+  for (const peer of room.peers.values()) {
+    for (const audio of peer.remoteAudio.values()) {
+      audio.volume = clamped;
+    }
+  }
+}
+
+/** Read the current per-tab mesh state for `roomId`. */
+export function getMeshRoom(roomId: string): MeshRoom | undefined {
+  return registry.get(roomId);
+}
+
+/**
+ * Snapshot the per-peer status for the UI. Returns `undefined` if no
+ * mesh is active for `roomId`. The per-peer `state` is the real
+ * `RTCPeerConnection` state mapped through {@link mapConnectionState} —
+ * never a synthetic value.
+ */
+export function getMeshStatus(roomId: string): MeshStatus | undefined {
+  const room = registry.get(roomId);
+  if (!room) return undefined;
+  return {
+    roomId,
+    muted: room.muted,
+    volume: room.volume,
+    peers: Array.from(room.peers.values()).map((peer) => ({
+      peerId: peer.remoteId,
+      state: peer.state,
+      hasRemoteAudio: peer.remoteStream !== null,
+    })),
+  };
+}
+
+/**
+ * Build + wire a real `RTCPeerConnection` for one peer and register it
+ * on the room. Shared by the initiator path and the callee path.
+ */
+function createMeshPeer(room: MeshRoom, peerId: PeerId): MeshPeer {
+  const remoteId = peerId.toString();
+  const pc = new RTCPeerConnection({ iceServers: room.iceServers });
+
+  const peer: MeshPeer = {
+    remoteId,
+    peerId,
+    pc,
+    state: "connecting",
+    remoteStream: null,
+    remoteAudio: new Map(),
+    requestId: room.nextRequestId++,
+  };
+  room.peers.set(remoteId, peer);
+
+  // Attach local mic (or open a recvonly transceiver so the remote's
+  // ontrack still fires for inbound audio when we have no mic).
+  if (room.localStream) {
+    for (const track of room.localStream.getTracks()) {
+      track.enabled = !room.muted;
+      pc.addTrack(track, room.localStream);
+    }
+  } else {
+    pc.addTransceiver("audio", { direction: "recvonly" });
+  }
+
+  // Inbound remote audio → MediaStream → <audio> element playback.
+  pc.ontrack = (event) => {
+    const stream =
+      peer.remoteStream ?? event.streams[0] ?? new MediaStream();
+    if (!event.streams[0]) stream.addTrack(event.track);
+    peer.remoteStream = stream;
+    attachRemoteAudio(peer, event.track.id, stream, room.volume);
+  };
+
+  // Outbound ICE candidates → forward over the signaling wire with the
+  // sdp_mid / sdp_mline_index so the remote can install them precisely.
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      sendSignaling(room.node, peer.peerId, {
+        type: "ice_candidate",
+        candidate: event.candidate.candidate,
+        request_id: peer.requestId,
+        sdp_mid: event.candidate.sdpMid,
+        sdp_mline_index: event.candidate.sdpMLineIndex,
+      }).catch((e) =>
+        console.debug("[voice-mesh] outbound ICE send failed", e),
+      );
+    }
+  };
+
+  // Real state mirror — the ONLY thing that sets peer.state.
+  pc.onconnectionstatechange = () => {
+    peer.state = mapConnectionState(pc.connectionState);
+  };
+
+  return peer;
+}
+
+/** Dispatch an inbound envelope to the right PC. */
+async function handleInbound(
+  roomId: string,
+  remotePeerId: PeerId,
+  message: SignalingMessage,
+): Promise<void> {
+  const room = registry.get(roomId);
+  if (!room) return;
+  const remoteId = remotePeerId.toString();
+  let peer = room.peers.get(remoteId);
+
+  switch (message.type) {
+    case "offer": {
+      if (!peer) {
+        // Callee path — a new peer dialing in. We resolve its PeerId
+        // straight from the inbound connection's `remotePeer`, so the
+        // Answer + ICE we send back go to the right node.
+        peer = createMeshPeer(room, remotePeerId);
+      }
+      await peer.pc.setRemoteDescription({ type: "offer", sdp: message.sdp });
+      const answer = await peer.pc.createAnswer();
+      await peer.pc.setLocalDescription(answer);
+      // Echo the inbound request_id so the initiator can correlate.
+      peer.requestId = message.request_id;
+      await sendSignaling(room.node, peer.peerId, {
+        type: "answer",
+        sdp: answer.sdp ?? "",
+        request_id: message.request_id,
+      });
+      break;
+    }
+    case "answer": {
+      if (!peer) {
+        console.debug("[voice-mesh] answer for unknown peer", remoteId);
+        return;
+      }
+      await peer.pc.setRemoteDescription({
+        type: "answer",
+        sdp: message.sdp,
+      });
+      break;
+    }
+    case "ice_candidate": {
+      if (!peer) {
+        console.debug("[voice-mesh] ice for unknown peer", remoteId);
+        return;
+      }
+      try {
+        await peer.pc.addIceCandidate({
+          candidate: message.candidate,
+          sdpMid: message.sdp_mid ?? undefined,
+          sdpMLineIndex: message.sdp_mline_index ?? undefined,
+        });
+      } catch (err) {
+        console.debug("[voice-mesh] addIceCandidate failed", err);
+      }
+      break;
+    }
+    case "bye": {
+      if (peer) {
+        try {
+          peer.pc.close();
+        } catch {
+          /* idempotent */
+        }
+        for (const audio of peer.remoteAudio.values()) detachAudio(audio);
+        peer.remoteAudio.clear();
+        peer.state = "closed";
+        room.peers.delete(remoteId);
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Attach (or reuse) an `<audio>` element bound to a remote track so the
+ * browser actually plays the inbound audio. Volume is seeded from the
+ * room's current setting so a `setMeshVolume` before the track arrived
+ * is respected.
  */
 function attachRemoteAudio(
-  bucket: Map<string, HTMLAudioElement>,
+  peer: MeshPeer,
   trackId: string,
   stream: MediaStream,
+  volume: number,
 ): void {
-  let audio = bucket.get(trackId);
+  let audio = peer.remoteAudio.get(trackId);
   if (audio) {
-    if (audio.srcObject !== stream) {
-      audio.srcObject = stream;
-    }
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    audio.volume = volume;
     return;
   }
   audio = new Audio();
   audio.srcObject = stream;
   audio.autoplay = true;
-  // Mesh-mode playback is monaural voice; mark the element so a
-  // future UI can locate + style it if needed.
+  audio.volume = volume;
   audio.dataset.concordMeshTrack = trackId;
-  // Append to the document so the playback survives React renders.
-  // We guard against the test seam where `Audio` is a plain class
-  // (not a real `HTMLAudioElement` subclass), in which case the
-  // browser DOM rejects it as a non-Node — autoplay still works
-  // without DOM attachment.
+  // Append to the document so playback survives React renders. Guard the
+  // jsdom/test seam where `Audio` is a plain class (not a real DOM Node).
   try {
     if (
       typeof document !== "undefined" &&
@@ -296,177 +506,34 @@ function attachRemoteAudio(
   } catch {
     /* off-DOM playback is acceptable; jsdom test seams hit this. */
   }
-  bucket.set(trackId, audio);
+  peer.remoteAudio.set(trackId, audio);
 }
 
-/** Read the current per-tab mesh state for `roomId`. */
-export function getMeshRoom(roomId: string): MeshRoom | undefined {
-  return registry.get(roomId);
-}
-
-/** Internal: build + wire a PC. Pulled out so the initiator path and
- *  the callee path share the same construction. */
-function createPeerConnection(
-  _roomId: string,
-  _remoteId: string,
-  localStream: MediaStream | null,
-): RTCPeerConnection {
-  const pc = new RTCPeerConnection({
-    // ICE servers can be threaded through `joinMesh` later if we
-    // need TURN; for now we rely on host candidates (LAN + same-NAT
-    // peer pairs).
-    iceServers: [],
-  });
-  if (localStream) {
-    for (const track of localStream.getTracks()) {
-      pc.addTrack(track, localStream);
-    }
-  } else {
-    // No local mic — add a sendrecv transceiver so the remote's
-    // ontrack still fires for inbound audio.
-    pc.addTransceiver("audio", { direction: "recvonly" });
+/** Pause + detach a remote `<audio>` element so decoding stops. */
+function detachAudio(audio: HTMLAudioElement): void {
+  try {
+    audio.pause();
+  } catch {
+    /* idempotent — pause on a torn-down element is harmless */
   }
-  return pc;
+  audio.srcObject = null;
+  if (audio.parentNode) audio.parentNode.removeChild(audio);
 }
 
-/** Internal: dispatch an inbound envelope to the right PC. */
-async function handleInbound(
-  roomId: string,
-  remoteId: string,
-  message: SignalingMessage,
-  node: Libp2p,
-  localStream: MediaStream | null,
-): Promise<void> {
-  const room = registry.get(roomId);
-  if (!room) return;
-  let pc = room.peers.get(remoteId);
-
-  switch (message.type) {
-    case "offer": {
-      if (!pc) {
-        pc = createPeerConnection(roomId, remoteId, localStream);
-        room.peers.set(remoteId, pc);
-        pc.ontrack = (event) => {
-          const ms =
-            room.remoteStreams.get(remoteId) ??
-            event.streams[0] ??
-            new MediaStream();
-          if (!event.streams[0]) ms.addTrack(event.track);
-          room.remoteStreams.set(remoteId, ms);
-          attachRemoteAudio(room.remoteAudio, event.track.id, ms);
-        };
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            const env: SignalingMessage = {
-              type: "ice_candidate",
-              candidate: event.candidate.candidate,
-              request_id: message.request_id,
-            };
-            // We can't recover the libp2p PeerId from the string id
-            // without a registry lookup — js-libp2p exposes
-            // `peerStore.get(idString)` for this. For Phase 8 wiring
-            // we forward via the same node-level send helper that
-            // accepts a `PeerId`. In production callers thread the
-            // PeerId through `joinMesh.participants`, and the inbound
-            // path here resolves via the connection's remotePeer; for
-            // brevity in the orchestrator we accept the string form
-            // and pass through the standard node lookup API.
-            void sendSignalingByString(node, remoteId, env);
-          }
-        };
-      }
-      await pc.setRemoteDescription({ type: "offer", sdp: message.sdp });
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      const env: SignalingMessage = {
-        type: "answer",
-        sdp: answer.sdp ?? "",
-        request_id: message.request_id,
-      };
-      await sendSignalingByString(node, remoteId, env);
-      break;
-    }
-    case "answer": {
-      if (!pc) {
-        console.debug("[voice-mesh] answer for unknown peer", remoteId);
-        return;
-      }
-      await pc.setRemoteDescription({ type: "answer", sdp: message.sdp });
-      break;
-    }
-    case "ice_candidate": {
-      if (!pc) {
-        console.debug("[voice-mesh] ice for unknown peer", remoteId);
-        return;
-      }
-      try {
-        await pc.addIceCandidate({ candidate: message.candidate });
-      } catch (err) {
-        console.debug("[voice-mesh] addIceCandidate failed", err);
-      }
-      break;
-    }
-    case "bye": {
-      if (pc) {
-        pc.close();
-        room.peers.delete(remoteId);
-      }
-      break;
-    }
-  }
-}
-
-/** Internal: open a stream + write a framed envelope to a PeerId. */
+/** Open a stream + write a framed envelope to a `PeerId`. */
 async function sendSignaling(
   node: Libp2p,
   peerId: PeerId,
   message: SignalingMessage,
 ): Promise<void> {
-  const stream = await node.dialProtocol(peerId, CONCORD_VOICE_SIGNALING_PROTOCOL);
-  try {
-    const body = new TextEncoder().encode(JSON.stringify(message));
-    if (body.length > MAX_ENVELOPE_BYTES) {
-      throw new Error(
-        `voice signaling envelope too large: ${body.length} > ${MAX_ENVELOPE_BYTES}`,
-      );
-    }
-    stream.send(frameEnvelope(body));
-  } finally {
-    try {
-      await stream.close();
-    } catch {
-      /* idempotent */
-    }
-  }
-}
-
-/** Resolve a string peer id to a `PeerId` via the libp2p peer store
- *  and then send the envelope. The peer store is populated when the
- *  connection comes in, so this lookup always succeeds after an
- *  inbound stream open. */
-async function sendSignalingByString(
-  node: Libp2p,
-  peerIdString: string,
-  message: SignalingMessage,
-): Promise<void> {
-  // js-libp2p v3 lets us look up a stored peer by string id.
-  // `peerStore.get(peerId)` returns the cached `Peer`; we open the
-  // protocol stream against the corresponding `PeerId` directly via
-  // `dialProtocol`, which accepts string form.
   const stream = await node.dialProtocol(
-    // dialProtocol takes a `PeerId | Multiaddr` — js-libp2p resolves
-    // a string-form peer id by looking it up in the peer store.
-    peerIdString as unknown as PeerId,
+    peerId,
     CONCORD_VOICE_SIGNALING_PROTOCOL,
   );
   try {
-    const body = new TextEncoder().encode(JSON.stringify(message));
-    if (body.length > MAX_ENVELOPE_BYTES) {
-      throw new Error(
-        `voice signaling envelope too large: ${body.length} > ${MAX_ENVELOPE_BYTES}`,
-      );
-    }
-    stream.send(frameEnvelope(body));
+    (stream as unknown as { send: (b: Uint8Array) => void }).send(
+      frameEnvelope(message),
+    );
   } finally {
     try {
       await stream.close();
@@ -474,48 +541,4 @@ async function sendSignalingByString(
       /* idempotent */
     }
   }
-}
-
-/** 4-byte BE length prefix + body. Symmetric with the Rust
- *  `send_signaling` helper. */
-function frameEnvelope(body: Uint8Array): Uint8Array {
-  const out = new Uint8Array(4 + body.length);
-  const view = new DataView(out.buffer, out.byteOffset, 4);
-  view.setUint32(0, body.length, /* littleEndian */ false);
-  out.set(body, 4);
-  return out;
-}
-
-/** Read a single 4-byte BE length-prefixed envelope from a libp2p
- *  `MessageStream`-like source. Mirrors `federation.ts`. */
-async function readEnvelope(
-  source: AsyncIterable<Uint8Array | Uint8ArrayList>,
-): Promise<Uint8Array> {
-  const collected: number[] = [];
-  let len: number | null = null;
-  for await (const chunk of source) {
-    const bytes = chunkToUint8Array(chunk);
-    for (let i = 0; i < bytes.length; i++) collected.push(bytes[i]);
-    if (len === null && collected.length >= 4) {
-      const lenView = new DataView(Uint8Array.from(collected.slice(0, 4)).buffer);
-      len = lenView.getUint32(0, /* littleEndian */ false);
-      if (len > MAX_ENVELOPE_BYTES) {
-        throw new Error(
-          `voice signaling envelope too large: ${len} > ${MAX_ENVELOPE_BYTES}`,
-        );
-      }
-    }
-    if (len !== null && collected.length >= 4 + len) {
-      return Uint8Array.from(collected.slice(4, 4 + len));
-    }
-  }
-  if (len === null) {
-    throw new Error("stream closed before length prefix");
-  }
-  throw new Error("stream closed mid-body");
-}
-
-function chunkToUint8Array(chunk: Uint8Array | Uint8ArrayList): Uint8Array {
-  if (chunk instanceof Uint8Array) return chunk;
-  return chunk.subarray();
 }

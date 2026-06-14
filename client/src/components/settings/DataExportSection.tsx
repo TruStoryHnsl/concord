@@ -333,9 +333,9 @@ export function DataExportSection() {
           Data
         </h3>
         <p className="text-xs text-on-surface-variant">
-          Packages this instance&apos;s home server into an encrypted bundle
-          and delivers it to a paired peer. Available in the desktop app,
-          which hosts the home server and holds its data.
+          Encrypted home-server exports are a native-only feature. Open
+          Concord on the device hosting your home server to package its
+          data for a trusted outside instance.
         </p>
       </section>
     );

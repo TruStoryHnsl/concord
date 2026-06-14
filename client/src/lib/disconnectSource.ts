@@ -44,20 +44,11 @@
 import { useAuthStore } from "../stores/auth";
 import { useServerConfigStore } from "../stores/serverConfig";
 import { useSourcesStore } from "../stores/sources";
-import { isLocalInstanceSource } from "./sourceIdentity";
 
 export function disconnectSource(sourceId: string): void {
   const sources = useSourcesStore.getState();
   const source = sources.sources.find((s) => s.id === sourceId);
   if (!source) return;
-
-  // The local instance (the one serving this page / the native primary) is
-  // NOT disconnectable — you can't "close the connection" to the library
-  // you're inside. Refuse rather than log the user out of their own
-  // instance and delete its tile.
-  if (isLocalInstanceSource(source)) {
-    return;
-  }
 
   const auth = useAuthStore.getState();
   const disconnectedUserId = source.userId ?? auth.userId ?? null;

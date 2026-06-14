@@ -172,13 +172,12 @@ export function NodeHostingTab() {
           data-testid="node-hosting-browser-banner"
         >
           <p className="text-sm text-on-surface">
-            Runs this device as a Concord service node that routes mesh calls
-            and chat for other users.
+            Node hosting is only available in the native Concord app.
           </p>
           <p className="text-xs text-on-surface-variant mt-1">
-            Available in the desktop and mobile apps. The web client connects
-            to nodes but can&apos;t act as one; the toggle below stays disabled
-            here.
+            Install the desktop or mobile build and reopen this settings tab
+            to enable the toggle. The web client remains a full-featured
+            client; it just can't act as a host itself.
           </p>
         </div>
       )}

@@ -21,14 +21,8 @@ interface SettingsState {
   compressorRelease: number;
   makeupGain: number;
 
-  // Soundboard / Effects
+  // Soundboard
   soundboardVolume: number;
-  // Accessibility: when true (or when the OS prefers-reduced-motion is
-  // set), screenspace visual effects from the Effects board are
-  // suppressed locally — the paired sound (if any) still plays, only the
-  // canvas animation is skipped. Defaults off; the EffectsOverlay ORs
-  // this with the media query so either source disables motion.
-  reduceScreenEffects: boolean;
 
   // Per-user
   userVolumes: Record<string, number>;
@@ -67,11 +61,6 @@ interface SettingsState {
   // interface.
   chatFontSize: number;
   themePreset: ThemePreset;
-  // Logo mark colors, independent of the menu theme. Default to the canon
-  // Concord bronze/teal so the logo keeps its identity even when the menus
-  // use a different color scheme (e.g. the kinetic theme).
-  logoColorPrimary: string;
-  logoColorSecondary: string;
 
   // UI (not persisted)
   settingsOpen: boolean;
@@ -93,7 +82,6 @@ interface SettingsState {
     value: number,
   ) => void;
   setSoundboardVolume: (v: number) => void;
-  setReduceScreenEffects: (v: boolean) => void;
   setUserVolume: (identity: string, volume: number) => void;
   toggleUserMuted: (identity: string) => void;
   setMasterInputVolume: (v: number) => void;
@@ -118,9 +106,6 @@ interface SettingsState {
    */
   setChatFontSize: (px: number) => void;
   setThemePreset: (preset: ThemePreset) => void;
-  setLogoColorPrimary: (hex: string) => void;
-  setLogoColorSecondary: (hex: string) => void;
-  resetLogoColors: () => void;
   openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
   closeSettings: () => void;
   setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
@@ -149,10 +134,6 @@ interface SettingsState {
 export const CHAT_FONT_SIZE_MIN = 12;
 export const CHAT_FONT_SIZE_MAX = 32;
 export const CHAT_FONT_SIZE_DEFAULT = 14;
-// Canon Concord logo colors (bronze / teal). Kept independent of the menu
-// theme so the mark stays recognizable under any color scheme.
-export const LOGO_COLOR_PRIMARY_DEFAULT = "#a5823f";
-export const LOGO_COLOR_SECONDARY_DEFAULT = "#408c96";
 export const THEME_PRESETS = [
   "bronze-teal",
   "kinetic-node",
@@ -173,7 +154,6 @@ const defaults = {
   compressorRelease: 0.25,
   makeupGain: 1.5,
   soundboardVolume: 0.5,
-  reduceScreenEffects: false,
   userVolumes: {} as Record<string, number>,
   userMuted: {} as Record<string, boolean>,
   masterInputVolume: 1.0,
@@ -191,11 +171,7 @@ const defaults = {
   channelNotifications: {} as Record<string, "all" | "mentions" | "nothing">,
   notificationSound: true,
   chatFontSize: CHAT_FONT_SIZE_DEFAULT,
-  // Kinetic is the default menu scheme; the logo keeps the canon bronze/teal
-  // below so the two are visually distinct out of the box.
-  themePreset: "kinetic-node" as ThemePreset,
-  logoColorPrimary: LOGO_COLOR_PRIMARY_DEFAULT,
-  logoColorSecondary: LOGO_COLOR_SECONDARY_DEFAULT,
+  themePreset: "bronze-teal" as ThemePreset,
 } as const;
 
 export const useSettingsStore = create<SettingsState>()(
@@ -219,7 +195,6 @@ export const useSettingsStore = create<SettingsState>()(
       setNormalizationEnabled: (v) => set({ normalizationEnabled: v }),
       setCompressorParam: (key, value) => set({ [key]: value }),
       setSoundboardVolume: (v) => set({ soundboardVolume: v }),
-      setReduceScreenEffects: (v) => set({ reduceScreenEffects: v }),
       setUserVolume: (identity, volume) =>
         set((s) => ({
           userVolumes: { ...s.userVolumes, [identity]: volume },
@@ -284,13 +259,6 @@ export const useSettingsStore = create<SettingsState>()(
         set({ chatFontSize: clamped });
       },
       setThemePreset: (preset) => set({ themePreset: preset }),
-      setLogoColorPrimary: (hex) => set({ logoColorPrimary: hex }),
-      setLogoColorSecondary: (hex) => set({ logoColorSecondary: hex }),
-      resetLogoColors: () =>
-        set({
-          logoColorPrimary: LOGO_COLOR_PRIMARY_DEFAULT,
-          logoColorSecondary: LOGO_COLOR_SECONDARY_DEFAULT,
-        }),
       openSettings: (tab) =>
         set({ settingsOpen: true, serverSettingsId: null, settingsTab: tab ?? "audio" }),
       closeSettings: () => set({ settingsOpen: false, serverSettingsId: null }),
