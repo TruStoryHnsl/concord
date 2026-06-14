@@ -91,8 +91,8 @@ export function VisibilitySection() {
             Server visibility
           </h4>
           <p className="text-xs text-on-surface-variant mt-1">
-            Available on the native build only. The browser tab doesn't host
-            servers, so there's nothing to advertise into the mesh.
+            Sets how many mesh hops out each server you host is advertised.
+            Available in the desktop app, which hosts the servers.
           </p>
         </div>
       </div>

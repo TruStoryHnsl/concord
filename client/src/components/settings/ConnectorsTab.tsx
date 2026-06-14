@@ -89,11 +89,12 @@ export function ConnectorsTab() {
           device_hub
         </span>
         <p className="text-sm text-on-surface-variant font-body">
-          Connectors run on the native app
+          External-mesh connectors
         </p>
         <p className="text-xs text-on-surface-variant/60 font-label max-w-xs">
-          External-mesh connectors (Reticulum, Meshtastic, LoRa) live in the
-          desktop and mobile swarm. The browser can&apos;t drive a radio.
+          Bridges Concord onto Reticulum, Meshtastic, and LoRa meshes, each
+          adding a layer to the mesh map. Available in the desktop and mobile
+          apps, which run the radio transports.
         </p>
       </div>
     );
