@@ -61,11 +61,6 @@ interface SettingsState {
   // interface.
   chatFontSize: number;
   themePreset: ThemePreset;
-  // Logo mark colors, independent of the menu theme. Default to the canon
-  // Concord bronze/teal so the logo keeps its identity even when the menus
-  // use a different color scheme (e.g. the kinetic theme).
-  logoColorPrimary: string;
-  logoColorSecondary: string;
 
   // UI (not persisted)
   settingsOpen: boolean;
@@ -111,9 +106,6 @@ interface SettingsState {
    */
   setChatFontSize: (px: number) => void;
   setThemePreset: (preset: ThemePreset) => void;
-  setLogoColorPrimary: (hex: string) => void;
-  setLogoColorSecondary: (hex: string) => void;
-  resetLogoColors: () => void;
   openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
   closeSettings: () => void;
   setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
@@ -142,10 +134,6 @@ interface SettingsState {
 export const CHAT_FONT_SIZE_MIN = 12;
 export const CHAT_FONT_SIZE_MAX = 32;
 export const CHAT_FONT_SIZE_DEFAULT = 14;
-// Canon Concord logo colors (bronze / teal). Kept independent of the menu
-// theme so the mark stays recognizable under any color scheme.
-export const LOGO_COLOR_PRIMARY_DEFAULT = "#a5823f";
-export const LOGO_COLOR_SECONDARY_DEFAULT = "#408c96";
 export const THEME_PRESETS = [
   "bronze-teal",
   "kinetic-node",
@@ -183,11 +171,7 @@ const defaults = {
   channelNotifications: {} as Record<string, "all" | "mentions" | "nothing">,
   notificationSound: true,
   chatFontSize: CHAT_FONT_SIZE_DEFAULT,
-  // Kinetic is the default menu scheme; the logo keeps the canon bronze/teal
-  // below so the two are visually distinct out of the box.
-  themePreset: "kinetic-node" as ThemePreset,
-  logoColorPrimary: LOGO_COLOR_PRIMARY_DEFAULT,
-  logoColorSecondary: LOGO_COLOR_SECONDARY_DEFAULT,
+  themePreset: "bronze-teal" as ThemePreset,
 } as const;
 
 export const useSettingsStore = create<SettingsState>()(
@@ -275,13 +259,6 @@ export const useSettingsStore = create<SettingsState>()(
         set({ chatFontSize: clamped });
       },
       setThemePreset: (preset) => set({ themePreset: preset }),
-      setLogoColorPrimary: (hex) => set({ logoColorPrimary: hex }),
-      setLogoColorSecondary: (hex) => set({ logoColorSecondary: hex }),
-      resetLogoColors: () =>
-        set({
-          logoColorPrimary: LOGO_COLOR_PRIMARY_DEFAULT,
-          logoColorSecondary: LOGO_COLOR_SECONDARY_DEFAULT,
-        }),
       openSettings: (tab) =>
         set({ settingsOpen: true, serverSettingsId: null, settingsTab: tab ?? "audio" }),
       closeSettings: () => set({ settingsOpen: false, serverSettingsId: null }),
