@@ -1,7 +1,7 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import String, DateTime, Integer, Float, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import String, DateTime, Integer, Float, Boolean, ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -372,6 +372,66 @@ class DisposableNode(Base):
         default=lambda: datetime.now(timezone.utc) + timedelta(hours=24),
     )
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class MeshPresence(Base):
+    """A signed presence record pushed to this docker PILLAR by a connected
+    p2p-capable (native) instance — Spec B (docker-pillar).
+
+    The docker/web build never speaks libp2p or WireGuard. Instead, native
+    instances that connect to it over the auth pathway publish their
+    *presence + adjacency* here so the pillar can fold them into the mesh
+    topology it serves at ``/api/mesh/topology`` as hop-1, web-threaded
+    nodes (``via: "pillar"``). The pillar is a relay/host of mesh data, not
+    a p2p participant.
+
+    Authenticity is established by an Ed25519 signature over a canonical
+    byte string of ``(persona_id, persona_pubkey, adjacency, ttl)``,
+    verified at intake against the supplied 32-byte public key. We store
+    the verified pubkey + signature for audit/debug; the record is TTL'd
+    (``expires_at``) and a background sweeper evicts stale rows so the
+    live "who is connected to this pillar" set only ever reflects peers
+    that refreshed within their TTL.
+
+    Columns:
+      persona_id     stable persona slug the native instance signs with.
+                     A persona re-publishing upserts its own row (one live
+                     row per persona).
+      persona_pubkey the 32-byte Ed25519 public key the signature verified
+                     against (raw bytes).
+      sig            the 64-byte Ed25519 signature (raw bytes) over the
+                     canonical message — retained for audit.
+      adjacency      JSON array (TEXT) of the persona's directly-adjacent
+                     peer ids, as reported by the native instance.
+      ttl            the requested time-to-live in seconds (already clamped
+                     to the server max at intake).
+      expires_at     UTC instant after which the row is stale; INDEXED so
+                     the eviction sweep + the non-expired topology query
+                     are cheap.
+      posted_at      UTC instant the record was accepted (debug/ordering).
+      via_pillar     this instance's ``server_name`` — the pillar that
+                     accepted the record. Lets a future multi-pillar merge
+                     attribute each peer to the pillar it threaded through.
+    """
+
+    __tablename__ = "mesh_presence"
+    __table_args__ = (
+        UniqueConstraint("persona_id", name="uq_mesh_presence_persona"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    persona_pubkey: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sig: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    adjacency: Mapped[str] = mapped_column(String, nullable=False, default="[]")
+    ttl: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, index=True
+    )
+    posted_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    via_pillar: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class Extension(Base):

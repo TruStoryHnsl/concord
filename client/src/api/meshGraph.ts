@@ -35,6 +35,18 @@ interface MeshGraphNodeWire {
   peer_id: string;
   /** BFS hop distance from the local node; `null` when unreachable. */
   hop_distance: number | null;
+  /**
+   * How the node is reached (Spec B, docker-pillar). `"pillar"` for a
+   * web-threaded p2p peer the docker pillar relays. Absent for the pillar
+   * itself and federated neighbors. Backward-compatible: older servers
+   * omit it entirely.
+   */
+  via?: string;
+  /**
+   * Node kind (Spec B). `"web_threaded"` for a p2p peer reported to the
+   * pillar via `POST /api/mesh/presence`. Absent on other node kinds.
+   */
+  kind?: string;
 }
 
 /** One undirected edge (endpoints lexicographically ordered, snake_case). */
@@ -88,6 +100,18 @@ export interface MeshGraphNode {
    * under adversarial gossip input).
    */
   hopDistance: number | null;
+  /**
+   * How the node is reached (Spec B, docker-pillar). `"pillar"` for a
+   * web-threaded p2p peer the docker pillar relays; `undefined` for the
+   * pillar itself, federated neighbors, and all native-snapshot nodes.
+   * The map renders `via === "pillar"` peers distinctly.
+   */
+  via?: string;
+  /**
+   * Node kind (Spec B). `"web_threaded"` for a p2p peer reported to the
+   * pillar; `undefined` otherwise. Drives the pillar-satellite visual.
+   */
+  kind?: string;
 }
 
 /** An undirected edge between two peer ids. */
@@ -134,6 +158,8 @@ export async function fetchMeshGraph(): Promise<MeshGraph> {
     nodes: wire.nodes.map((n) => ({
       peerId: n.peer_id,
       hopDistance: n.hop_distance,
+      via: n.via,
+      kind: n.kind,
     })),
     edges: wire.edges.map((e) => ({ a: e.a, b: e.b })),
   };
@@ -161,6 +187,8 @@ async function fetchMeshGraphWeb(): Promise<MeshGraph> {
       nodes: (wire.nodes ?? []).map((n) => ({
         peerId: n.peer_id,
         hopDistance: n.hop_distance,
+        via: n.via,
+        kind: n.kind,
       })),
       edges: (wire.edges ?? []).map((e) => ({ a: e.a, b: e.b })),
       hub: {

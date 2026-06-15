@@ -76,12 +76,6 @@ function rowToChannel(r: PorchListChannelRow): PorchChannel {
     kind: r.kind,
     acl_mode: r.acl_mode,
     created_at: r.created_at,
-    // Visited-peer channels come off the wire `PorchListChannelRow`,
-    // which carries no local-server segmentation — `server_id` is a
-    // local-only concept (which of THIS install's two intrinsic servers
-    // a channel lives on). Default to "home" so the shape is satisfied;
-    // the visitor view never filters on it.
-    server_id: "home",
   };
 }
 

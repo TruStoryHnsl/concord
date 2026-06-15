@@ -128,6 +128,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const activeChannelId = useServerStore((s) => s.activeChannelId);
   const servers = useServerStore((s) => s.servers);
   const activeServerId = useServerStore((s) => s.activeServerId);
+  const switchingSession = useServerStore((s) => s.switchingSession);
   const deleteChannelStore = useServerStore((s) => s.deleteChannel);
   const setActiveChannelId = (roomId: string) =>
     useServerStore.setState({ activeChannelId: roomId });
@@ -1223,10 +1224,14 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               </div>
             ) : (
               <span className="text-on-surface-variant font-body">
-                {!syncing || !serversLoaded ? (
+                {!syncing || !serversLoaded || switchingSession ? (
                   <span className="flex items-center gap-2">
                     <BringingUpSplash size="inline" />
-                    {!syncing ? "Connecting..." : "Loading servers..."}
+                    {switchingSession
+                      ? "Switching instance..."
+                      : !syncing
+                        ? "Connecting..."
+                        : "Loading servers..."}
                   </span>
                 ) : servers.length === 0 ? (
                   "Welcome — join or create a server to get started"

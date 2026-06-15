@@ -266,21 +266,28 @@ export function MeshMap() {
       if (hop == null) continue; // unreachable island — drop
       const reachedVia = reachedViaByPeer.get(n.peerId);
       const isOneHopUp = reachedVia != null;
+      // Spec B — a web-threaded peer the docker pillar relays. Rendered
+      // distinctly (its own kind/color) and labeled "via pillar" so it
+      // reads apart from a direct p2p neighbor.
+      const isWebThreaded = n.kind === "web_threaded" || n.via === "pillar";
       // A one-hop-up node the spring surfaced is shown even if it sits
       // beyond the slider window — exposing it IS the point of the
       // governance opt-in. Other nodes respect the hop-scale filter.
       if (hop > hopScale && !isOneHopUp) continue;
       out.push({
         id: n.peerId,
-        label: isOneHopUp
-          ? `${shortPeerId(n.peerId)} · via ${reachedVia}`
-          : shortPeerId(n.peerId),
+        label: isWebThreaded
+          ? `${shortPeerId(n.peerId)} · via pillar`
+          : isOneHopUp
+            ? `${shortPeerId(n.peerId)} · via ${reachedVia}`
+            : shortPeerId(n.peerId),
         hop,
         // W1.1 has no per-node trust info in the topology graph itself
-        // (that's F3's peer-store cross-ref, a follow-up). Render every
-        // non-host node as "known" for now; the kind contract is stable
-        // so the trust badge can be layered in without a canvas change.
-        kind: "known",
+        // (that's F3's peer-store cross-ref, a follow-up). Web-threaded
+        // pillar peers get the distinct `pillar` kind; everything else is
+        // "known" for now (the kind contract is stable so a trust badge
+        // can be layered in without a canvas change).
+        kind: isWebThreaded ? "pillar" : "known",
       });
     }
     // Guarantee a host node even if the snapshot is empty (pre-swarm).

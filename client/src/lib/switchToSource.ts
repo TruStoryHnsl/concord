@@ -109,6 +109,13 @@ export function switchToSource(
     }
   }
 
+  // Flag the switch so the content pane shows its own inline loader during
+  // the login + loadServers window (login() resets `servers` to []), instead
+  // of flashing the "Welcome — join or create a server" empty state. Cleared
+  // once the target instance's servers have loaded below. The rail tiles do
+  // not read this flag, so they stay put — the content reloads independently.
+  useServerStore.setState({ switchingSession: true });
+
   // A source switch invalidates any live voice session (it belonged to the
   // OLD instance's SFU). Tear it down BEFORE swapping the client — leaving
   // it connected strands the old LiveKit room and makes the lazy voice-bar
@@ -167,12 +174,22 @@ export function switchToSource(
       .getState()
       .loadServers(token)
       .then(() => {
-        if (!selectServerId) return;
-        const st = useServerStore.getState();
-        if (st.servers.some((s) => s.id === selectServerId)) {
-          st.setActiveServer(selectServerId);
+        if (selectServerId) {
+          const st = useServerStore.getState();
+          if (st.servers.some((s) => s.id === selectServerId)) {
+            st.setActiveServer(selectServerId);
+          }
         }
+      })
+      .finally(() => {
+        // Target instance's servers have settled — drop the content-pane
+        // loader so the real chat/empty state renders.
+        useServerStore.setState({ switchingSession: false });
       });
+  } else {
+    // No live token after the swap (shouldn't happen on the happy path,
+    // but never strand the content pane in a permanent loader).
+    useServerStore.setState({ switchingSession: false });
   }
   void useServerStore.getState().loadForeignServers();
 

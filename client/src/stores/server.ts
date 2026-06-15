@@ -117,6 +117,17 @@ interface ServerState {
   foreignServers: Server[];
   activeServerId: string | null;
   activeChannelId: string | null; // matrix_room_id
+  /**
+   * True while a source/instance switch is in flight (set by
+   * switchToSource around the login + loadServers round-trip). The
+   * content pane reads this to show its OWN inline loader instead of the
+   * "Welcome — join or create a server" empty state, which otherwise
+   * flashes during the window where login() has reset `servers` to []
+   * but the new instance's servers haven't arrived yet. Scoped to the
+   * content pane so the rail (sources/servers tiles) stays stable — the
+   * content reloads independently of the rest of the page.
+   */
+  switchingSession: boolean;
   members: Record<string, ServerMember[]>; // keyed by server ID
   resetState: () => void;
 
@@ -215,6 +226,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   foreignServers: [],
   activeServerId: null,
   activeChannelId: null,
+  switchingSession: false,
   members: {},
   resetState: () => set({
     servers: [],

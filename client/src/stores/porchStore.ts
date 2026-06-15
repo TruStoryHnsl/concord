@@ -20,22 +20,9 @@ import {
   listMyChannels,
   postLocalMessage,
   type ChannelMessage,
-  type LocalServerId,
   type PorchChannel,
 } from "../api/porch";
 import { isTauri } from "../api/servitude";
-import { useLocalServerSelectionStore } from "./localServerSelection";
-
-/** Pure selector — channels belonging to a given local server. Exported
- *  so components (and tests) can derive the per-server channel list off
- *  the flat `channels` array without re-fetching. Channels carry a
- *  `server_id` of "porch" | "home" (schema v12). */
-export function channelsForServer(
-  channels: PorchChannel[],
-  server: LocalServerId,
-): PorchChannel[] {
-  return channels.filter((c) => c.server_id === server);
-}
 
 export interface PorchStoreState {
   /** Channels on the host's own porch. */
@@ -82,16 +69,10 @@ export const usePorchStore = create<PorchStoreState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const channels = await listMyChannels();
-      // If no channel is selected yet, default to the first channel of
-      // the currently-active local server (porch vs home) — NOT just
-      // channels[0], which would land on the porch front-door even when
-      // the home tile is active. This is what makes the home tile open
-      // a home channel on first paint.
+      // If no channel is selected yet, default to the first one (the
+      // default `Porch` channel sits first by construction).
       const current = get().selectedChannelId;
-      const activeServer = useLocalServerSelectionStore.getState().active;
-      const firstForActive =
-        channelsForServer(channels, activeServer)[0]?.id ?? null;
-      const next = current ?? firstForActive ?? channels[0]?.id ?? null;
+      const next = current ?? channels[0]?.id ?? null;
       set({
         channels,
         selectedChannelId: next,

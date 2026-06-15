@@ -106,7 +106,6 @@ export const LocalServerSidebar = memo(function LocalServerSidebar({
                 data-active={isActive}
                 onClick={() => handleSelect(t.key)}
                 title={t.label}
-                aria-label={`${t.label} (${t.key} server)`}
                 className={`btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl transition-all ${
                   isActive ? t.mobileActiveRowClass : ""
                 }`}
