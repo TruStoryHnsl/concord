@@ -1586,6 +1586,15 @@ export interface DMConversation {
   other_user_id: string;
   matrix_room_id: string;
   created_at: string | null;
+  /**
+   * Which connected source/account this DM belongs to. Set by the DM
+   * store when it aggregates DMs across every connected source (the
+   * superuser's DMs follow them: the native app holds each source's auth
+   * and merges their DMs into one profile-keyed list). Undefined for a
+   * DM on the active instance that wasn't tagged. Opening a DM whose
+   * sourceId is not the active instance hot-swaps to that source first.
+   */
+  sourceId?: string;
 }
 
 export interface RoomDiagnosticStep {
@@ -1622,6 +1631,26 @@ export async function listDMs(
   accessToken: string,
 ): Promise<DMConversation[]> {
   return apiFetch("/dms", {}, accessToken);
+}
+
+/**
+ * List DMs from a SPECIFIC source's instance (its own api_base + token),
+ * rather than the active instance. Mirrors {@link listServersAt} — this is
+ * what lets the native app aggregate the superuser's DMs across every
+ * connected source they hold auth for.
+ */
+export async function listDMsAt(
+  apiBase: string,
+  accessToken: string,
+): Promise<DMConversation[]> {
+  const base = apiBase.replace(/\/+$/, "");
+  const resp = await fetch(`${base}/dms`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    throw new Error(`listDMsAt ${base}: ${resp.status} ${resp.statusText}`);
+  }
+  return (await resp.json()) as DMConversation[];
 }
 
 export async function createDM(
