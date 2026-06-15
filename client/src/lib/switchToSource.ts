@@ -73,10 +73,27 @@ export function switchToSource(
 
   // No-op if the target is already the active instance — avoid pointless
   // client teardown when the user clicks the source they're already on.
-  if (targetIsLocal) {
-    if (!cfg) return "noop";
-  } else if (cfg && cfg.host.toLowerCase() === target.host.toLowerCase()) {
+  //
+  // EXCEPTION: returning from the porch. openLocal() clears the active
+  // server selection so the porch can stay open; if the user then clicks
+  // the source that is STILL the active instance, a bare no-op would leave
+  // them on that instance with nothing selected (the "stuck after going
+  // back to porch" bug). When already-active but no server is selected,
+  // re-select a default server so the instance's content reappears.
+  const reselectIfStranded = (): SwitchResult => {
+    const st = useServerStore.getState();
+    if (st.activeServerId) return "noop";
+    const first = st.servers.find((s) => !s.federated) ?? st.servers[0];
+    if (first) {
+      st.setActiveServer(first.id);
+      return "switched";
+    }
     return "noop";
+  };
+  if (targetIsLocal) {
+    if (!cfg) return reselectIfStranded();
+  } else if (cfg && cfg.host.toLowerCase() === target.host.toLowerCase()) {
+    return reselectIfStranded();
   }
 
   // A non-local target needs its own session to switch into. Without a
