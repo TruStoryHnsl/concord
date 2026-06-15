@@ -54,7 +54,7 @@ export function UserConnectionsTab() {
       <ConnectionCard
         brand="concord"
         title="Concord Instance"
-        subtitle="Connect to another Concord domain with an invite token"
+        subtitle="Sign in to another Concord domain — invite token only to create a new account"
         action={concordCount === 0 ? "Connect" : "Add another"}
         onAction={() => requestAddSource("concord")}
         count={concordCount}

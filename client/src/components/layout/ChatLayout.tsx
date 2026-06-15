@@ -2672,7 +2672,7 @@ export function AddSourceModal({
                 </div>
                 <div>
                   <p className="text-sm font-medium text-on-surface">Concord Instance</p>
-                  <p className="text-xs text-on-surface-variant">Connect to another Concord domain with an invite token</p>
+                  <p className="text-xs text-on-surface-variant">Sign in to another Concord domain — invite token only to create a new account</p>
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
@@ -2789,20 +2789,13 @@ export function AddSourceModal({
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
               </div>
-              <div>
-                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Invite Token <span className="opacity-50">(optional)</span></label>
-                <input
-                  type="text"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="inv_... — leave blank for open instances"
-                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
-                />
-              </div>
+              {/* Sign-in is the PRIMARY path: connecting to an instance you
+                  already have an account on needs NO invite token. The token
+                  field below is only for creating a brand-new account. */}
               <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/50 p-3 space-y-2">
                 <p className="text-xs text-on-surface-variant">
-                  Sign in to show this instance's servers in your rail. Leave
-                  blank to just add it for later.
+                  Already have an account on this instance? Sign in — no invite
+                  token needed. Leave blank to just add it for later.
                 </p>
                 {/* Password-manager opt-out. This is a secondary credential
                     for ANOTHER instance, rendered inside the already-signed-in
@@ -2840,6 +2833,21 @@ export function AddSourceModal({
                   data-form-type="other"
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
+              </div>
+              <div>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">
+                  Invite token <span className="opacity-50">(only to create a new account)</span>
+                </label>
+                <input
+                  type="text"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="inv_… — leave blank if you already have an account"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-on-surface-variant/70">
+                  Only needed to register a brand-new account on this instance.
+                </p>
               </div>
               <button
                 onClick={handleConnectConcord}
