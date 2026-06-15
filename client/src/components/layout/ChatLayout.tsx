@@ -541,26 +541,19 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const loadMembers = useServerStore((s) => s.loadMembers);
   const [serversLoaded, setServersLoaded] = useState(false);
 
-  // Tell the launch splash that the logged-in shell is ready to be
-  // shown to the user. The splash (a looping animation) is a curtain that
-  // covers ALL of boot's slow work so the user never sees a frozen/empty
-  // shell. It stays up until BOTH:
-  //   1. the initial REST data (servers/conversations/catalog) resolved, and
-  //   2. when a Matrix session is live, the initial Matrix SYNC is PREPARED
-  //      (`syncing`). The REST `serversLoaded` flips in seconds, but the
-  //      Matrix initial sync can take far longer (it was dismissing into an
-  //      empty app while sync caught up "for several minutes"). Gating on
-  //      `syncing` frontloads that wait behind the animation.
-  // Porch-only native users (no `accessToken`) have no sync to wait for, so
-  // they're ready as soon as the REST data settles. A hard ceiling in
-  // LaunchAnimation still dismisses the curtain if sync never settles.
+  // Tell the launch splash that the logged-in shell is ready to be shown.
+  // Fires as soon as the initial REST data (servers/conversations/catalog)
+  // has resolved — which is fast. We deliberately do NOT wait for the Matrix
+  // initial sync here: that can take a long time, and holding the launch
+  // curtain for it makes boot feel frozen. Instead the user drops into the
+  // shell quickly and any still-loading surface plays the loading animation
+  // IN PLACE (content pane / channel list), so nothing blocks.
   const markAppReady = useBootReadyStore((s) => s.markAppReady);
   useEffect(() => {
     if (!serversLoaded) return;
-    if (accessToken && !syncing) return;
     const id = requestAnimationFrame(() => markAppReady());
     return () => cancelAnimationFrame(id);
-  }, [serversLoaded, syncing, accessToken, markAppReady]);
+  }, [serversLoaded, markAppReady]);
 
 
   const addToast = useToastStore((s) => s.addToast);
