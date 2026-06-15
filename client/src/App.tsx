@@ -402,11 +402,21 @@ export default function App() {
   // the chat is in the user's face fast; native users have a real
   // "I just opened the app" moment that the animation should fill.
   const launchMinDurationMs = isTauri ? 3000 : 1500;
+  // Safety ceiling — how long the curtain stays up if the readiness gate
+  // never settles. Native gets a much higher ceiling: the embedded
+  // homeserver + Matrix initial sync can legitimately take a while on a
+  // cold launch, and the splash is a LOOPING animation, so covering that
+  // with the animation is far better than dropping the user into an empty,
+  // still-syncing shell. Web keeps the snappy 30s default. The readiness
+  // gate (markAppReady) still dismisses the moment the app is genuinely up,
+  // so a warm launch is unaffected — this only bounds the worst case.
+  const launchMaxDurationMs = isTauri ? 90_000 : 30_000;
   const launchOverlay = !launchDone ? (
     <LaunchAnimation
       isLoading={isLoading}
       onDone={handleLaunchDone}
       minDurationMs={launchMinDurationMs}
+      maxDurationMs={launchMaxDurationMs}
     />
   ) : null;
 

@@ -542,18 +542,25 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [serversLoaded, setServersLoaded] = useState(false);
 
   // Tell the launch splash that the logged-in shell is ready to be
-  // shown to the user. Fires AFTER the initial server/conversation/
-  // catalog data has resolved, so the splash doesn't dismiss into
-  // a half-loaded ChatLayout where channel tiles and messages are
-  // still popping in. requestAnimationFrame defers the flag to
-  // after-paint so the next frame the user sees is the real UI,
-  // not an empty shell.
+  // shown to the user. The splash (a looping animation) is a curtain that
+  // covers ALL of boot's slow work so the user never sees a frozen/empty
+  // shell. It stays up until BOTH:
+  //   1. the initial REST data (servers/conversations/catalog) resolved, and
+  //   2. when a Matrix session is live, the initial Matrix SYNC is PREPARED
+  //      (`syncing`). The REST `serversLoaded` flips in seconds, but the
+  //      Matrix initial sync can take far longer (it was dismissing into an
+  //      empty app while sync caught up "for several minutes"). Gating on
+  //      `syncing` frontloads that wait behind the animation.
+  // Porch-only native users (no `accessToken`) have no sync to wait for, so
+  // they're ready as soon as the REST data settles. A hard ceiling in
+  // LaunchAnimation still dismisses the curtain if sync never settles.
   const markAppReady = useBootReadyStore((s) => s.markAppReady);
   useEffect(() => {
     if (!serversLoaded) return;
+    if (accessToken && !syncing) return;
     const id = requestAnimationFrame(() => markAppReady());
     return () => cancelAnimationFrame(id);
-  }, [serversLoaded, markAppReady]);
+  }, [serversLoaded, syncing, accessToken, markAppReady]);
 
 
   const addToast = useToastStore((s) => s.addToast);
