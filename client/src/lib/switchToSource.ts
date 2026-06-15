@@ -127,12 +127,18 @@ export function switchToSource(
     // the origin-based fallback takes over.
     useServerConfigStore.getState().clearHomeserver();
   } else {
-    useServerConfigStore.getState().setHomeserver({
-      host: target.host,
-      instance_name: target.instanceName,
-      api_base: target.apiBase,
-      homeserver_url: target.homeserverUrl,
-    });
+    // transient:true — a source switch is a session-only change; it must
+    // NOT become the boot home (else a reboot/reload adopts the foreign
+    // instance and the local home becomes inaccessible).
+    useServerConfigStore.getState().setHomeserver(
+      {
+        host: target.host,
+        instance_name: target.instanceName,
+        api_base: target.apiBase,
+        homeserver_url: target.homeserverUrl,
+      },
+      { transient: true },
+    );
   }
 
   // Adopt the target's stored session. `login()` recreates the Matrix

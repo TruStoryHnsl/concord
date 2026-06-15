@@ -53,8 +53,30 @@ import { setServerUrl } from "../api/serverUrl";
  * web build where origin-based fallback takes over).
  */
 export interface ServerConfigState {
+  /**
+   * The ACTIVE instance the client is talking to right now. In-session
+   * only — NOT persisted. On boot it is restored from `bootHome` (below),
+   * so a transient source-switch can never become the boot home. Drives
+   * getApiBase() / getHomeserverUrl().
+   */
   config: HomeserverConfig | null;
-  setHomeserver: (config: HomeserverConfig) => void;
+  /**
+   * The BOOT HOME — the instance the app returns to on launch/reload.
+   * Persisted. Set ONLY by a deliberate "this is my home" pick
+   * (ServerPickerScreen), NOT by switchToSource. On native this is the
+   * local instance; on web it stays null (origin is home). This is what
+   * stops a linked foreign instance (set via switchToSource) from
+   * persisting as the home and making local data inaccessible after a
+   * reboot.
+   */
+  bootHome: HomeserverConfig | null;
+  /**
+   * Set the active instance. `opts.transient` (used by switchToSource)
+   * means "session-only switch" — it updates `config` but NOT `bootHome`,
+   * so it is forgotten on the next launch. A non-transient call (the
+   * picker) ALSO updates `bootHome`.
+   */
+  setHomeserver: (config: HomeserverConfig, opts?: { transient?: boolean }) => void;
   clearHomeserver: () => void;
   /**
    * Convenience selector returning just the hostname (or null). Useful
@@ -89,9 +111,13 @@ export const useServerConfigStore = create<ServerConfigState>()(
   persist(
     (set, get) => ({
       config: null,
+      bootHome: null,
 
-      setHomeserver: (config) => {
-        set({ config });
+      setHomeserver: (config, opts) => {
+        // A non-transient pick also becomes the boot home; a transient
+        // switchToSource updates only the active config (forgotten on
+        // next launch).
+        set(opts?.transient ? { config } : { config, bootHome: config });
         // In-process only: update the legacy `_serverUrl` module var
         // so code paths that still read `getHomeserverUrl()` (some
         // Matrix SDK bootstrap paths) see the chosen host. Native
@@ -143,10 +169,17 @@ export const useServerConfigStore = create<ServerConfigState>()(
               removeItem: () => {},
             },
       ),
-      // Only `config` is persisted — selectors and actions don't
-      // belong in storage. This also future-proofs against adding
-      // non-serializable fields later.
-      partialize: (state) => ({ config: state.config }),
+      // Persist ONLY `bootHome`, never the in-session `config`. This is
+      // the fix for "reboot adopted the linked foreign instance as home":
+      // a switchToSource (transient) updates `config` but not `bootHome`,
+      // so nothing about the switch survives a launch.
+      partialize: (state) => ({ bootHome: state.bootHome }),
+      // On launch, the active `config` starts equal to the boot home
+      // (null on web → origin; the local instance on native). The last
+      // transient switch is gone.
+      onRehydrateStorage: () => (state) => {
+        if (state) state.config = state.bootHome ?? null;
+      },
     },
   ),
 );
