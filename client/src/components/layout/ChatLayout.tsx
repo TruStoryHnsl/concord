@@ -48,6 +48,7 @@ import { ExtensionCatalogModal } from "../extension/ExtensionCatalogModal";
 import { LocalHostingControl } from "../sources/LocalHostingControl";
 import { PeerCardScanner } from "../peers/PeerCardScanner";
 import { ServerSidebar } from "./ServerSidebar";
+import { GroupedRail } from "./GroupedRail";
 import { ChannelSidebar, UserBar } from "./ChannelSidebar";
 import { LocalServerSidebar } from "../local/LocalServerSidebar";
 import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
@@ -335,6 +336,16 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     // as the user lands. `loadChannels` is idempotent + safe on web.
     void loadPorchChannels();
   }, [loadPorchChannels]);
+
+  // Unified-rail local-server selection: pick porch/home AND activate the
+  // local surface so the channel column shows it (with its LAN/mesh maps).
+  const handleLocalServerSelect = useCallback(
+    (key: "porch" | "home") => {
+      useLocalServerSelectionStore.getState().setActive(key);
+      openLocal();
+    },
+    [openLocal],
+  );
 
   // Clear localActive whenever a Matrix source / DM / server becomes
   // active — keeps the porch tile and Matrix tiles mutually exclusive
@@ -662,21 +673,20 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           <div className="flex h-full min-h-0 flex-shrink-0 bg-surface">
             <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
               <div className="flex min-h-0 flex-1">
-                <div className="w-[41px] mr-[2px] flex-shrink-0">
-                  <SectionBoundary>
-                    <SourcesPanel
-                      canManageSources={canManageSources}
-                      onAddSource={openAddSource}
-                      onSourceOpen={openSourceBrowser}
-                      onLocalOpen={openLocal}
-                      onExplore={openExplore}
-                      onSourceSelect={() => setLocalActive(false)}
-                    />
-                  </SectionBoundary>
-                </div>
-
+                {/* Unified stacked rail: DM (top) + local mesh group
+                    (porch/home) + each source centered on its server group,
+                    dividers between. Replaces the separate Sources column +
+                    Server sidebar; the channel column below still switches
+                    between the local (porch/home + maps), DM, and Matrix
+                    channel surfaces. */}
                 <SectionBoundary>
-                  {localActive ? <LocalServerSidebar /> : <ServerSidebar />}
+                  <GroupedRail
+                    canManageSources={canManageSources}
+                    onAddSource={openAddSource}
+                    onExplore={openExplore}
+                    onLocalServerSelect={handleLocalServerSelect}
+                    localActive={localActive}
+                  />
                 </SectionBoundary>
 
                 {/* Channel / DM sidebar */}
