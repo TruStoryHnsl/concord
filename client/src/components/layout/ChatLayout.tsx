@@ -1339,6 +1339,19 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       }
       return <LocalChatPane />;
     }
+    // A source/instance switch is in flight — the content field plays the
+    // loading animation while the target's data loads in the background.
+    // This is what keeps clicking a not-yet-loaded connected source from
+    // feeling frozen: the user is navigated straight to a loading pane
+    // (the splash), never a stalled/blank one. switchToSource defers the
+    // heavy client recreation, so this paints first.
+    if (switchingSession) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <BringingUpSplash size="compact" status="Loading…" />
+        </div>
+      );
+    }
     // DM chat
     if (dmActive && activeDMRoomId && dmConversation) {
       return (

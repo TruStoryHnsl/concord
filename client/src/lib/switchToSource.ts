@@ -133,6 +133,15 @@ export function switchToSource(
   // not read this flag, so they stay put — the content reloads independently.
   useServerStore.setState({ switchingSession: true });
 
+  // Defer the heavy work (voice teardown, homeserver re-point, Matrix CLIENT
+  // RECREATION via login(), server reload) to the next macrotask so the click
+  // handler returns instantly and React paints the switchingSession loader
+  // FIRST. Previously login() recreated the Matrix client synchronously inside
+  // the click handler, which FROZE the whole UI until the cold source finished
+  // loading. Now the user is navigated to a loading content pane immediately;
+  // the splash <video> keeps animating on its compositor layer while this
+  // deferred work runs on the main thread.
+  setTimeout(() => {
   // A source switch invalidates any live voice session (it belonged to the
   // OLD instance's SFU). Tear it down BEFORE swapping the client — leaving
   // it connected strands the old LiveKit room and makes the lazy voice-bar
@@ -209,6 +218,7 @@ export function switchToSource(
     useServerStore.setState({ switchingSession: false });
   }
   void useServerStore.getState().loadForeignServers();
+  }, 0);
 
   return "switched";
 }
