@@ -506,8 +506,6 @@ export function SourcesPanel({
     y: number;
   } | null>(null);
 
-  const sources = rawSources;
-
   // Porch visibility gate. The porch / local-home surface is a native
   // concept: it only exists once a native app has created it and the
   // account has at least one linked p2p device. In the web/docker build
@@ -516,6 +514,16 @@ export function SourcesPanel({
   // Concord server instead of an empty "lives on your desktop" porch.
   const knownPeers = usePeerStore((s) => s.knownPeers);
   const showLocalTile = isTauri() || knownPeers.length > 0;
+
+  // When the porch LocalTile is shown it REPRESENTS the local/embedded
+  // instance, so suppress that instance's own ConcordSource from the rail.
+  // Otherwise it renders a second "local concord" tile that just repeats the
+  // home/porch tile (the duplicate the user hit). Foreign instances
+  // (isLocal !== true) always render.
+  const sources = useMemo(
+    () => (showLocalTile ? rawSources.filter((s) => !s.isLocal) : rawSources),
+    [rawSources, showLocalTile],
+  );
 
   // Primary click on a source tile SWITCHES to that instance — re-points
   // the active homeserver + session at the source and reloads (no-op if it

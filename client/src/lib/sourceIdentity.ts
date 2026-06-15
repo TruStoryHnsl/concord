@@ -37,18 +37,25 @@ import { isTauriRuntime } from "../stores/serverConfig";
 /**
  * Is this source the LOCAL instance — the one the app is running inside,
  * which must NEVER be removable/disconnectable?
+ *
+ * The authoritative signal is the explicit `isLocal` flag, set by the
+ * boot/host creators (`migrateFromSession` / `ensurePrimarySource`) and
+ * backfilled by sources-store migration v7. Foreign instances added via the
+ * add-source flow set it `false`, so a token-less foreign login is never
+ * mistaken for the home instance. The runtime heuristic below is only a
+ * fallback for any record that predates the flag and somehow escaped the
+ * migration.
  */
 export function isLocalInstanceSource(
-  source: Pick<ConcordSource, "host">,
+  source: Pick<ConcordSource, "host" | "isLocal">,
 ): boolean {
-  // NATIVE: the local instance is the synthetic porch tile, not a source.
-  // No `ConcordSource` is ever the local instance, so every linked source
-  // (concorrd.com, a peer's porch, a Matrix homeserver) is disconnectable.
-  if (isTauriRuntime()) return false;
+  if (source.isLocal === true) return true;
+  if (source.isLocal === false) return false;
 
-  // WEB: the instance serving this page is local. Stable across the
-  // session — the origin can't change mid-session, so a linked source
-  // (different host) can never be mistaken for the home instance.
+  // Fallback (unflagged legacy record): NATIVE has no local ConcordSource
+  // (the porch tile is the local instance); WEB's local instance is the
+  // origin-served one.
+  if (isTauriRuntime()) return false;
   if (typeof window !== "undefined" && window.location?.hostname) {
     return source.host.toLowerCase() === window.location.hostname.toLowerCase();
   }

@@ -670,6 +670,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                       onSourceOpen={openSourceBrowser}
                       onLocalOpen={openLocal}
                       onExplore={openExplore}
+                      onSourceSelect={() => setLocalActive(false)}
                     />
                   </SectionBoundary>
                 </div>
@@ -961,7 +962,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               mobile
               canManageSources={canManageSources}
               onAddSource={openAddSource}
-              onSourceSelect={() => setMobileView("servers")}
+              onSourceSelect={() => {
+                setLocalActive(false);
+                setMobileView("servers");
+              }}
               onExplore={openExplore}
               onSourceOpen={openSourceBrowser}
               onLocalOpen={() => {
@@ -2445,6 +2449,11 @@ export function AddSourceModal({
         enabled: true,
         platform: "concord",
         branding: config.branding,
+        // A source added through this flow is a FOREIGN/linked instance,
+        // never the local one — even with no invite token. Marking it
+        // explicitly stops a token-less login from looking "primary/local"
+        // and being suppressed from the rail.
+        isLocal: false,
       });
       // Clear the password from form state immediately after use.
       setConcordPassword("");
@@ -3007,6 +3016,7 @@ export function AddSourceModal({
                     status: "connected",
                     enabled: true,
                     platform: "reticulum",
+                    isLocal: false,
                   });
                   onSourceAdded();
                 }}

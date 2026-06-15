@@ -94,6 +94,20 @@ export interface ConcordSource {
    * persisted sources.
    */
   branding?: HomeserverBranding;
+  /**
+   * True when this source IS the device's own local/embedded instance —
+   * the one represented on native by the synthetic porch `LocalTile`
+   * (home icon). Set by the boot/host creators (`migrateFromSession`,
+   * `ensurePrimarySource`). On native this source is SUPPRESSED from the
+   * Sources rail and the server rail: the porch tile already represents
+   * it, so rendering it again produces the "local concord tile that just
+   * repeats the home tile" duplicate. Foreign instances added through the
+   * add-source flow set this `false`, so a token-less foreign login is
+   * never mistaken for the local instance. Backfilled by migration v7
+   * (any pre-existing primary source was, by definition, the migrated
+   * local instance — foreign instances back then always carried a token).
+   */
+  isLocal?: boolean;
 }
 
 export function getSourceHomeserverHost(source: Pick<ConcordSource, "homeserverUrl">): string | null {
@@ -300,6 +314,8 @@ export const useSourcesStore = create<SourcesState>()(
                     homeserverUrl: config.homeserver_url,
                     status: "connected",
                     ownerUserId: null,
+                    // This is the boot/host instance — the local one.
+                    isLocal: true,
                     // Preserve the user's enabled toggle if they
                     // previously hid this source — don't force-enable.
                   }
@@ -320,6 +336,9 @@ export const useSourcesStore = create<SourcesState>()(
           status: "connected",
           enabled: true,
           ownerUserId: null,
+          // The boot/host-picked instance IS the local instance (the porch
+          // tile represents it on native — see `isLocal` docs).
+          isLocal: true,
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, primary] }));
@@ -379,6 +398,8 @@ export const useSourcesStore = create<SourcesState>()(
           status: "connected",
           enabled: true,
           ownerUserId: null,
+          // Migrated from the boot config — this IS the local instance.
+          isLocal: true,
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, primary] }));
@@ -395,7 +416,7 @@ export const useSourcesStore = create<SourcesState>()(
         sources: state.sources,
         boundUserId: state.boundUserId,
       }),
-      version: 6,
+      version: 7,
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as { sources?: ConcordSource[]; boundUserId?: string | null };
         if (version === 0 && state.sources) {
@@ -444,6 +465,18 @@ export const useSourcesStore = create<SourcesState>()(
           state.sources = state.sources.map((s) => ({
             ...s,
             branding: s.branding ?? undefined,
+          }));
+        }
+        if (version < 7 && state.sources) {
+          // v6 → v7: add `isLocal`. The local/embedded instance was
+          // historically a PRIMARY source (empty invite token) created by
+          // migrateFromSession/ensurePrimarySource; foreign instances back
+          // then always carried an invite token. So a pre-existing primary
+          // source IS the local instance — flag it so the native rail
+          // suppresses its duplicate tile (the porch represents it).
+          state.sources = state.sources.map((s) => ({
+            ...s,
+            isLocal: s.isLocal ?? isPrimarySource(s),
           }));
         }
         return state as SourcesState;

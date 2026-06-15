@@ -242,7 +242,9 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     () =>
       foreignServers.filter((server) => {
         const src = server.sourceId ? sourceById.get(server.sourceId) : undefined;
-        return Boolean(src?.enabled);
+        // Skip the local/embedded instance — the porch tile represents it,
+        // so its servers must not also appear as a foreign group.
+        return Boolean(src?.enabled) && !src?.isLocal;
       }),
     [foreignServers, sourceById],
   );
@@ -391,14 +393,27 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // on web, the page origin.
   const activeConfigHost = useServerConfigStore((s) => s.config?.host ?? null);
   const activeSourceId = useMemo(() => {
+    // The active instance is the one holding the live Matrix session. This
+    // is robust on native, where `serverConfig.config` is often null (no
+    // homeserver override) — matching on host alone returned null, which
+    // sent the active group to the fallback (top) and made the rail reorder
+    // on every switch. The session userId is the reliable anchor.
+    if (currentUserId) {
+      const bySession = allSources.find((s) => s.userId === currentUserId);
+      if (bySession) return bySession.id;
+    }
+    // Fallback: match the active homeserver override host (web/origin).
     const host = (
       activeConfigHost ??
       (typeof window !== "undefined" ? window.location?.hostname : null) ??
       ""
     ).toLowerCase();
-    if (!host) return null;
-    return allSources.find((s) => s.host.toLowerCase() === host)?.id ?? null;
-  }, [activeConfigHost, allSources]);
+    if (host) {
+      const byHost = allSources.find((s) => s.host.toLowerCase() === host);
+      if (byHost) return byHost.id;
+    }
+    return null;
+  }, [currentUserId, activeConfigHost, allSources]);
 
   // Server GROUPS rendered in the SAME order as the Sources rail on the
   // left (`allSources` order). The active instance's group is NOT hoisted
