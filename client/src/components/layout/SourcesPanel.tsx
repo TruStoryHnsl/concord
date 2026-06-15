@@ -190,6 +190,11 @@ function SortableSourceTile({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: source.id });
   const { bg, bgStyle, icon, label } = sourceTile(source);
+  // A p2p (porch) source is a fundamentally different connection kind
+  // from a web instance — surface it explicitly with a tinted ring +
+  // corner badge so the user reads "peer/porch" at a glance, on top of
+  // the distinct brand glyph.
+  const isP2p = source.platform === "concord-p2p";
   const constrainedTransform = transform ? { ...transform, x: 0 } : null;
 
   return (
@@ -211,16 +216,35 @@ function SortableSourceTile({
           event.stopPropagation();
           onContextMenu(source, event.clientX, event.clientY);
         }}
-        title={source.isOwner ? `${label} (owner)` : label}
+        title={
+          isP2p
+            ? `${label} — peer (p2p porch)${source.isOwner ? " · owner" : ""}`
+            : source.isOwner
+              ? `${label} (owner)`
+              : label
+        }
         data-testid={`source-tile-${source.id}`}
+        data-source-kind={isP2p ? "p2p" : "web"}
         style={bgStyle}
         className={`group relative w-8 h-8 flex items-center justify-center transition-all duration-150 ${bg} ${
+          isP2p && !bgStyle ? "ring-1 ring-secondary/50" : ""
+        } ${
           source.enabled
             ? "rounded-xl shadow-lg scale-100 text-on-surface"
             : "rounded-lg hover:rounded-xl scale-95 hover:scale-100 opacity-45 hover:opacity-80 grayscale"
         }`}
       >
         {icon}
+        {isP2p ? (
+          <span
+            data-testid={`source-p2p-badge-${source.id}`}
+            className="absolute -bottom-1 -left-1 w-3 h-3 rounded-full bg-secondary ring-2 ring-surface flex items-center justify-center"
+            title="Peer-to-peer (porch) connection"
+            aria-label="Peer-to-peer source"
+          >
+            <span className="block w-1.5 h-1.5 rounded-full bg-on-secondary" />
+          </span>
+        ) : null}
         {source.isOwner ? (
           <span
             data-testid={`source-owner-badge-${source.id}`}
@@ -434,8 +458,16 @@ export function SourcesPanel({
   onLocalOpen,
   onExplore,
   mobile = false,
+  canManageSources = true,
 }: {
   onAddSource: () => void;
+  /**
+   * Whether the viewer may ADD web/Matrix sources (instance admin/owner,
+   * or a native app user). When false, the add affordance routes to the
+   * peer-porch pairing flow only — a plain web visitor can still reach
+   * a native build's porch, but cannot add sources to this instance.
+   */
+  canManageSources?: boolean;
   onSourceSelect?: (sourceId: string) => void;
   /** Called when a tile is clicked — opens the source browser for that source. */
   onSourceOpen?: (sourceId: string) => void;
@@ -457,6 +489,13 @@ export function SourcesPanel({
   const updateSource = useSourcesStore((s) => s.updateSource);
   const openServerSettings = useSettingsStore((s) => s.openServerSettings);
   const openSettings = useSettingsStore((s) => s.openSettings);
+
+  // The add affordance is role-aware: admins/owners get the full
+  // add-source flow; plain visitors get ONLY the peer-porch pairing
+  // path (so they can still reach a native build's porch).
+  const handleAddSource = canManageSources
+    ? onAddSource
+    : () => useSettingsStore.getState().requestAddSource("pair-peer");
 
   // Right-click / long-press surface. We keep the menu state local
   // because nothing else in the app needs to inspect "is a source
@@ -614,7 +653,8 @@ export function SourcesPanel({
       return (
         <SortableAddSourceTile
           key={id}
-          onAddSource={onAddSource}
+          onAddSource={handleAddSource}
+          canManageSources={canManageSources}
         />
       );
     }
@@ -745,11 +785,11 @@ export function SourcesPanel({
             </button>
           )}
           <button
-            onClick={onAddSource}
+            onClick={handleAddSource}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-sm text-on-surface-variant hover:text-on-surface transition-colors"
           >
-            <span className="material-symbols-outlined text-base">add</span>
-            Add Source
+            <span className="material-symbols-outlined text-base">{canManageSources ? "add" : "hub"}</span>
+            {canManageSources ? "Add Source" : "Connect a peer"}
           </button>
         </div>
         {contextMenuOverlay}
@@ -814,8 +854,10 @@ export function SourcesPanel({
 
 function SortableAddSourceTile({
   onAddSource,
+  canManageSources = true,
 }: {
   onAddSource: () => void;
+  canManageSources?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: ADD_SOURCE_TILE_ID });
@@ -834,10 +876,11 @@ function SortableAddSourceTile({
         {...attributes}
         {...listeners}
         onClick={onAddSource}
-        title="Add Source"
+        title={canManageSources ? "Add source" : "Connect to a peer"}
+        data-testid="add-source-tile"
         className="w-8 h-8 rounded-xl hover:rounded-lg bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-all duration-150"
       >
-        <span className="material-symbols-outlined text-lg">add</span>
+        <span className="material-symbols-outlined text-lg">{canManageSources ? "add" : "hub"}</span>
       </button>
     </div>
   );

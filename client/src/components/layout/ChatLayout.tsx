@@ -81,6 +81,7 @@ import {
   type MatrixSourceDraft,
 } from "../sources/matrixSourceAuth";
 import { switchToSource } from "../../lib/switchToSource";
+import { isTauri } from "../../api/servitude";
 import { useFormatStore } from "../../stores/format";
 import { useBootReadyStore } from "../../stores/bootReady";
 import { useInstanceAdmin } from "./chatLayout/useInstanceAdmin";
@@ -191,6 +192,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [placeBannerDismissed, setPlaceBannerDismissed] = useState(false);
   // INS-070 — admin gate + Extension Library modal visibility.
   const isInstanceAdmin = useInstanceAdmin(accessToken);
+  // Only an instance admin/owner (or a native app user, who owns their
+  // own install) may ADD web/Matrix/Reticulum sources. Plain web visitors
+  // can still connect to a peer's porch — that path stays open to all.
+  const canManageSources = isInstanceAdmin || isTauri();
   const [extensionCatalogOpen, setExtensionCatalogOpen] = useState(false);
 
   // ── Navigation stack (replaces the flat scroll-snap page-depth enum) ──
@@ -659,6 +664,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 <div className="w-[41px] mr-[2px] flex-shrink-0">
                   <SectionBoundary>
                     <SourcesPanel
+                      canManageSources={canManageSources}
                       onAddSource={openAddSource}
                       onSourceOpen={openSourceBrowser}
                       onLocalOpen={openLocal}
@@ -952,6 +958,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           {mobileView === "sources" && (
             <SourcesPanel
               mobile
+              canManageSources={canManageSources}
               onAddSource={openAddSource}
               onSourceSelect={() => setMobileView("servers")}
               onExplore={openExplore}
@@ -1680,6 +1687,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       {/* INS-020: Add Source modal — shared between mobile + desktop native */}
       {addSourceOpen && (
         <AddSourceModal
+          canManageSources={canManageSources}
           initialScreen={addSourceInitialScreen}
           onClose={() => {
             setAddSourceOpen(false);
@@ -2189,10 +2197,19 @@ export function AddSourceModal({
   initialScreen,
   onClose,
   onSourceAdded,
+  canManageSources = true,
 }: {
   initialScreen?: string | null;
   onClose: () => void;
   onSourceAdded: () => void;
+  /**
+   * When false, the viewer is a plain web visitor (not instance
+   * admin/owner): they may ONLY connect to a peer's porch (the
+   * "pair-peer" path). All web/Matrix/Reticulum "add source" screens
+   * are hidden and any attempt to land on one is coerced back to
+   * pair-peer — adding sources is an admin/owner action.
+   */
+  canManageSources?: boolean;
 }) {
   type Screen =
     | "address"
@@ -2221,12 +2238,34 @@ export function AddSourceModal({
     "reticulum",
     "pair-peer",
   ]);
+  // Screens that ADD a web/Matrix/Reticulum source — admin/owner only.
+  // A visitor is coerced off these to the porch-pairing screen.
+  const MANAGED_SCREENS: ReadonlySet<Screen> = new Set([
+    "address",
+    "concord",
+    "matrix",
+    "matrix-auth",
+    "reticulum",
+  ]);
   const startScreen: Screen =
     initialScreen && KNOWN_SCREENS.has(initialScreen as Screen)
       ? (initialScreen as Screen)
       : "address";
-  const [screen, setScreen] = useState<Screen>(startScreen);
+  const effectiveStart: Screen =
+    canManageSources || !MANAGED_SCREENS.has(startScreen)
+      ? startScreen
+      : "pair-peer";
+  const [screen, setScreen] = useState<Screen>(effectiveStart);
   const [error, setError] = useState("");
+
+  // Hard guard: a visitor can never sit on a source-adding screen, even
+  // if some navigation/back action tries to route them there.
+  useEffect(() => {
+    if (!canManageSources && MANAGED_SCREENS.has(screen)) {
+      setScreen("pair-peer");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageSources, screen]);
 
   // Feature F2 — unified address screen. The user types one thing and
   // we figure out which protocol it is. The detection sub-state lives
@@ -2596,8 +2635,17 @@ export function AddSourceModal({
         {/* ── Screen: pick ── */}
         {screen === "pick" && (
           <>
-            <Header title="Explore Sources" onBack={() => setScreen("address")} />
+            <Header
+              title={canManageSources ? "Explore Sources" : "Connect to a peer"}
+              onBack={canManageSources ? () => setScreen("address") : undefined}
+            />
             <div className="space-y-2">
+              {!canManageSources && (
+                <p className="text-xs text-on-surface-variant px-1 pb-1">
+                  You can connect to a peer's porch below. Adding web or Matrix
+                  sources to this instance is reserved for its admin/owner.
+                </p>
+              )}
               {/*
                 "Start / Stop local hosting" sits at the top of the pick
                 screen on Tauri builds only. Web builds hide it entirely
@@ -2608,6 +2656,8 @@ export function AddSourceModal({
               */}
               <LocalHostingControl />
 
+              {canManageSources && (
+              <>
               <button
                 onClick={() => setScreen("concord")}
                 className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
@@ -2663,6 +2713,8 @@ export function AddSourceModal({
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
+              </>
+              )}
 
               <button
                 type="button"
@@ -2680,6 +2732,8 @@ export function AddSourceModal({
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
 
+              {canManageSources && (
+              <>
               <button
                 type="button"
                 disabled
@@ -2709,6 +2763,8 @@ export function AddSourceModal({
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
+              </>
+              )}
             </div>
           </>
         )}
