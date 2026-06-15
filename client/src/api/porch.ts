@@ -33,6 +33,10 @@ export type AclMode = "open" | "allowlist" | "owner_only";
 /** Roles inside a channel ACL row. */
 export type AclRole = "visitor" | "member" | "owner";
 
+/** Which intrinsic local server a channel belongs to. `"porch"` is the
+ *  ephemeral guest doorman; `"home"` is the persistent home server. */
+export type LocalServerId = "porch" | "home";
+
 /** Public channel record. Mirrors `PorchChannel` on the Rust side. */
 export interface PorchChannel {
   id: string;
@@ -41,6 +45,9 @@ export interface PorchChannel {
   acl_mode: AclMode;
   /** Unix milliseconds. */
   created_at: number;
+  /** Which local server this channel belongs to ("porch" | "home").
+   *  Schema v12 added the backing `server_id` column. */
+  server_id: LocalServerId;
 }
 
 /** A single channel message. */
@@ -278,18 +285,30 @@ export async function porchRejectKnock(knockId: string): Promise<Knock> {
   return await invoke<Knock>("porch_reject_knock", { knockId });
 }
 
-/** Owner-side: mint a new channel on this install's porch. */
+/** Owner-side: mint a new channel on this install's porch. `serverId`
+ *  segments the channel onto the porch or home server; defaults to
+ *  `"home"` (the user's primary surface) when omitted. */
 export async function porchCreateChannel(
   name: string,
   kind: ChannelKind,
   aclMode: AclMode,
+  serverId: LocalServerId = "home",
 ): Promise<PorchChannel> {
   if (!isTauri()) throw new Error("porch_create_channel is native-only");
   return await invoke<PorchChannel>("porch_create_channel", {
     name,
     kind,
     aclMode,
+    serverId,
   });
+}
+
+/** Owner-side: export ALL local data (channels + messages + home meta)
+ *  to a single JSON file at the user-chosen `path`. Native only —
+ *  browsers don't host a porch. */
+export async function exportLocalData(path: string): Promise<void> {
+  if (!isTauri()) throw new Error("porch_export_local_data is native-only");
+  await invoke<void>("porch_export_local_data", { path });
 }
 
 /** Owner-side: grant `member` on a channel. Idempotent. */
