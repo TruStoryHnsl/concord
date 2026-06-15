@@ -395,76 +395,9 @@ async def lifespan(app: FastAPI):
     # stays available so the Concord *client* role still works.
     voice_health.start_background_probe()
 
-    # Spec B (docker-pillar): sweep expired mesh_presence rows on a 60s
-    # cadence so the pillar's live web-threaded peer set stays honest and
-    # the table can't grow unbounded. Topology reads already filter on
-    # expires_at; this sweep is the deletion backstop. Started here, torn
-    # down on shutdown below.
-    _mesh_presence_sweeper.start()
-
     yield
 
-    await _mesh_presence_sweeper.stop()
     await voice_health.stop_background_probe()
-
-
-class _MeshPresenceSweeper:
-    """Periodic eviction loop for expired ``mesh_presence`` rows.
-
-    Mirrors the voice-health probe shape: a single asyncio task that wakes
-    every ``_MESH_PRESENCE_SWEEP_INTERVAL`` seconds, deletes stale rows,
-    and exits promptly on stop. Exceptions are logged and never escape the
-    loop, so a transient DB error can't kill the sweeper.
-    """
-
-    _SWEEP_INTERVAL_SECONDS = 60.0
-
-    def __init__(self) -> None:
-        import asyncio
-
-        self._task: "asyncio.Task | None" = None
-        self._stop = asyncio.Event()
-
-    async def _loop(self) -> None:
-        import asyncio
-
-        from routers.mesh import evict_expired_presence
-
-        while not self._stop.is_set():
-            try:
-                removed = await evict_expired_presence()
-                if removed:
-                    logger.debug("mesh: evicted %d expired presence row(s)", removed)
-            except Exception as e:  # pragma: no cover - defensive
-                logger.warning("mesh: presence eviction failed: %s", e)
-            try:
-                await asyncio.wait_for(
-                    self._stop.wait(), timeout=self._SWEEP_INTERVAL_SECONDS
-                )
-            except asyncio.TimeoutError:
-                continue
-
-    def start(self) -> None:
-        import asyncio
-
-        if self._task is not None and not self._task.done():
-            return
-        self._stop.clear()
-        self._task = asyncio.create_task(self._loop(), name="mesh_presence_sweeper")
-
-    async def stop(self) -> None:
-        import asyncio
-
-        self._stop.set()
-        if self._task is not None:
-            try:
-                await asyncio.wait_for(self._task, timeout=2.0)
-            except asyncio.TimeoutError:
-                self._task.cancel()
-            self._task = None
-
-
-_mesh_presence_sweeper = _MeshPresenceSweeper()
 
 
 LOBBY_WELCOME_POST_VERSION = 2

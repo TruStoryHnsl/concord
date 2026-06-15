@@ -70,19 +70,12 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import DATA_DIR, MATRIX_SERVER_NAME
-from database import get_db
-from models import MeshPresence
 from services.tuwunel_config import (
     decode_server_name_patterns,
     read_federation,
@@ -111,21 +104,6 @@ RUST_SNAPSHOT_FILENAME = "mesh_snapshot.json"
 # view. The Rust writer is expected to refresh every few seconds.
 RUST_SNAPSHOT_MAX_AGE_SECS = 30.0
 
-# Hard ceiling on a presence record's requested ttl (seconds). A native
-# instance asks for a ttl; we clamp it so a malicious/buggy peer can't pin
-# a stale row on the pillar indefinitely. Spec E will tune the cadence;
-# 300s (5 min) is a safe upper bound that survives a few missed refreshes.
-MESH_PRESENCE_MAX_TTL_SECS = 300
-
-# Minimum ttl — a presence record must live at least this long, so a peer
-# can't request a 0s ttl that would be evicted before it's ever served.
-MESH_PRESENCE_MIN_TTL_SECS = 1
-
-# Raw Ed25519 public keys are exactly 32 bytes; signatures are 64. We
-# reject anything else at intake (cheap structural guard before crypto).
-ED25519_PUBKEY_LEN = 32
-ED25519_SIG_LEN = 64
-
 
 # ---------------------------------------------------------------------------
 # Wire models — MUST match the client ``MeshGraph`` type
@@ -134,14 +112,7 @@ ED25519_SIG_LEN = 64
 # ---------------------------------------------------------------------------
 
 class MeshGraphNode(BaseModel):
-    """One node in the assembled mesh graph (wire shape).
-
-    ``via`` / ``kind`` are OPTIONAL and only set for web-threaded peers a
-    native instance reported to this pillar (Spec B): ``via="pillar"`` +
-    ``kind="web_threaded"``. They are omitted (``None`` → dropped from the
-    wire) for the pillar itself and for federated neighbors, so existing
-    clients that don't know the fields keep working unchanged.
-    """
+    """One node in the assembled mesh graph (wire shape)."""
 
     peer_id: str = Field(..., description="Stable node id (base58 PeerId on "
                          "native; Matrix server_name on the web/docker bridge).")
@@ -149,17 +120,6 @@ class MeshGraphNode(BaseModel):
         ...,
         description="BFS hop distance from the local node: 0 = this node, "
                     "1 = direct neighbor, null = unreachable island.",
-    )
-    via: str | None = Field(
-        default=None,
-        description="How this node is reached. 'pillar' for a web-threaded "
-                    "peer the docker pillar relays. Omitted for the pillar "
-                    "itself and federated neighbors.",
-    )
-    kind: str | None = Field(
-        default=None,
-        description="Node kind. 'web_threaded' for a p2p peer reported to "
-                    "the pillar via /api/mesh/presence. Omitted otherwise.",
     )
 
 
@@ -199,60 +159,9 @@ class MeshTopologyResponse(BaseModel):
     source: str = Field(..., description="'rust_snapshot' or 'federation'.")
 
 
-class MeshPresenceRequest(BaseModel):
-    """Signed presence record a native (p2p) instance pushes to this pillar.
-
-    ``persona_pubkey`` and ``sig`` are hex-encoded on the wire (raw bytes
-    don't survive JSON). The pillar verifies ``sig`` is a valid Ed25519
-    signature, made by ``persona_pubkey``, over the canonical message of
-    ``(persona_id, persona_pubkey, adjacency, ttl)`` — see
-    ``_presence_canonical_message``.
-    """
-
-    persona_id: str = Field(..., min_length=1, max_length=256)
-    persona_pubkey: str = Field(..., description="hex-encoded 32-byte Ed25519 public key")
-    sig: str = Field(..., description="hex-encoded 64-byte Ed25519 signature")
-    adjacency: list[str] = Field(default_factory=list)
-    ttl: int = Field(..., description="requested TTL in seconds (clamped server-side)")
-
-
-class MeshPresenceResponse(BaseModel):
-    """Result of accepting a presence record."""
-
-    ok: bool
-    persona_id: str
-    expires_at: str = Field(..., description="RFC3339 UTC instant the record expires")
-    ttl: int = Field(..., description="effective (clamped) TTL in seconds")
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _presence_canonical_message(
-    persona_id: str, persona_pubkey: bytes, adjacency: list[str], ttl: int
-) -> bytes:
-    """Build the canonical byte string the persona signature covers.
-
-    Stable, unambiguous framing so the native signer and this verifier
-    agree byte-for-byte. Fields are length-independent because we join the
-    adjacency with a separator that cannot appear inside a peer id on the
-    wire (newline). The pubkey is included as hex so the message is the
-    same regardless of how the caller framed it.
-
-    Format (UTF-8):
-        ``concord-mesh-presence/v1\n<persona_id>\n<pubkey_hex>\n<adj>\n<ttl>``
-    where ``<adj>`` is the adjacency entries joined by ``,``.
-    """
-    adj = ",".join(adjacency)
-    msg = (
-        "concord-mesh-presence/v1\n"
-        f"{persona_id}\n"
-        f"{persona_pubkey.hex()}\n"
-        f"{adj}\n"
-        f"{ttl}"
-    )
-    return msg.encode("utf-8")
 
 def _hub_enabled() -> bool:
     """Whether ``CONCORD_HUB`` is truthy.
@@ -380,130 +289,27 @@ def build_federation_graph(
     return nodes, edges
 
 
-def merge_presence_nodes(
-    local_server_name: str,
-    nodes: list[MeshGraphNode],
-    edges: list[MeshGraphEdge],
-    presence_rows: list[MeshPresence],
-) -> tuple[list[MeshGraphNode], list[MeshGraphEdge]]:
-    """Fold web-threaded presence peers into an existing graph (pure).
-
-    Each non-expired presence row becomes a hop-1 node tagged
-    ``via="pillar"`` / ``kind="web_threaded"``, with an undirected edge
-    from the local pillar node. A presence peer whose ``persona_id``
-    collides with a node already in the graph (the pillar itself, a
-    federated neighbor, or a rust-snapshot peer) is skipped — those
-    nodes are authoritative and must not be relabeled.
-
-    ``local`` anchors the new edges; it is whatever the caller used as the
-    hop-0 center so the edge endpoints line up with the rest of the graph.
-
-    TODO(Spec B P3 / tunneled-spring gate): visibility gating is OUT OF
-    SCOPE here. Today every caller of /api/mesh/topology sees the live
-    presence peers. Before P3 ships, this set MUST be gated on the
-    caller's pairing/trust with the pillar (fail-closed for unpaired
-    callers) — see the "tunneled spring" instruction doc.
-    """
-    local = (local_server_name or "localhost").strip() or "localhost"
-    existing = {n.peer_id for n in nodes}
-    out_nodes = list(nodes)
-    out_edges = list(edges)
-
-    seen: set[str] = set()
-    for row in presence_rows:
-        pid = (row.persona_id or "").strip()
-        if not pid or pid in existing or pid in seen:
-            continue
-        seen.add(pid)
-        out_nodes.append(
-            MeshGraphNode(
-                peer_id=pid,
-                hop_distance=1,
-                via="pillar",
-                kind="web_threaded",
-            )
-        )
-        a, b = (local, pid) if local <= pid else (pid, local)
-        out_edges.append(MeshGraphEdge(a=a, b=b))
-
-    out_nodes.sort(
-        key=lambda n: (n.hop_distance if n.hop_distance is not None else 1 << 30, n.peer_id)
-    )
-    out_edges.sort(key=lambda e: (e.a, e.b))
-    return out_nodes, out_edges
-
-
-async def _load_active_presence(db: AsyncSession) -> list[MeshPresence]:
-    """Return all non-expired ``mesh_presence`` rows.
-
-    A row is active iff ``expires_at`` is still in the future. Expired rows
-    are excluded here (and the background sweep deletes them), so the live
-    peer set the map renders only reflects peers that refreshed within
-    their TTL. A DB error degrades to an empty list — a presence-store
-    failure must never break the (federation-correct) base topology.
-    """
-    now = datetime.now(timezone.utc)
-    try:
-        result = await db.execute(
-            select(MeshPresence).where(MeshPresence.expires_at > now)
-        )
-        return list(result.scalars().all())
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("mesh: presence read failed, base graph only: %s", exc)
-        return []
-
-
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
-def _local_node_id(nodes: list[MeshGraphNode]) -> str:
-    """The hop-0 node's id, or MATRIX_SERVER_NAME if there isn't one.
-
-    Presence peers anchor their pillar edge to this id, so it must match
-    whatever the base graph used as its center (the rust-snapshot self
-    node, or the federation local server name)."""
-    for n in nodes:
-        if n.hop_distance == 0:
-            return n.peer_id
-    return (MATRIX_SERVER_NAME or "localhost").strip() or "localhost"
-
-
-@router.get(
-    "/topology",
-    response_model=MeshTopologyResponse,
-    # Drop None ``via``/``kind`` from nodes so the wire shape for the
-    # pillar + federated/rust nodes stays byte-identical to the pre-Spec-B
-    # contract ({peer_id, hop_distance}); web-threaded peers carry the two
-    # extra keys.
-    response_model_exclude_none=True,
-)
-async def get_mesh_topology(
-    db: AsyncSession = Depends(get_db),
-) -> MeshTopologyResponse:
+@router.get("/topology", response_model=MeshTopologyResponse)
+async def get_mesh_topology() -> MeshTopologyResponse:
     """Return the mesh topology this docker node observes, plus its hub role.
 
     Prefers a fresh headless-Rust ``mesh_snapshot.json`` (real libp2p
     N-hop topology) when present; otherwise assembles the
     federation-derived graph (this hub at the center, its federated
-    homeservers at hop 1). Either way, the web-threaded peers that native
-    instances reported to this pillar (non-expired ``mesh_presence`` rows)
-    are folded in as hop-1 ``via="pillar"`` nodes. Always returns at least
-    the local host node, so the map renders the "big brother" hub even
-    before any peer appears.
+    homeservers at hop 1). Always returns at least the local host node, so
+    the map renders the "big brother" hub even before any peer appears.
     """
     hub_enabled = _hub_enabled()
     backup_count = _backup_blob_count()
-
-    presence_rows = await _load_active_presence(db)
 
     # 1. Prefer a real libp2p snapshot from a headless servitude.
     rust = _load_rust_snapshot()
     if rust is not None:
         nodes, edges = rust
-        nodes, edges = merge_presence_nodes(
-            _local_node_id(nodes), nodes, edges, presence_rows
-        )
         return MeshTopologyResponse(
             nodes=nodes,
             edges=edges,
@@ -527,9 +333,6 @@ async def get_mesh_topology(
         hostnames = []
 
     nodes, edges = build_federation_graph(MATRIX_SERVER_NAME, hostnames)
-    nodes, edges = merge_presence_nodes(
-        _local_node_id(nodes), nodes, edges, presence_rows
-    )
     return MeshTopologyResponse(
         nodes=nodes,
         edges=edges,
@@ -538,120 +341,3 @@ async def get_mesh_topology(
         backup_blob_count=backup_count,
         source="federation",
     )
-
-
-@router.post(
-    "/presence",
-    response_model=MeshPresenceResponse,
-    status_code=200,
-)
-async def post_mesh_presence(
-    req: MeshPresenceRequest,
-    db: AsyncSession = Depends(get_db),
-) -> MeshPresenceResponse:
-    """Accept a signed presence record from a connected p2p-capable instance.
-
-    Spec B: the docker build is a PILLAR. Native instances that connect to
-    it publish their presence/adjacency here; the pillar stores them
-    (TTL'd) and re-serves them through ``/api/mesh/topology`` as
-    web-threaded hop-1 peers. The pillar never speaks libp2p/WireGuard —
-    this is the only way p2p peers appear on its map.
-
-    Authenticity = an Ed25519 signature over the canonical message of
-    ``(persona_id, persona_pubkey, adjacency, ttl)``, verified against the
-    supplied 32-byte public key. Bad signature / malformed key / bad hex
-    → 400 (fail-closed). The requested ttl is clamped to
-    ``[MESH_PRESENCE_MIN_TTL_SECS, MESH_PRESENCE_MAX_TTL_SECS]`` so a peer
-    can't pin a stale row. Re-publishing upserts the persona's single row.
-    """
-    # Decode hex fields. Malformed hex is a client error, not a crash.
-    try:
-        pubkey_bytes = bytes.fromhex(req.persona_pubkey)
-        sig_bytes = bytes.fromhex(req.sig)
-    except ValueError:
-        raise HTTPException(400, "persona_pubkey and sig must be valid hex")
-
-    # Structural guards before doing crypto: an Ed25519 pubkey is exactly
-    # 32 bytes, a signature exactly 64. Reject anything else cheaply.
-    if len(pubkey_bytes) != ED25519_PUBKEY_LEN:
-        raise HTTPException(400, "persona_pubkey must be 32 bytes (Ed25519)")
-    if len(sig_bytes) != ED25519_SIG_LEN:
-        raise HTTPException(400, "sig must be 64 bytes (Ed25519)")
-
-    # Clamp the ttl to the allowed window.
-    ttl = max(MESH_PRESENCE_MIN_TTL_SECS, min(int(req.ttl), MESH_PRESENCE_MAX_TTL_SECS))
-
-    # Verify the signature over the canonical message.
-    message = _presence_canonical_message(
-        req.persona_id, pubkey_bytes, req.adjacency, req.ttl
-    )
-    try:
-        Ed25519PublicKey.from_public_bytes(pubkey_bytes).verify(sig_bytes, message)
-    except InvalidSignature:
-        raise HTTPException(400, "presence signature verification failed")
-    except Exception:
-        # A malformed key that slipped the length check, or any other
-        # crypto-layer rejection. Treat as a bad request, fail-closed.
-        raise HTTPException(400, "presence signature could not be verified")
-
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(seconds=ttl)
-    adjacency_json = json.dumps(req.adjacency)
-    via_pillar = (MATRIX_SERVER_NAME or "localhost").strip() or "localhost"
-
-    # Upsert: one live row per persona. Re-publishing refreshes the TTL.
-    existing = (
-        await db.execute(
-            select(MeshPresence).where(MeshPresence.persona_id == req.persona_id)
-        )
-    ).scalar_one_or_none()
-
-    if existing is not None:
-        existing.persona_pubkey = pubkey_bytes
-        existing.sig = sig_bytes
-        existing.adjacency = adjacency_json
-        existing.ttl = ttl
-        existing.expires_at = expires_at
-        existing.posted_at = now
-        existing.via_pillar = via_pillar
-    else:
-        db.add(
-            MeshPresence(
-                persona_id=req.persona_id,
-                persona_pubkey=pubkey_bytes,
-                sig=sig_bytes,
-                adjacency=adjacency_json,
-                ttl=ttl,
-                expires_at=expires_at,
-                posted_at=now,
-                via_pillar=via_pillar,
-            )
-        )
-    await db.commit()
-
-    return MeshPresenceResponse(
-        ok=True,
-        persona_id=req.persona_id,
-        expires_at=expires_at.isoformat(),
-        ttl=ttl,
-    )
-
-
-async def evict_expired_presence() -> int:
-    """Delete all expired ``mesh_presence`` rows. Returns the count removed.
-
-    Called on a 60s cadence from the app lifespan (see
-    ``server/main.py``). Eviction keeps the live peer set honest even
-    between topology reads (which already filter on ``expires_at``) and
-    bounds table growth. Best-effort: a failure is logged and swallowed so
-    the sweep loop survives a transient DB hiccup.
-    """
-    from database import async_session
-
-    now = datetime.now(timezone.utc)
-    async with async_session() as db:
-        result = await db.execute(
-            delete(MeshPresence).where(MeshPresence.expires_at <= now)
-        )
-        await db.commit()
-        return result.rowcount or 0

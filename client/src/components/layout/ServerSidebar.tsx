@@ -22,7 +22,6 @@ import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
 import { useAuthStore } from "../../stores/auth";
 import { useSourcesStore } from "../../stores/sources";
-import { useServerConfigStore } from "../../stores/serverConfig";
 import { useSettingsStore } from "../../stores/settings";
 import { switchToSource } from "../../lib/switchToSource";
 import {
@@ -123,49 +122,6 @@ function normalizeServerOrder(
   }
 
   return [...nativePart, ADD_SERVER_TILE_ID, ...bridgedPart];
-}
-
-/**
- * Order server GROUPS to match the Sources rail on the left.
- *
- * The displayed order of server groups MUST follow the source order
- * (`sources` array order === the left rail's top-to-bottom order). The
- * ACTIVE instance's group is NOT hoisted to the top — it renders in its
- * own source's slot, so switching the active source does not reorder the
- * groups. This is the single source of truth for that ordering and is
- * unit-tested directly (see ServerSidebar.groupOrder.test.ts).
- *
- * @param sources         the Sources-rail order (id + enabled).
- * @param activeSourceId  the source whose servers are the active instance's
- *                        own (`servers`), or null if none matches.
- * @param foreignSourceIdsWithServers  source ids that have ≥1 visible
- *                        foreign server.
- * @param hasActiveServers  whether the active instance has any servers to show.
- */
-export function orderServerGroups(
-  sources: { id: string; enabled: boolean }[],
-  activeSourceId: string | null,
-  foreignSourceIdsWithServers: Set<string>,
-  hasActiveServers: boolean,
-): Array<{ kind: "active" } | { kind: "foreign"; sourceId: string }> {
-  const groups: Array<{ kind: "active" } | { kind: "foreign"; sourceId: string }> = [];
-  let activePlaced = false;
-  for (const src of sources) {
-    if (!src.enabled) continue;
-    if (src.id === activeSourceId) {
-      if (hasActiveServers) {
-        groups.push({ kind: "active" });
-        activePlaced = true;
-      }
-    } else if (foreignSourceIdsWithServers.has(src.id)) {
-      groups.push({ kind: "foreign", sourceId: src.id });
-    }
-  }
-  // Fallback: active instance has no matching source row yet — don't drop it.
-  if (!activePlaced && hasActiveServers) {
-    groups.unshift({ kind: "active" });
-  }
-  return groups;
 }
 
 interface ServerSidebarProps {
@@ -384,51 +340,6 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
     const split = railOrder.indexOf(ADD_SERVER_TILE_ID);
     return split === -1 ? [ADD_SERVER_TILE_ID] : railOrder.slice(split);
   }, [railOrder]);
-
-  // Which source is the ACTIVE instance? Its servers live in `servers`
-  // (not `foreignServers`) and carry no sourceId, so we match it to a
-  // source row by host: the active homeserver override (serverConfig) or,
-  // on web, the page origin.
-  const activeConfigHost = useServerConfigStore((s) => s.config?.host ?? null);
-  const activeSourceId = useMemo(() => {
-    const host = (
-      activeConfigHost ??
-      (typeof window !== "undefined" ? window.location?.hostname : null) ??
-      ""
-    ).toLowerCase();
-    if (!host) return null;
-    return allSources.find((s) => s.host.toLowerCase() === host)?.id ?? null;
-  }, [activeConfigHost, allSources]);
-
-  // Server GROUPS rendered in the SAME order as the Sources rail on the
-  // left (`allSources` order). The active instance's group is NOT hoisted
-  // to the top — it renders in its own source's slot, so switching the
-  // active source does NOT reorder the displayed groups. Each foreign
-  // source contributes its own contiguous group; the active source's group
-  // renders the live `topRailIds` (drag-reorderable) in place.
-  const orderedSourceGroups = useMemo(() => {
-    const foreignBySource = new Map<string, typeof visibleForeign>();
-    for (const srv of visibleForeign) {
-      if (!srv.sourceId) continue;
-      const arr = foreignBySource.get(srv.sourceId);
-      if (arr) arr.push(srv);
-      else foreignBySource.set(srv.sourceId, [srv]);
-    }
-    return orderServerGroups(
-      allSources,
-      activeSourceId,
-      new Set(foreignBySource.keys()),
-      topRailIds.length > 0,
-    ).map((g) =>
-      g.kind === "active"
-        ? { key: "active", kind: "active" as const }
-        : {
-            key: `foreign:${g.sourceId}`,
-            kind: "foreign" as const,
-            servers: foreignBySource.get(g.sourceId) ?? [],
-          },
-    );
-  }, [allSources, activeSourceId, visibleForeign, topRailIds]);
 
   const getRailServer = useCallback(
     (id: string) => visibleServers.find((server) => server.id === id),
@@ -905,38 +816,17 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
             strategy={verticalListSortingStrategy}
           >
             <div className="flex flex-col min-h-0 flex-1">
-              {/* Groups in Sources-rail order — active group is not hoisted. */}
-              {orderedSourceGroups.map((group) => {
-                const src =
-                  group.kind === "foreign"
-                    ? group.servers[0]?.sourceId
-                      ? sourceById.get(group.servers[0].sourceId)
-                      : undefined
-                    : undefined;
-                const label =
-                  group.kind === "foreign"
-                    ? src?.instanceName || src?.host || "Other instance"
-                    : null;
-                return (
-                  <div
-                    key={group.key}
-                    className={
-                      group.kind === "foreign"
-                        ? "mt-2 pt-2 border-t border-secondary/20 space-y-0.5"
-                        : "space-y-0.5"
-                    }
-                  >
-                    {label && (
-                      <p className="text-[10px] font-label font-medium text-secondary/70 uppercase tracking-widest px-3 pb-1">
-                        {label}
-                      </p>
-                    )}
-                    {group.kind === "active"
-                      ? topRailIds.map(renderMobileRailItem)
-                      : group.servers.map(renderForeignMobileTile)}
-                  </div>
-                );
-              })}
+              <div className="space-y-0.5">
+                {topRailIds.map(renderMobileRailItem)}
+              </div>
+              {visibleForeign.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-secondary/20 space-y-0.5">
+                  <p className="text-[10px] font-label font-medium text-secondary/70 uppercase tracking-widest px-3 pb-1">
+                    Other instances
+                  </p>
+                  {visibleForeign.map(renderForeignMobileTile)}
+                </div>
+              )}
               <div className="flex-1 min-h-4" aria-hidden="true" />
               <div className="space-y-0.5 pb-1">
                 {bottomRailIds.map(renderMobileRailItem)}
@@ -1020,25 +910,17 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
           strategy={verticalListSortingStrategy}
         >
           <div className="w-full flex flex-col items-center min-h-0 flex-1">
-            {/* Server groups in the SAME order as the Sources rail on the
-                left. The active source's group is NOT hoisted to the top —
-                it renders in its source's slot, so switching sources does
-                not reorder the displayed groups. */}
-            {orderedSourceGroups.map((group, i) => (
-              <div key={group.key} className="contents">
-                {i > 0 && (
-                  <div
-                    className="w-8 h-px bg-secondary/25 my-1"
-                    aria-hidden="true"
-                  />
-                )}
+            <div className="w-full flex flex-col items-center gap-2">
+              {topRailIds.map(renderDesktopRailItem)}
+            </div>
+            {visibleForeign.length > 0 && (
+              <>
+                <div className="w-8 h-px bg-secondary/25 my-1" title="Other connected instances" />
                 <div className="w-full flex flex-col items-center gap-2">
-                  {group.kind === "active"
-                    ? topRailIds.map(renderDesktopRailItem)
-                    : group.servers.map(renderForeignDesktopTile)}
+                  {visibleForeign.map(renderForeignDesktopTile)}
                 </div>
-              </div>
-            ))}
+              </>
+            )}
             <div className="flex-1 min-h-4" aria-hidden="true" />
             <div className="w-full flex flex-col items-center gap-2 pb-1">
               {bottomRailIds.map(renderDesktopRailItem)}

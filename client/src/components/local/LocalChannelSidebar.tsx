@@ -3,22 +3,21 @@
  * (porch OR home, see the 2026-06-01 CONSOLIDATED ARCHITECTURE filing
  * in `instructions_inbox.md`).
  *
- * Today both tiles read their channels from the existing `porchStore`
- * (which is backed by the persistent porch SQLite). That's correct
- * for the HOME server — the porch SQLite is being repurposed as the
- * home's backing store; rename of the porch module / file is a
- * follow-up PR. The PORCH server's ephemeral in-memory channel set
- * lands in F1a (parallel PR); until then the porch tile shows the
- * same list (still useful — the porch tile changing the header
- * label confirms the routing works end-to-end).
+ * Both tiles read from the same `porchStore` (backed by the persistent
+ * porch SQLite), but the rendered channel list is FILTERED by the
+ * active local server's `server_id` (schema v12): the porch tile shows
+ * only `server_id === "porch"` channels, the home tile only
+ * `server_id === "home"`. Switching the active tile re-selects that
+ * server's first channel so the chat pane changes — this is the
+ * user-visible fix for "porch and home show the same channels."
  *
  * The server-name header reflects the currently-active local server:
  *   - `active === "home"` → `useHomeServerNameStore.name` (default "home")
  *   - `active === "porch"` → literal "porch" (porch is not renamable)
  */
 
-import { memo, useEffect } from "react";
-import { usePorchStore } from "../../stores/porchStore";
+import { memo, useEffect, useMemo } from "react";
+import { channelsForServer, usePorchStore } from "../../stores/porchStore";
 import { useHomeServerNameStore } from "../../stores/homeServerName";
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { isTauri } from "../../api/servitude";
@@ -57,6 +56,39 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
       void loadChannels();
     }
   }, [isLoaded, loadChannels]);
+
+  // Channels for the active local server only. Schema v12 stamps every
+  // channel with a `server_id` ("porch" | "home"); this is the core
+  // filter that makes the two tiles show DIFFERENT channels.
+  const visibleChannels = useMemo(
+    () => channelsForServer(channels, active),
+    [channels, active],
+  );
+
+  // When the active server tile changes (or the channel list first
+  // loads), make sure the selected channel belongs to the active
+  // server — otherwise the chat pane would keep showing the previous
+  // server's channel after a tile switch. Select the active server's
+  // first channel; if it has none, leave the selection alone.
+  useEffect(() => {
+    if (!isLoaded || lanMapOpen || meshMapOpen) return;
+    const selectionIsForActive = visibleChannels.some(
+      (c) => c.id === selectedChannelId,
+    );
+    if (selectionIsForActive) return;
+    const first = visibleChannels[0]?.id;
+    if (first) {
+      void selectChannel(first);
+    }
+  }, [
+    isLoaded,
+    active,
+    visibleChannels,
+    selectedChannelId,
+    lanMapOpen,
+    meshMapOpen,
+    selectChannel,
+  ]);
 
   const serverLabel =
     active === "home" ? homeName.trim() || "home" : "porch";
@@ -176,7 +208,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                   Text Channels
                 </h3>
               </div>
-              {channels.map((ch) => {
+              {visibleChannels.map((ch) => {
                 const isActive =
                   !lanMapOpen && !meshMapOpen && selectedChannelId === ch.id;
                 return (
@@ -202,7 +234,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                   </div>
                 );
               })}
-              {channels.length === 0 && (
+              {visibleChannels.length === 0 && (
                 <p className="px-3 py-4 text-xs text-on-surface-variant/70 font-label text-center">
                   No channels yet
                 </p>
