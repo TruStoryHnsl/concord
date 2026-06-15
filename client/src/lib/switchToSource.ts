@@ -34,6 +34,7 @@ import { useAuthStore } from "../stores/auth";
 import { useServerConfigStore } from "../stores/serverConfig";
 import { useServerStore } from "../stores/server";
 import { useSourcesStore } from "../stores/sources";
+import { useVoiceStore } from "../stores/voice";
 import { isLocalInstanceSource } from "./sourceIdentity";
 
 export type SwitchResult = "switched" | "noop" | "needs-auth" | "not-found";
@@ -106,6 +107,17 @@ export function switchToSource(
         deviceId: readSessionDeviceId() ?? current.deviceId,
       });
     }
+  }
+
+  // A source switch invalidates any live voice session (it belonged to the
+  // OLD instance's SFU). Tear it down BEFORE swapping the client — leaving
+  // it connected strands the old LiveKit room and makes the lazy voice-bar
+  // controls render outside a <LiveKitRoom> during the swap, throwing
+  // "no room provided" into the error boundary (the native link loop).
+  try {
+    useVoiceStore.getState().disconnect();
+  } catch {
+    /* voice store may be uninitialised — non-fatal */
   }
 
   // Re-point homeserver + API base BEFORE recreating the client so

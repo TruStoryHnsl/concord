@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { useLocalParticipant, useConnectionState } from "@livekit/components-react";
+import { useCallback, useContext } from "react";
+import { useLocalParticipant, useConnectionState, RoomContext } from "@livekit/components-react";
 import { ConnectionState } from "livekit-client";
 
 // Phase 10 (bundle split): the mic/return/leave control cluster is the
@@ -10,7 +10,21 @@ import { ConnectionState } from "livekit-client";
 // bar no longer drags the LiveKit chunk into cold start. It is rendered
 // (lazily) only from inside the connected `<LiveKitRoom>` subtree, where
 // the hooks have a Room context to read from.
-export function VoiceBarControls({
+
+/**
+ * Guard wrapper. This lazy component can momentarily render OUTSIDE a
+ * `<LiveKitRoom>` — e.g. during the Suspense fallback while `VoiceRoomLayer`
+ * loads, or mid source-switch — and the LiveKit hooks below throw
+ * "no room provided" when there is no Room context, which crashed the app
+ * into an error-boundary loop. Bail out cleanly when there is no room.
+ */
+export function VoiceBarControls(props: { onReturn: () => void; onLeave: () => void }) {
+  const room = useContext(RoomContext);
+  if (!room) return null;
+  return <VoiceBarControlsInner {...props} />;
+}
+
+function VoiceBarControlsInner({
   onReturn,
   onLeave,
 }: {
