@@ -38,9 +38,12 @@ export interface MeshNode {
   /**
    * Visual emphasis. `host` is the center node; `paired` peers are drawn
    * with the primary accent; `known` with a muted accent; `unknown` plain.
-   * F2 layers can add more variants without breaking this contract.
+   * `pillar` (Spec B) is a web-threaded peer relayed through a docker
+   * pillar — drawn in a distinct color and slightly larger than a regular
+   * peer so it reads as "reachable through the pillar". F2 layers can add
+   * more variants without breaking this contract.
    */
-  kind: "host" | "paired" | "known" | "unknown";
+  kind: "host" | "paired" | "known" | "unknown" | "pillar";
 }
 
 /** An undirected edge between two node ids. */
@@ -82,9 +85,20 @@ interface PlacedNode extends MeshNode {
   r: number;
 }
 
-/** Node radius in CSS pixels by kind. Host is largest. */
+/** Node radius in CSS pixels by kind. Host is largest; web-threaded
+ * pillar peers are drawn slightly larger than a regular peer so they
+ * stand out as relayed-through-the-pillar nodes. */
 function radiusFor(kind: MeshNode["kind"]): number {
-  return kind === "host" ? 22 : 14;
+  if (kind === "host") return 22;
+  if (kind === "pillar") return 17;
+  return 14;
+}
+
+/** Distinct accent for web-threaded pillar peers (Spec B). Falls back to a
+ * teal that reads apart from the primary (host/paired) and variant
+ * (known) colors regardless of theme. */
+function pillarColor(): string {
+  return cssVar("--color-tertiary", "#2dd4bf");
 }
 
 const DEFAULT_NODE_CAP = 60;
@@ -220,13 +234,16 @@ export function MeshCanvas({
     }
 
     // Nodes.
+    const colorPillar = pillarColor();
     for (const p of placed) {
       const fill =
         p.kind === "host" || p.kind === "paired"
           ? colorPrimary
-          : p.kind === "known"
-            ? colorVariant
-            : colorOutline;
+          : p.kind === "pillar"
+            ? colorPillar
+            : p.kind === "known"
+              ? colorVariant
+              : colorOutline;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fillStyle = fill;
