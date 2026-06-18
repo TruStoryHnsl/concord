@@ -6,6 +6,7 @@ import {
   getLastCheckedDisplay,
   type UpdaterCheckResult,
 } from "../../lib/updater";
+import { InstanceUpdateSection } from "./InstanceUpdateSection";
 
 // Per-platform release-suffix tags emitted by the desktop pipeline
 // (.github/workflows/release.yml). Each one carries exactly one
@@ -218,6 +219,13 @@ export function AboutTab() {
           )}
         </div>
       )}
+
+      {/*
+        Web build (docker / hosted) + instance admin: user-initiated update of
+        the running server image. Self-hides for non-admins. Native builds use
+        the Tauri self-updater above instead.
+      */}
+      {!isTauri && <InstanceUpdateSection />}
 
       {/*
         Web build (docker / hosted): present the four desktop installers.
