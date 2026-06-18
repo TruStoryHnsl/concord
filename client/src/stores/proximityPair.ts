@@ -11,6 +11,7 @@
 import { create } from "zustand";
 import {
   startProximityPair,
+  pollProximityPair,
   confirmPairing,
   cancelPairing,
   commitPairedPeer,
@@ -44,43 +45,83 @@ export const useProximityPairStore = create<ProximityPairStore>((set) => ({
   remote: null,
 
   begin: async (local) => {
-    // Reset phase/code/error but leave remote untouched so a pre-seeded
-    // remote (or one captured from a future awaitingConfirm payload) is
-    // still available when the `paired` callback fires.
     set({ phase: "searching", code: null, error: null });
-    await startProximityPair(local, (s: ProximityPairState) => {
+
+    // Apply a state from either the desktop Channel or the iOS poll.
+    let committed = false;
+    let done = false;
+    const apply = (s: ProximityPairState): boolean => {
       switch (s.phase) {
+        case "idle":
+          // Ignore — the iOS poll returns idle on non-pairing/desktop builds;
+          // never let it clobber a real phase.
+          return false;
         case "searching":
         case "connecting":
-        case "idle":
           set({ phase: s.phase });
-          break;
+          return false;
         case "awaitingConfirm":
           set({ phase: "awaitingConfirm", code: s.code });
-          break;
+          return false;
         case "paired": {
-          // The remote card is delivered by the paired event itself (the
-          // transport — mock or BLE — fills it in), so commit exactly that.
-          const remote: LocalPairingPayload = {
-            peerId: s.peerId,
-            publicKeyHex: s.publicKeyHex,
-            multiaddrs: s.multiaddrs,
-            signatureHex: s.signatureHex,
-          };
-          void (async () => {
-            await commitPairedPeer(remote);
-            set({ phase: "paired", remote });
-          })();
-          break;
+          if (!committed) {
+            committed = true;
+            const remote: LocalPairingPayload = {
+              peerId: s.peerId,
+              publicKeyHex: s.publicKeyHex,
+              multiaddrs: s.multiaddrs,
+              signatureHex: s.signatureHex,
+            };
+            void (async () => {
+              try {
+                await commitPairedPeer(remote);
+                set({ phase: "paired", remote });
+              } catch (e) {
+                set({ phase: "error", error: `commit failed: ${String(e)}` });
+              }
+            })();
+          }
+          return true;
         }
         case "error":
           set({ phase: "error", error: s.message });
-          break;
+          return true;
         case "unsupported":
           set({ phase: "unsupported" });
-          break;
+          return true;
       }
-    });
+    };
+
+    try {
+      await startProximityPair(local, (s) => {
+        if (apply(s)) done = true;
+      });
+    } catch (e) {
+      set({ phase: "error", error: `start failed: ${String(e)}` });
+      return;
+    }
+
+    // The Swift→JS event push is unreliable on iOS (and the iPad reports a
+    // desktop user-agent, so platform-sniffing is out) — poll the engine state
+    // unconditionally. On desktop/web the poll returns idle/null and is ignored;
+    // the mock there drives the UI via the Channel above.
+    const timer = setInterval(async () => {
+      if (done) {
+        clearInterval(timer);
+        return;
+      }
+      let s: ProximityPairState | null = null;
+      try {
+        s = await pollProximityPair();
+      } catch {
+        return;
+      }
+      if (!s) return;
+      if (apply(s)) {
+        done = true;
+        clearInterval(timer);
+      }
+    }, 500);
   },
 
   confirm: async () => {

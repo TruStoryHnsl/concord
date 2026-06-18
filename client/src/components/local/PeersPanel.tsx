@@ -19,6 +19,34 @@ import { KnownPeersList } from "../peers/KnownPeersList";
 import { TapToPairSheet } from "../peers/TapToPairSheet";
 import { useProximityPairStore } from "../../stores/proximityPair";
 import { fetchLocalPairingCard } from "../../api/proximityPair";
+import { servitudeStart, isTauri } from "../../api/servitude";
+import { fetchPeerSwarmStatus } from "../../api/peerSwarm";
+
+/**
+ * Pairing needs a running P2P swarm (for our peer id + dial-back multiaddrs).
+ * On the local porch the swarm isn't started until the user hosts, so start it
+ * here and wait for it to bind a peer id before building the pairing card.
+ */
+async function ensureSwarmReady(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const s = await fetchPeerSwarmStatus();
+    if (s.ourPeerId) return;
+  } catch {
+    /* fall through to start */
+  }
+  await servitudeStart();
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const s = await fetchPeerSwarmStatus();
+      if (s.ourPeerId) return;
+    } catch {
+      /* keep polling */
+    }
+  }
+  throw new Error("swarm did not start in time");
+}
 
 export function PeersPanel() {
   const [pairOpen, setPairOpen] = useState(false);
@@ -26,15 +54,24 @@ export function PeersPanel() {
 
   async function onTapToPair() {
     setPairOpen(true);
-    // Present our Ed25519-signed local card so the remote can verify us at
-    // commit time. On a non-Tauri build this returns null and the sheet shows
-    // the "needs a phone with Bluetooth" unsupported state.
-    const local = (await fetchLocalPairingCard()) ?? {
-      peerId: "",
-      publicKeyHex: "",
-      multiaddrs: [],
-      signatureHex: "",
-    };
+    // Show progress while the swarm spins up (can take a few seconds).
+    useProximityPairStore.setState({ phase: "searching", error: null });
+    let local;
+    try {
+      await ensureSwarmReady();
+      local = (await fetchLocalPairingCard()) ?? {
+        peerId: "",
+        publicKeyHex: "",
+        multiaddrs: [],
+        signatureHex: "",
+      };
+    } catch (e) {
+      useProximityPairStore.setState({
+        phase: "error",
+        error: `setup failed: ${String(e)}`,
+      });
+      return;
+    }
     await beginPair(local);
   }
 

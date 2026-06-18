@@ -54,17 +54,28 @@ export async function startProximityPair(
     return null;
   }
   const { invoke, Channel, addPluginListener } = await import("@tauri-apps/api/core");
-  // iOS routes pairing state from the Swift BLE engine via a plugin event
-  // (`trigger("ppState")`); desktop routes it through the Rust transport's
-  // Channel. Wiring both, with one live per platform, keeps a single TS path —
-  // the inactive one simply never fires.
-  await addPluginListener("proximity-pair", "ppState", (s) =>
+  // Register the plugin-event listener first, but never let it block the
+  // command invoke (its await previously could stall the whole flow on iOS).
+  addPluginListener("proximity-pair", "ppState", (s) =>
     onState(s as ProximityPairState),
-  );
+  ).catch(() => {});
+  // The Rust command reports its outcome over this Channel (reliable on every
+  // platform); on desktop it also streams the mock states here.
   const channel = new Channel<ProximityPairState>();
   channel.onmessage = (s) => onState(s);
   await invoke("plugin:proximity-pair|proximity_pair_start", { payload, onState: channel });
   return channel;
+}
+
+/**
+ * Poll the current pairing state. On iOS the Swift→JS event push is unreliable,
+ * so the store polls this (Rust→Swift via run_mobile_plugin, which is reliable)
+ * to drive the UI. Returns null on a non-Tauri build.
+ */
+export async function pollProximityPair(): Promise<ProximityPairState | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<ProximityPairState>("plugin:proximity-pair|proximity_pair_poll");
 }
 
 export async function confirmPairing(): Promise<void> {
