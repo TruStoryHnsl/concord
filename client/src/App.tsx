@@ -140,13 +140,83 @@ export default function App() {
       }
       const e2eReport = (name: string, value: unknown) =>
         invoke("e2e_report", { name, json: JSON.stringify(value) }).catch(() => {});
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
       await e2eReport("e2e_media.json", report);
+
+      // ── QR pairing (data path: encode → decode → add → store) ────────────
+      // A sim's mock camera can't capture a real QR, so the driver cross-feeds
+      // each device's QR payload as a file (e2e_inbound_card.json). We verify
+      // the real encode/decode/peer_store_add path: our card is published, the
+      // peer's card is decoded and stored.
+      const qrTask = (async () => {
+        const { encodeToQrPayload, decodeFromDeeplink } = await import("./lib/peerCard");
+        const { addPeer } = await import("./api/peerStore");
+        // Publish our own card (the "QR we display").
+        let myCardUrl = "";
+        let cardDbg: Record<string, unknown> = { tries: 0 };
+        for (let i = 0; i < 45 && !myCardUrl; i++) {
+          try {
+            const c = await invoke<{
+              peerId: string;
+              publicKeyHex: string;
+              multiaddrs: string[];
+            }>("proximity_pair_local_card");
+            cardDbg = { tries: i + 1, peerId: c.peerId, maddrs: c.multiaddrs.length };
+            if (c.peerId && c.multiaddrs.length > 0) {
+              myCardUrl = encodeToQrPayload({
+                peerId: c.peerId,
+                publicKeyHex: c.publicKeyHex,
+                multiaddrs: c.multiaddrs,
+              });
+            }
+          } catch (e) {
+            cardDbg = { tries: i + 1, error: String(e) };
+          }
+          if (!myCardUrl) await sleep(1000);
+        }
+        await e2eReport("e2e_carddebug.json", cardDbg);
+        await e2eReport("e2e_card.json", { url: myCardUrl });
+        // Ingest the peer's card (driver-fed), decode, and add to the store.
+        for (let i = 0; i < 60; i++) {
+          let inbound: string | null = null;
+          try {
+            inbound = await invoke<string | null>("e2e_read", {
+              name: "e2e_inbound_card.json",
+            });
+          } catch {
+            /* not present yet */
+          }
+          if (inbound) {
+            const decoded = decodeFromDeeplink(inbound.trim());
+            if (decoded.ok) {
+              try {
+                const peer = await addPeer(decoded.card, "qr");
+                await e2eReport("e2e_qr.json", {
+                  ok: true,
+                  decodedPeerId: decoded.card.peerId,
+                  storedPeerId: peer.peerId,
+                });
+              } catch (e) {
+                await e2eReport("e2e_qr.json", {
+                  ok: false,
+                  error: String(e),
+                  decodedPeerId: decoded.card.peerId,
+                });
+              }
+            } else {
+              await e2eReport("e2e_qr.json", { ok: false, error: decoded.error });
+            }
+            break;
+          }
+          await sleep(1000);
+        }
+      })();
+      void qrTask;
 
       // ── Autonomous voice+video call ──────────────────────────────────────
       const { useWebviewCall, e2eGatherCallStats } = await import(
         "./voice/webviewVoiceMesh"
       );
-      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
       // Install the inbound voice-signaling listener on BOTH peers.
       await useWebviewCall.getState().init();
 
@@ -158,7 +228,10 @@ export default function App() {
       }
 
       if (shouldCall) {
-        // Wait for the auto-dialed LAN peer to appear, then call it with video.
+        // Find a peer to call: prefer a live mDNS-discovered LAN peer, else a
+        // stored/paired peer (QR or mDNS pairing populates the store). Using a
+        // paired peer makes the call deterministic and matches the real product
+        // flow (you call someone you've paired with).
         let peerId = "";
         for (let i = 0; i < 45 && !peerId; i++) {
           try {
@@ -168,9 +241,26 @@ export default function App() {
           } catch {
             /* keep polling */
           }
+          if (!peerId) {
+            try {
+              const known = await invoke<Array<Record<string, unknown>>>("peer_store_list");
+              const k = known?.[0];
+              if (k) peerId = String(k.peerId ?? k.peer_id ?? "");
+            } catch {
+              /* none yet */
+            }
+          }
           if (!peerId) await sleep(1000);
         }
         if (peerId) {
+          // Ensure a libp2p connection exists before signaling (the auto-dial
+          // may not have run for a store-sourced peer).
+          try {
+            await invoke("peer_dial", { peerId });
+          } catch {
+            /* may already be connected */
+          }
+          await sleep(2500);
           try {
             await useWebviewCall.getState().startCall(peerId, { video: true });
             await e2eReport("e2e_call_started.json", { peerId, ok: true });
@@ -178,7 +268,7 @@ export default function App() {
             await e2eReport("e2e_call_started.json", { peerId, ok: false, error: String(e) });
           }
         } else {
-          await e2eReport("e2e_call_started.json", { ok: false, error: "no LAN peer found" });
+          await e2eReport("e2e_call_started.json", { ok: false, error: "no peer found" });
         }
       }
 
