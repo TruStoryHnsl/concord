@@ -66,6 +66,48 @@ const requestIds = new Map<string, number>();
 let reqCounter = 1;
 let listenerInstalled = false;
 
+/**
+ * E2E test seam — gather per-peer WebRTC stats so the autonomous simulator
+ * test can PROVE media actually flows (inbound frames/bytes), not merely that
+ * a call was set up. Returns one entry per RTCPeerConnection.
+ */
+export async function e2eGatherCallStats(): Promise<
+  Array<Record<string, unknown>>
+> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const [peerId, pc] of pcs.entries()) {
+    const entry: Record<string, unknown> = {
+      peerId,
+      connectionState: pc.connectionState,
+      iceConnectionState: pc.iceConnectionState,
+      inboundAudioBytes: 0,
+      inboundVideoBytes: 0,
+      inboundVideoFrames: 0,
+      outboundAudioBytes: 0,
+      outboundVideoBytes: 0,
+    };
+    try {
+      const stats = await pc.getStats();
+      stats.forEach((r) => {
+        if (r.type === "inbound-rtp" && r.kind === "audio")
+          entry.inboundAudioBytes = r.bytesReceived ?? 0;
+        if (r.type === "inbound-rtp" && r.kind === "video") {
+          entry.inboundVideoBytes = r.bytesReceived ?? 0;
+          entry.inboundVideoFrames = r.framesDecoded ?? r.framesReceived ?? 0;
+        }
+        if (r.type === "outbound-rtp" && r.kind === "audio")
+          entry.outboundAudioBytes = r.bytesSent ?? 0;
+        if (r.type === "outbound-rtp" && r.kind === "video")
+          entry.outboundVideoBytes = r.bytesSent ?? 0;
+      });
+    } catch (e) {
+      entry.statsError = String(e);
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
 function nextRequestId(peerId: string): number {
   const id = reqCounter++;
   requestIds.set(peerId, id);

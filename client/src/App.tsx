@@ -110,6 +110,91 @@ export default function App() {
       });
   }, [isTauri]);
 
+  // E2E media probe — when launched in CONCORD_E2E mode, test whether
+  // getUserMedia works in this (simulator) WKWebView and report the result to
+  // a file the autonomous test driver reads off the container. Inert otherwise.
+  useEffect(() => {
+    if (!isTauri) return;
+    void (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      let enabled = false;
+      try {
+        enabled = await invoke<boolean>("e2e_enabled");
+      } catch {
+        return;
+      }
+      if (!enabled) return;
+      let report: Record<string, unknown>;
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        report = {
+          ok: true,
+          audioTracks: s.getAudioTracks().length,
+          videoTracks: s.getVideoTracks().length,
+          videoLabel: s.getVideoTracks()[0]?.label ?? null,
+          audioLabel: s.getAudioTracks()[0]?.label ?? null,
+        };
+        s.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        report = { ok: false, error: String(e) };
+      }
+      const e2eReport = (name: string, value: unknown) =>
+        invoke("e2e_report", { name, json: JSON.stringify(value) }).catch(() => {});
+      await e2eReport("e2e_media.json", report);
+
+      // ── Autonomous voice+video call ──────────────────────────────────────
+      const { useWebviewCall, e2eGatherCallStats } = await import(
+        "./voice/webviewVoiceMesh"
+      );
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      // Install the inbound voice-signaling listener on BOTH peers.
+      await useWebviewCall.getState().init();
+
+      let shouldCall = false;
+      try {
+        shouldCall = await invoke<boolean>("e2e_should_call");
+      } catch {
+        /* default callee */
+      }
+
+      if (shouldCall) {
+        // Wait for the auto-dialed LAN peer to appear, then call it with video.
+        let peerId = "";
+        for (let i = 0; i < 45 && !peerId; i++) {
+          try {
+            const lan = await invoke<Array<Record<string, unknown>>>("lan_peers_snapshot");
+            const p = lan?.[0];
+            if (p) peerId = String(p.peer_id ?? p.peerId ?? "");
+          } catch {
+            /* keep polling */
+          }
+          if (!peerId) await sleep(1000);
+        }
+        if (peerId) {
+          try {
+            await useWebviewCall.getState().startCall(peerId, { video: true });
+            await e2eReport("e2e_call_started.json", { peerId, ok: true });
+          } catch (e) {
+            await e2eReport("e2e_call_started.json", { peerId, ok: false, error: String(e) });
+          }
+        } else {
+          await e2eReport("e2e_call_started.json", { ok: false, error: "no LAN peer found" });
+        }
+      }
+
+      // Both peers: report live media stats so the test can verify real flow.
+      for (let i = 0; i < 25; i++) {
+        await sleep(3000);
+        try {
+          const stats = await e2eGatherCallStats();
+          await e2eReport("e2e_call.json", { tSec: (i + 1) * 3, stats });
+        } catch {
+          /* best effort */
+        }
+      }
+    })();
+  }, []);
+
   // INS-023 launch animation: a cross-platform boot splash that
   // covers the first-paint gap and any subsequent isLoading window.
   // `launchDone` flips true once the `<LaunchAnimation/>` has
