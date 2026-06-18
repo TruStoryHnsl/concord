@@ -23,7 +23,7 @@
 
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { mapConnectionState, type MeshPeerState, type SignalingMessage } from "../libp2p/voiceSignaling";
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -65,7 +65,6 @@ const pcs = new Map<string, RTCPeerConnection>();
 const requestIds = new Map<string, number>();
 let reqCounter = 1;
 let listenerInstalled = false;
-let unlisten: UnlistenFn | null = null;
 
 function nextRequestId(peerId: string): number {
   const id = reqCounter++;
@@ -253,7 +252,7 @@ export const useWebviewCall = create<WebviewCallState>()((set, get) => ({
   init: async () => {
     if (listenerInstalled) return;
     listenerInstalled = true;
-    unlisten = await listen<{ kind?: string; from?: string; message_json?: string }>(
+    await listen<{ kind?: string; from?: string; message_json?: string }>(
       "peer_swarm_event",
       (event) => {
         const p = event.payload;
