@@ -84,7 +84,14 @@ export function buildMatrixRailGroups(params: {
   const groups: MatrixRailGroup[] = [];
   const collapsed: ConcordSource[] = [];
   for (const src of sources) {
-    if (isLocalInstanceSource(src)) continue; // device = local mesh group
+    // Exclude the local-instance source from the Matrix groups ONLY when it
+    // is NOT the active source. On NATIVE the local instance is the synthetic
+    // porch (its device tile is the separate local-mesh group, and any
+    // isLocal-flagged ConcordSource there carries no live servers), so it is
+    // correctly skipped. On WEB the local instance IS the origin source that
+    // holds the live session — it owns the user's real servers and MUST render
+    // its own group, or those server tiles vanish (regression from 900bac3).
+    if (isLocalInstanceSource(src) && src.id !== activeSourceId) continue;
     if ((src.platform ?? "concord") === "concord-p2p") continue; // p2p porches aren't Matrix groups here
     if (!src.enabled) {
       collapsed.push(src);
@@ -158,7 +165,14 @@ export const GroupedRail = memo(function GroupedRail({
       const bySession = allSources.find((s) => s.userId === currentUserId);
       if (bySession) return bySession.id;
     }
-    return null;
+    // Web fallback: the origin/local source holds the live session but may
+    // carry no userId (it isn't a user-added foreign source), so the lookup
+    // above misses it and the user's own servers would have no group. The
+    // local instance IS the active source on web — attach activeServers to it.
+    // Native has no local ConcordSource (the porch is synthetic), so this
+    // stays null there and the local-mesh group handles the device.
+    const local = allSources.find((s) => isLocalInstanceSource(s));
+    return local?.id ?? null;
   }, [currentUserId, allSources]);
 
   const activeServers = useMemo(() => servers.filter((s) => !s.federated), [servers]);
