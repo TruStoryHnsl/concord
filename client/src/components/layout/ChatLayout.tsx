@@ -55,6 +55,7 @@ import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
 import { LocalChatPane } from "../local/LocalChatPane";
 import { LanDiscoveryMap } from "../local/LanDiscoveryMap";
 import { MeshMap } from "../mesh/MeshMap";
+import { PeersPanel } from "../local/PeersPanel";
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { usePorchStore } from "../../stores/porchStore";
 import { useInstanceNameStore } from "../../stores/instanceName";
@@ -309,6 +310,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // W1.1 / F2 — mesh-topology map special surface (sibling of the LAN
   // map; mutually exclusive with it via the store).
   const meshMapOpen = useLocalServerSelectionStore((s) => s.meshMapOpen);
+  // Peer-pairing special surface (sibling of the mesh / LAN maps; mutually
+  // exclusive via the store). The reachable entry point for tap-to-pair.
+  const peersOpen = useLocalServerSelectionStore((s) => s.peersOpen);
   const porchSelectedChannel = usePorchStore((s) =>
     s.channels.find((c) => c.id === s.selectedChannelId) ?? null,
   );
@@ -860,6 +864,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
                 Mesh map
               </>
+            ) : peersOpen ? (
+              <>
+                <span className="material-symbols-outlined text-base align-middle mr-1">group</span>
+                Peers
+              </>
             ) : (
               <>
                 <span className="text-on-surface-variant mr-1">#</span>
@@ -1162,6 +1171,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                       <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
                       Mesh map
                     </>
+                  ) : peersOpen ? (
+                    <>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">group</span>
+                      Peers
+                    </>
                   ) : (
                     <>
                       <span className="text-on-surface-variant mr-1">#</span>
@@ -1384,6 +1398,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       }
       if (meshMapOpen) {
         return <MeshMap />;
+      }
+      if (peersOpen) {
+        return <PeersPanel />;
       }
       return <LocalChatPane />;
     }

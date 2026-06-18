@@ -47,6 +47,8 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
   const setLanMapOpen = useLocalServerSelectionStore((s) => s.setLanMapOpen);
   const meshMapOpen = useLocalServerSelectionStore((s) => s.meshMapOpen);
   const setMeshMapOpen = useLocalServerSelectionStore((s) => s.setMeshMapOpen);
+  const peersOpen = useLocalServerSelectionStore((s) => s.peersOpen);
+  const setPeersOpen = useLocalServerSelectionStore((s) => s.setPeersOpen);
   const homeName = useHomeServerNameStore((s) => s.name);
 
   // Lazy-load on mount. `loadChannels` is idempotent — re-calling it
@@ -71,7 +73,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
   // server's channel after a tile switch. Select the active server's
   // first channel; if it has none, leave the selection alone.
   useEffect(() => {
-    if (!isLoaded || lanMapOpen || meshMapOpen) return;
+    if (!isLoaded || lanMapOpen || meshMapOpen || peersOpen) return;
     const selectionIsForActive = visibleChannels.some(
       (c) => c.id === selectedChannelId,
     );
@@ -87,6 +89,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
     selectedChannelId,
     lanMapOpen,
     meshMapOpen,
+    peersOpen,
     selectChannel,
   ]);
 
@@ -200,6 +203,30 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                   <span className="min-w-0 truncate flex-1">Mesh map</span>
                 </button>
               </div>
+              {/* Peers — the reachable tap-to-pair + known-peers surface.
+                  Sibling of the mesh / LAN rows; mutually exclusive via the
+                  store. This is the entry point for starting a connection. */}
+              <div className="group flex items-center gap-0.5">
+                <button
+                  type="button"
+                  data-testid="local-channel-row-peers"
+                  data-channel-kind="peers"
+                  onClick={() => {
+                    setPeersOpen(true);
+                    onChannelSelect?.();
+                  }}
+                  className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm transition-all flex items-center gap-2 font-body ${
+                    peersOpen
+                      ? "bg-surface-container-highest text-on-surface"
+                      : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                  }`}
+                >
+                  <span className="material-symbols-outlined flex-shrink-0 text-on-surface-variant" style={{ fontSize: "18px" }}>
+                    group
+                  </span>
+                  <span className="min-w-0 truncate flex-1">Peers</span>
+                </button>
+              </div>
             </div>
 
             <div className="mb-3">
@@ -210,7 +237,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
               </div>
               {visibleChannels.map((ch) => {
                 const isActive =
-                  !lanMapOpen && !meshMapOpen && selectedChannelId === ch.id;
+                  !lanMapOpen && !meshMapOpen && !peersOpen && selectedChannelId === ch.id;
                 return (
                   <div key={ch.id} className="group flex items-center gap-0.5">
                     <button
@@ -219,6 +246,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
                       onClick={() => {
                         setLanMapOpen(false);
                         setMeshMapOpen(false);
+                        setPeersOpen(false);
                         void selectChannel(ch.id);
                         onChannelSelect?.();
                       }}

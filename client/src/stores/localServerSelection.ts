@@ -52,6 +52,15 @@ interface LocalServerSelectionState {
    */
   meshMapOpen: boolean;
   setMeshMapOpen: (open: boolean) => void;
+  /**
+   * Peer pairing surface — whether the `peers` pseudo-channel (tap-to-pair
+   * + known-peers list with connect/call) is the active view in the local
+   * source's chat pane. Mutually exclusive with `lanMapOpen` / `meshMapOpen`
+   * (all three share the chat pane). This is the reachable, on-mobile entry
+   * point for initiating a peer connection.
+   */
+  peersOpen: boolean;
+  setPeersOpen: (open: boolean) => void;
 }
 
 export const useLocalServerSelectionStore = create<LocalServerSelectionState>(
@@ -59,12 +68,15 @@ export const useLocalServerSelectionStore = create<LocalServerSelectionState>(
     active: "home",
     setActive: (next: ActiveLocalServer) => set({ active: next }),
     lanMapOpen: false,
-    // Opening the LAN map closes the mesh map (they share the chat pane).
+    // The three special surfaces share the chat pane — opening one closes
+    // the others.
     setLanMapOpen: (open: boolean) =>
-      set(open ? { lanMapOpen: true, meshMapOpen: false } : { lanMapOpen: false }),
+      set(open ? { lanMapOpen: true, meshMapOpen: false, peersOpen: false } : { lanMapOpen: false }),
     meshMapOpen: false,
-    // Opening the mesh map closes the LAN map (they share the chat pane).
     setMeshMapOpen: (open: boolean) =>
-      set(open ? { meshMapOpen: true, lanMapOpen: false } : { meshMapOpen: false }),
+      set(open ? { meshMapOpen: true, lanMapOpen: false, peersOpen: false } : { meshMapOpen: false }),
+    peersOpen: false,
+    setPeersOpen: (open: boolean) =>
+      set(open ? { peersOpen: true, lanMapOpen: false, meshMapOpen: false } : { peersOpen: false }),
   }),
 );
