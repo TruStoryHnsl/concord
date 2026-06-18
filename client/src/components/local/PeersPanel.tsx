@@ -29,21 +29,30 @@ import { fetchPeerSwarmStatus } from "../../api/peerSwarm";
  */
 async function ensureSwarmReady(): Promise<void> {
   if (!isTauri()) return;
+  // Start the swarm if it isn't already — idempotent (the backend errors
+  // "already running" when it is, which is success for our purposes).
   try {
-    const s = await fetchPeerSwarmStatus();
-    if (s.ourPeerId) return;
-  } catch {
-    /* fall through to start */
+    await servitudeStart();
+  } catch (e) {
+    if (!/already running/i.test(String(e))) throw e;
   }
-  await servitudeStart();
+  // Require a peer id (needed to build the card). Prefer also having a listen
+  // multiaddr (for dial-back), but don't BLOCK pairing if the swarm hasn't bound
+  // one — that only affects Connect/Call, not the BLE handshake itself.
+  let peerSinceTick = -1;
   for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 500));
+    let s: { ourPeerId: string; ourMultiaddrs: string[] } | null = null;
     try {
-      const s = await fetchPeerSwarmStatus();
-      if (s.ourPeerId) return;
+      s = await fetchPeerSwarmStatus();
     } catch {
       /* keep polling */
     }
+    if (s?.ourPeerId) {
+      if (s.ourMultiaddrs.length > 0) return; // ideal: have a dial-back address
+      if (peerSinceTick < 0) peerSinceTick = i;
+      if (i - peerSinceTick >= 10) return; // ~5s grace for an addr, then proceed
+    }
+    await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error("swarm did not start in time");
 }
