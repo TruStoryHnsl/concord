@@ -805,6 +805,40 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
             <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
             <DMHeaderName userId={dmConversation.other_user_id} />
           </div>
+        ) : mobileView === "chat" && localActive ? (
+          // Local source chat-frame views (porch chat, LAN map, mesh map) drill
+          // into the chat frame but have no Matrix `activeChannel`, so without
+          // this branch the header fell through to the bare "Concord" title
+          // with NO back button — leaving the user locked on the view (the
+          // reported "no button to go up a submenu" on the mesh map). navPop()
+          // returns to the local channel list.
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => navPop()}
+              className="text-on-surface-variant hover:text-on-surface transition-colors"
+              aria-label="Back"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold truncate text-on-surface">
+              {lanMapOpen ? (
+                <>
+                  <span className="material-symbols-outlined text-base align-middle mr-1">wifi_tethering</span>
+                  LAN map
+                </>
+              ) : meshMapOpen ? (
+                <>
+                  <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                  Mesh map
+                </>
+              ) : (
+                <>
+                  <span className="text-on-surface-variant mr-1">#</span>
+                  {porchSelectedChannel?.name ?? porchLabel}
+                </>
+              )}
+            </h2>
+          </div>
         ) : mobileView === "chat" && activeChannel ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
