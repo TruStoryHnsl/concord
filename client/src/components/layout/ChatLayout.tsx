@@ -55,7 +55,6 @@ import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
 import { LocalChatPane } from "../local/LocalChatPane";
 import { LanDiscoveryMap } from "../local/LanDiscoveryMap";
 import { MeshMap } from "../mesh/MeshMap";
-import { MediaProbe } from "../dev/MediaProbe"; // TEMP getUserMedia diagnostic
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { usePorchStore } from "../../stores/porchStore";
 import { useInstanceNameStore } from "../../stores/instanceName";
@@ -1718,7 +1717,6 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // split that already handles desktop browsers and phones.
   return (
     <>
-      <MediaProbe /> {/* TEMP — remove after iOS getUserMedia is confirmed */}
       {isTV ? (
         // TV — three-pane with DPAD navigation and capability banners.
         renderTVLayout()

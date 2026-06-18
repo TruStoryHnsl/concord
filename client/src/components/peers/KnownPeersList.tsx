@@ -20,6 +20,7 @@ import { usePeerStore } from "../../stores/peerStore";
 import type { KnownPeer, PeerSource } from "../../api/peerStore";
 import { connectToPeer } from "../../api/peerDial";
 import { useToastStore } from "../../stores/toast";
+import { useWebviewCall } from "../../voice/webviewVoiceMesh";
 
 /**
  * Human-readable label for each source, kept short to fit in a chip.
@@ -119,6 +120,24 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
     }
   };
 
+  // INS-019b — start a webview WebRTC voice+video p2p call with this peer.
+  // Dials first (queues the libp2p connection), then offers media. The remote
+  // auto-answers via the app-root WebviewCallLayer listener.
+  const handleCall = async () => {
+    try {
+      await connectToPeer(peer);
+    } catch {
+      /* dial may already be live / queued — proceed to offer regardless */
+    }
+    try {
+      await useWebviewCall.getState().startCall(peer.peerId, { video: true });
+    } catch (err) {
+      addToast(
+        `Could not start call: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
   const handleRemove = async () => {
     // window.confirm is fine here — it's a destructive action on a single
     // identity-shaped object, and a full modal would be overkill for a
@@ -213,6 +232,23 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
         />
         Access
       </label>
+      {/* INS-019b — Call: start a webview WebRTC voice+video p2p call. */}
+      <button
+        type="button"
+        onClick={() => void handleCall()}
+        disabled={!peer.accessGranted}
+        className="btn-press inline-flex items-center justify-center px-1.5 py-1 rounded-md text-on-surface-variant hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
+        aria-label={`Call paired peer ${peer.peerId.slice(0, 12)}`}
+        title={peer.accessGranted ? "Voice + video call this peer (p2p)" : "Grant access before calling"}
+        data-testid={`call-peer-${peer.peerId}`}
+      >
+        <span
+          className="material-symbols-outlined text-base leading-none"
+          style={{ fontVariationSettings: '"FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24' }}
+        >
+          videocam
+        </span>
+      </button>
       {/* P2P-FR-002 — Connect: dial this paired peer using its stored
           multiaddrs. Disabled when access is revoked (a visible-only peer
           can't be dialed) or while a dial is already in flight. */}

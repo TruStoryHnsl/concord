@@ -25,6 +25,7 @@ import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
 import { EffectsOverlay } from "./effects/EffectsOverlay";
+import { WebviewCallLayer } from "./components/voice/WebviewCallLayer";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -572,6 +573,10 @@ export default function App() {
        *  app root so effects paint over the whole UI. Idle cost is zero —
        *  the rAF loop only runs while an effect is active. */}
       <EffectsOverlay />
+      {/* INS-019b — webview WebRTC voice+video p2p call overlay + inbound
+          signaling listener (auto-answers incoming offers). App-root so it
+          works on every layout and survives nav. */}
+      <WebviewCallLayer />
       {launchOverlay}
     </>
   );
