@@ -3,14 +3,10 @@
  * API: it owns the current phase, the SAS code to show, and the
  * remote payload captured so it can be committed on `paired`.
  *
- * Design note: `begin` intentionally does NOT reset `remote` to null at
- * start. The second test seeds `remote` before calling `begin`, and the
- * "paired" handler reads `get().remote` to decide what to commit. The
- * `beforeEach` in the tests resets to null explicitly between runs.
- * Normal usage: remote is null at first; it gets set by a future task
- * when the awaitingConfirm state carries the remote payload; the paired
- * handler then picks it up. For the current mock-driven Phase 1 tests,
- * the seed stands in for that future path.
+ * Design note: the `paired` event now carries the full remote card
+ * (`{peerId, publicKeyHex, multiaddrs, signatureHex}`); the handler builds the
+ * card from the event and commits exactly that, then stashes it in `remote`
+ * for reference. No pre-seeding required.
  */
 import { create } from "zustand";
 import {
@@ -41,7 +37,7 @@ interface ProximityPairStore {
   cancel: () => Promise<void>;
 }
 
-export const useProximityPairStore = create<ProximityPairStore>((set, get) => ({
+export const useProximityPairStore = create<ProximityPairStore>((set) => ({
   phase: "idle",
   code: null,
   error: null,
@@ -63,10 +59,17 @@ export const useProximityPairStore = create<ProximityPairStore>((set, get) => ({
           set({ phase: "awaitingConfirm", code: s.code });
           break;
         case "paired": {
+          // The remote card is delivered by the paired event itself (the
+          // transport — mock or BLE — fills it in), so commit exactly that.
+          const remote: LocalPairingPayload = {
+            peerId: s.peerId,
+            publicKeyHex: s.publicKeyHex,
+            multiaddrs: s.multiaddrs,
+            signatureHex: s.signatureHex,
+          };
           void (async () => {
-            const remote = get().remote;
-            if (remote) await commitPairedPeer(remote);
-            set({ phase: "paired" });
+            await commitPairedPeer(remote);
+            set({ phase: "paired", remote });
           })();
           break;
         }

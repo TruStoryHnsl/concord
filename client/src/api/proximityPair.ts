@@ -23,7 +23,13 @@ export type ProximityPairState =
   | { phase: "searching" }
   | { phase: "connecting" }
   | { phase: "awaitingConfirm"; code: string }
-  | { phase: "paired"; peerId: string }
+  | {
+      phase: "paired";
+      peerId: string;
+      publicKeyHex: string;
+      multiaddrs: string[];
+      signatureHex: string;
+    }
   | { phase: "error"; stage: string; message: string }
   | { phase: "unsupported" };
 
