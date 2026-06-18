@@ -785,6 +785,40 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // textarea push the MessageList out of view instead of reflowing it.
   // MessageInput's internal useLayoutEffect caps the textarea at
   // min(viewport*0.4, 8*22px) and switches to internal scroll above that.
+  // ── Framework-level back affordance ──────────────────────────────────────
+  // A SINGLE back control for the whole mobile stack, shown whenever there is
+  // somewhere up to go. Replaces the old per-level hand-coded back buttons,
+  // which existed on some levels (chat, channels) but NOT others (servers, the
+  // local-source chat views) — stranding the user with no way up. The handler
+  // walks the same hierarchy the body router renders:
+  //   settings / DMs overlay → close, return to the prior page-depth view
+  //   a DM conversation       → return to the DMs list
+  //   any non-root page frame → pop one level (chat→channels→servers→sources)
+  const isDmConversation = mobileView === "chat" && dmActive;
+  const canGoBack =
+    mobileView === "settings" ||
+    mobileView === "dms" ||
+    isDmConversation ||
+    navStack.length > 1;
+  const handleStackBack = () => {
+    if (mobileView === "settings") {
+      closeSettings();
+      closeServerSettings();
+      setMobileView(prevPageDepthRef.current);
+      return;
+    }
+    if (mobileView === "dms") {
+      useDMStore.getState().setDMActive(false);
+      setMobileView(prevPageDepthRef.current);
+      return;
+    }
+    if (isDmConversation) {
+      setMobileView("dms");
+      return;
+    }
+    navPop();
+  };
+
   const renderStackLayout = () => (
     <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
       {/* Top bar — safe-top lives on the OUTER wrapper so the safe-area
@@ -794,59 +828,47 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       <div className="bg-surface-container-low safe-top flex-shrink-0">
       <div className="h-12 flex items-center px-3 gap-2">
         <div className="flex-1 min-w-0 flex items-center">
+        {/* Single framework-level back control (see canGoBack/handleStackBack).
+            Present on EVERY level that has somewhere up to go, so the user is
+            never stranded — the per-level back buttons are gone. */}
+        {canGoBack && (
+          <button
+            onClick={handleStackBack}
+            aria-label="Back"
+            className="text-on-surface-variant hover:text-on-surface transition-colors mr-1 flex-shrink-0"
+          >
+            <span className="material-symbols-outlined text-xl">arrow_back</span>
+          </button>
+        )}
+        <div className="flex-1 min-w-0 flex items-center gap-2">
         {mobileView === "chat" && dmActive && dmConversation ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => setMobileView("dms")}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
+          <>
             <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
             <DMHeaderName userId={dmConversation.other_user_id} />
-          </div>
+          </>
         ) : mobileView === "chat" && localActive ? (
-          // Local source chat-frame views (porch chat, LAN map, mesh map) drill
-          // into the chat frame but have no Matrix `activeChannel`, so without
-          // this branch the header fell through to the bare "Concord" title
-          // with NO back button — leaving the user locked on the view (the
-          // reported "no button to go up a submenu" on the mesh map). navPop()
-          // returns to the local channel list.
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => navPop()}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-              aria-label="Back"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
-            <h2 className="font-headline font-semibold truncate text-on-surface">
-              {lanMapOpen ? (
-                <>
-                  <span className="material-symbols-outlined text-base align-middle mr-1">wifi_tethering</span>
-                  LAN map
-                </>
-              ) : meshMapOpen ? (
-                <>
-                  <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
-                  Mesh map
-                </>
-              ) : (
-                <>
-                  <span className="text-on-surface-variant mr-1">#</span>
-                  {porchSelectedChannel?.name ?? porchLabel}
-                </>
-              )}
-            </h2>
-          </div>
+          // Local source chat-frame views (porch chat, LAN map, mesh map) have
+          // no Matrix `activeChannel`; title them explicitly.
+          <h2 className="font-headline font-semibold truncate text-on-surface">
+            {lanMapOpen ? (
+              <>
+                <span className="material-symbols-outlined text-base align-middle mr-1">wifi_tethering</span>
+                LAN map
+              </>
+            ) : meshMapOpen ? (
+              <>
+                <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                Mesh map
+              </>
+            ) : (
+              <>
+                <span className="text-on-surface-variant mr-1">#</span>
+                {porchSelectedChannel?.name ?? porchLabel}
+              </>
+            )}
+          </h2>
         ) : mobileView === "chat" && activeChannel ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => navPop()}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
+          <>
             <h2 className="font-headline font-semibold truncate text-on-surface">
               {isVoiceChannel ? (
                 <span className="material-symbols-outlined text-base align-middle mr-1">volume_up</span>
@@ -871,34 +893,23 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 {memberCount}
               </span>
             )}
-          </div>
+          </>
         ) : mobileView === "dms" ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <h2 className="font-headline font-bold text-lg text-primary">Messages</h2>
-          </div>
-        ) : mobileView === "channels" && activeServer ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => navPop()}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
-            <h2 className="font-headline font-semibold truncate">{activeServer.name}</h2>
-          </div>
+          <h2 className="font-headline font-bold text-lg text-primary">Messages</h2>
+        ) : mobileView === "channels" ? (
+          <h2 className="font-headline font-semibold truncate">
+            {activeServer?.name ?? (localActive ? porchLabel : "Channels")}
+          </h2>
+        ) : mobileView === "servers" ? (
+          <h2 className="font-headline font-semibold truncate">
+            {localActive ? porchLabel : "Servers"}
+          </h2>
         ) : mobileView === "settings" ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => { closeSettings(); closeServerSettings(); setMobileView(prevPageDepthRef.current); }}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
-            <h2 className="font-headline font-semibold">Settings</h2>
-          </div>
+          <h2 className="font-headline font-semibold">Settings</h2>
         ) : (
           <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
         )}
+        </div>
         </div>
         {/* INS-048: Hardware state indicator — shown when voice is active */}
         {voiceConnected && (micActive || cameraActive) && (
