@@ -41,7 +41,14 @@ export async function startProximityPair(
     onState({ phase: "unsupported" });
     return null;
   }
-  const { invoke, Channel } = await import("@tauri-apps/api/core");
+  const { invoke, Channel, addPluginListener } = await import("@tauri-apps/api/core");
+  // iOS routes pairing state from the Swift BLE engine via a plugin event
+  // (`trigger("ppState")`); desktop routes it through the Rust transport's
+  // Channel. Wiring both, with one live per platform, keeps a single TS path —
+  // the inactive one simply never fires.
+  await addPluginListener("proximity-pair", "ppState", (s) =>
+    onState(s as ProximityPairState),
+  );
   const channel = new Channel<ProximityPairState>();
   channel.onmessage = (s) => onState(s);
   await invoke("plugin:proximity-pair|proximity_pair_start", { payload, onState: channel });
