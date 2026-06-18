@@ -33,6 +33,18 @@ export type ProximityPairState =
   | { phase: "error"; stage: string; message: string }
   | { phase: "unsupported" };
 
+/**
+ * Fetch the local device's Ed25519-signed pairing card from the host. Must be
+ * called before `startProximityPair` so the transport can hand the remote a
+ * card it can verify (`verify_card_signature` gates the remote's commit).
+ * Returns null on a non-Tauri build (no identity/swarm there).
+ */
+export async function fetchLocalPairingCard(): Promise<LocalPairingPayload | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return await invoke<LocalPairingPayload>("proximity_pair_local_card");
+}
+
 export async function startProximityPair(
   payload: LocalPairingPayload,
   onState: (s: ProximityPairState) => void,

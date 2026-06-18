@@ -24,6 +24,7 @@ import type { Libp2p } from "@libp2p/interface";
 
 import { TapToPairSheet } from "../../peers/TapToPairSheet";
 import { useProximityPairStore } from "../../../stores/proximityPair";
+import { fetchLocalPairingCard } from "../../../api/proximityPair";
 
 import { useIdentityStore, IDENTITY_ERROR_NATIVE_ONLY } from "../../../stores/identity";
 import { useToastStore } from "../../../stores/toast";
@@ -391,9 +392,16 @@ export function PairedPeersSection() {
 
   async function onTapToPair() {
     setPairOpen(true);
-    // Phase 1: the mock transport ignores payload contents. Real signed
-    // payload assembly is added in a later task (Task 11).
-    await beginPair({ peerId: "", publicKeyHex: "", multiaddrs: [], signatureHex: "" });
+    // Fetch our Ed25519-signed local card so the remote can verify our
+    // identity at commit time; fall back to an empty card only on the
+    // non-Tauri (web) build, where the transport is unsupported anyway.
+    const local = (await fetchLocalPairingCard()) ?? {
+      peerId: "",
+      publicKeyHex: "",
+      multiaddrs: [],
+      signatureHex: "",
+    };
+    await beginPair(local);
   }
 
   return (
