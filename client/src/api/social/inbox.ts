@@ -1,0 +1,33 @@
+/**
+ * API wrapper: **per-peer-inboxes** (OWNED by the per-peer-inboxes branch).
+ *
+ * Thin wrappers around the `social_inbox_*` Tauri commands. Base-branch
+ * state: registered, returning NotImplemented until the feature lands. Owned
+ * by the per-peer-inboxes branch; extend WITHOUT touching the other
+ * `social/*` api files. Shared types come from `./types` (read-only).
+ */
+import { invoke } from "@tauri-apps/api/core";
+import type { ConversationRecord, InboxMessage } from "./types";
+
+/** List per-peer conversation summaries, newest-activity-first. */
+export function socialInboxList(): Promise<ConversationRecord[]> {
+  return invoke<ConversationRecord[]>("social_inbox_list");
+}
+
+/** Fetch a single peer's 1:1 conversation, oldest-first. */
+export function socialInboxGetMessages(peerId: string): Promise<InboxMessage[]> {
+  return invoke<InboxMessage[]>("social_inbox_get_messages", { peerId });
+}
+
+/** Send a message to a peer. */
+export function socialInboxSend(
+  peerId: string,
+  body: string,
+): Promise<InboxMessage> {
+  return invoke<InboxMessage>("social_inbox_send", { peerId, body });
+}
+
+/** Mark a peer's conversation as read. */
+export function socialInboxMarkRead(peerId: string): Promise<ConversationRecord> {
+  return invoke<ConversationRecord>("social_inbox_mark_read", { peerId });
+}
