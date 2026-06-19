@@ -24,6 +24,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "../api/servitude";
 import { mapConnectionState, type MeshPeerState, type SignalingMessage } from "../libp2p/voiceSignaling";
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -293,22 +294,35 @@ export const useWebviewCall = create<WebviewCallState>()((set, get) => ({
 
   init: async () => {
     if (listenerInstalled) return;
+    // The webview WebRTC mesh signals over Tauri events (the libp2p bridge),
+    // so it only runs in the native webview. In web/test there is no Tauri
+    // runtime — web voice uses the SFU path — and calling `listen()` would
+    // throw on the missing `__TAURI_INTERNALS__.transformCallback`. No-op.
+    if (!isTauri()) return;
     listenerInstalled = true;
-    await listen<{ kind?: string; from?: string; message_json?: string }>(
-      "peer_swarm_event",
-      (event) => {
-        const p = event.payload;
-        if (!p || p.kind !== "voice_signaling" || !p.from || !p.message_json) return;
-        let message: SignalingMessage;
-        try {
-          message = JSON.parse(p.message_json) as SignalingMessage;
-        } catch (err) {
-          console.debug("[webview-call] bad voice_signaling payload", err);
-          return;
-        }
-        void handleInbound(p.from, message);
-      },
-    );
+    try {
+      await listen<{ kind?: string; from?: string; message_json?: string }>(
+        "peer_swarm_event",
+        (event) => {
+          const p = event.payload;
+          if (!p || p.kind !== "voice_signaling" || !p.from || !p.message_json) return;
+          let message: SignalingMessage;
+          try {
+            message = JSON.parse(p.message_json) as SignalingMessage;
+          } catch (err) {
+            console.debug("[webview-call] bad voice_signaling payload", err);
+            return;
+          }
+          void handleInbound(p.from, message);
+        },
+      );
+    } catch (err) {
+      // The Tauri event bus wasn't available (e.g. an incomplete runtime in
+      // tests, or a transient init race). Don't let it become an unhandled
+      // rejection that poisons the caller — reset so a later call can retry.
+      listenerInstalled = false;
+      console.debug("[webview-call] peer_swarm_event listen failed", err);
+    }
   },
 
   startCall: async (remotePeerId, opts) => {
