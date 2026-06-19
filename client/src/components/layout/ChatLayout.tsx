@@ -93,6 +93,7 @@ import { rulesAcceptedKey, useServerRulesGate } from "./chatLayout/useServerRule
 import { useHistoryNav } from "./chatLayout/useHistoryNav";
 import { useNavRestore } from "./chatLayout/useNavRestore";
 import { useNavBridge, type MobileView } from "./chatLayout/useNavBridge";
+import { shouldUseTabletLayout } from "./chatLayout/layoutMode";
 
 // The legacy `BrowseTab` interface + `newTabId()` helper were removed with
 // the multi-tab page-depth model. The navStack store (and its `LegacyBrowseTab`
@@ -169,18 +170,45 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     setDiagnosticsPopupOpen,
   } = useRoomDiagnostics(accessToken, activeRoomId, messages.length, userId);
 
-  // INS-020 iPad layout — when running on an iPad (native Tauri iOS
-  // build or web browser with iPad-class touch screen), force the
+  // INS-020 iPad layout — when running on a WIDE iPad (native Tauri iOS
+  // build or web browser with iPad-class touch screen), render the
   // three-pane desktop layout regardless of the CSS `md:` breakpoint.
-  // The existing Tailwind `hidden md:block` / `md:hidden` split already
-  // handles web browsers correctly because iPad portrait is >=768px,
-  // but native Tauri iOS reports a webview viewport that can drift
-  // below the `md:` threshold during split view / slide over, which
-  // would otherwise flip the shell to the phone layout mid-session.
-  // Explicit `isIPad` + a prefersTabletLayout signal keeps the layout
-  // stable regardless of transient viewport width changes.
+  //
+  // ── iPad back-button fix (fix/ipad-nav-back-button) ──────────────────
+  // This was previously `prefersTabletLayout = platform.isIPad` —
+  // device-based and unconditional. The three-pane layout has NO back
+  // affordance (every parent pane is always on screen, so "up" is just to
+  // the left). That is fine when the iPad webview is wide, but the app
+  // permits iPadOS Split View / Slide Over (`UIRequiresFullScreen: false`),
+  // so the webview can be NARROW on an iPad — and in a narrow three-pane
+  // shell the user was stranded with no way back up the stack.
+  //
+  // The fix drives the choice off ACTUAL AVAILABLE WIDTH, not the device
+  // type (see `shouldUseTabletLayout`). A wide iPad keeps the three-pane
+  // layout; a narrow iPad falls through to the responsive shell whose
+  // `md:hidden` stacked layout carries the framework-level back control
+  // (canGoBack / handleStackBack) — so the back affordance is consistent
+  // across iPhone and a narrowed iPad. The 768px threshold matches the
+  // Tailwind `md` breakpoint the non-iPad clients already switch on, so a
+  // narrow iPad webview behaves identically to a narrow browser window.
   const platform = usePlatform();
-  const prefersTabletLayout = platform.isIPad;
+  // Track the live webview width so split-view / slide-over resizes flip
+  // the layout (usePlatform re-renders on resize but does not expose width).
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== "undefined" ? window.innerWidth : 0,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => setViewportWidth(window.innerWidth);
+    handler();
+    window.addEventListener("resize", handler);
+    window.addEventListener("orientationchange", handler);
+    return () => {
+      window.removeEventListener("resize", handler);
+      window.removeEventListener("orientationchange", handler);
+    };
+  }, []);
+  const prefersTabletLayout = shouldUseTabletLayout(platform.isIPad, viewportWidth);
   const isTV = platform.isTV;
 
   // TV DPAD navigation — top-level handler for back/escape and
@@ -1728,17 +1756,20 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     </div>
   );
 
-  // INS-020: iPad explicitly renders the desktop three-pane layout so
-  // the native iOS Tauri build gets the tablet UX regardless of CSS
-  // breakpoints. Non-iPad clients use the existing Tailwind `md:`
-  // split that already handles desktop browsers and phones.
+  // INS-020 + iPad back-button fix: a WIDE iPad renders the desktop
+  // three-pane layout so the native iOS Tauri build gets the tablet UX
+  // regardless of CSS breakpoints. A NARROW iPad (Split View / Slide Over)
+  // and all non-iPad clients use the responsive Tailwind `md:` split — its
+  // `md:hidden` stacked layout carries the framework-level back control, so
+  // narrow iPad and iPhone share the same back affordance.
   return (
     <>
       {isTV ? (
         // TV — three-pane with DPAD navigation and capability banners.
         renderTVLayout()
       ) : prefersTabletLayout ? (
-        // iPad native — always three-pane, regardless of viewport width.
+        // iPad, wide enough for three panes — parent panes always visible,
+        // so no back control is needed (see shouldUseTabletLayout).
         <div className="h-full w-full min-h-0 min-w-0" data-concord-layout="tablet">
           {renderDesktopLayout()}
         </div>
