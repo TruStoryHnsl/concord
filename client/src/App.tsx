@@ -28,9 +28,6 @@ import { EffectsOverlay } from "./effects/EffectsOverlay";
 import { WebviewCallLayer } from "./components/voice/WebviewCallLayer";
 import { KeychainMigrationPrompt } from "./components/settings/KeychainMigrationPrompt";
 import { shouldShowKeychainMigration } from "./components/settings/keychainMigration";
-// superuser-ux (p2p social): first-run owner-claim gate. Additive mount —
-// native-only, renders nothing on web or once an owner is already claimed.
-import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFirstRunGate";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -783,11 +780,6 @@ export default function App() {
         />
       )}
       {launchOverlay}
-      {/* superuser-ux (p2p social): first-run owner-claim gate. Activated
-          only once the launch animation has finished so it doesn't fight the
-          splash. Native-only; self-dismisses once the owner profile is
-          claimed (or if it was already claimed on a prior run). */}
-      <SuperuserFirstRunGate active={launchDone} />
     </>
   );
 }
