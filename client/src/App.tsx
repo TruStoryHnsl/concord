@@ -26,6 +26,8 @@ import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
 import { EffectsOverlay } from "./effects/EffectsOverlay";
 import { WebviewCallLayer } from "./components/voice/WebviewCallLayer";
+import { KeychainMigrationPrompt } from "./components/settings/KeychainMigrationPrompt";
+import { shouldShowKeychainMigration } from "./components/settings/keychainMigration";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -502,6 +504,26 @@ export default function App() {
     })();
   }, [isLoggedIn, cleanupUserId, addToast]);
 
+  // One-shot keychain migration prompt (Phase-2 source routing). The first
+  // native launch (logged in) after this ships, IF the user has saved
+  // sources still living in plaintext localStorage, offer to copy them into
+  // the porch-backed encrypted keychain. `shouldShowKeychainMigration`
+  // enforces native-only + the `concord_keychain_migrated` localStorage
+  // flag + at-least-one-migratable-source. The flag is set by EITHER action
+  // inside the modal, so dismissing ("Not now") is one-and-done too. A
+  // session-scoped ref stops the gate from re-evaluating on every render.
+  const keychainMigrationChecked = useRef(false);
+  const [showKeychainMigration, setShowKeychainMigration] = useState(false);
+  useEffect(() => {
+    if (!isLoggedIn || !isTauri || keychainMigrationChecked.current) return;
+    keychainMigrationChecked.current = true;
+    if (shouldShowKeychainMigration()) {
+      // Defer out of the effect body so the show-flag flip doesn't cascade
+      // a synchronous re-render (react-hooks no-sync-setState guidance).
+      queueMicrotask(() => setShowKeychainMigration(true));
+    }
+  }, [isLoggedIn, isTauri]);
+
   // Auto-reconnect to voice after page refresh.
   // Retries up to MAX_RECONNECT_ATTEMPTS with exponential backoff
   // (1s, 2s, 4s) before giving up and clearing the pending session.
@@ -752,6 +774,11 @@ export default function App() {
           signaling listener (auto-answers incoming offers). App-root so it
           works on every layout and survives nav. */}
       <WebviewCallLayer />
+      {showKeychainMigration && (
+        <KeychainMigrationPrompt
+          onClose={() => setShowKeychainMigration(false)}
+        />
+      )}
       {launchOverlay}
     </>
   );

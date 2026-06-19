@@ -42,6 +42,7 @@ import { useDisplayName } from "../../hooks/useDisplayName";
 import { useExtension } from "../../hooks/useExtension";
 import { useExtensionRoomBridge } from "../../hooks/useExtensionBridge";
 import { useExtensionStore } from "../../stores/extension";
+import { keychainAdd } from "../../api/keychain";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
 import { ExtensionCatalogModal } from "../extension/ExtensionCatalogModal";
@@ -2573,6 +2574,26 @@ export function AddSourceModal({
       });
       // Clear the password from form state immediately after use.
       setConcordPassword("");
+      // Keychain (Phase-2 source routing): persist the concord-instance
+      // invite as a `concord` source into the primary profile. Native-only
+      // (the wrapper no-ops on web) and strictly best-effort — a keychain
+      // failure must NOT unwind a successful source add, so we log and
+      // swallow. Only persist when an invite token was actually consumed.
+      if (token.trim()) {
+        void keychainAdd({
+          sourceKind: "concord",
+          sourceHost: trimmed,
+          credentials: {
+            host: trimmed,
+            invite_token: token.trim(),
+          },
+        }).catch((err) => {
+          console.warn(
+            "[ChatLayout] keychain save for concord invite failed (non-fatal):",
+            err instanceof Error ? err.message : err,
+          );
+        });
+      }
       onSourceAdded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't reach that host");
@@ -2643,6 +2664,24 @@ export function AddSourceModal({
         updateSource,
         draft: matrixDraft,
         session,
+      });
+      // Keychain (Phase-2 source routing): persist the Matrix source login
+      // into the primary profile. Native-only (wrapper no-ops on web) and
+      // best-effort — a keychain failure must NOT unwind a successful
+      // source add.
+      void keychainAdd({
+        sourceKind: "matrix",
+        sourceHost: matrixDraft.host,
+        credentials: {
+          homeserver: matrixDraft.homeserverUrl,
+          user_id: session.userId,
+          access_token: session.accessToken,
+        },
+      }).catch((err) => {
+        console.warn(
+          "[ChatLayout] keychain save for matrix source failed (non-fatal):",
+          err instanceof Error ? err.message : err,
+        );
       });
       onSourceAdded();
     } catch (err) {

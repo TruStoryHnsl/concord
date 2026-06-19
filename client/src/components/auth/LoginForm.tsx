@@ -4,6 +4,40 @@ import { registerUser, validateInvite, getInstanceInfo, getTOTPStatus, loginVeri
 import { useAuthStore } from "../../stores/auth";
 import { INVITE_STORAGE_KEY } from "../../App";
 import { ConcordLogo } from "../brand/ConcordLogo";
+import { getHomeserverUrl } from "../../api/serverUrl";
+import { keychainAdd } from "../../api/keychain";
+
+/**
+ * Keychain (Phase-2 source routing): best-effort persist a successful
+ * Matrix login into the primary profile's keychain as a `matrix` source.
+ *
+ * Native-only (the wrapper no-ops on web). Strictly fire-and-forget — a
+ * keychain failure must NEVER block or unwind the user's login, so we
+ * swallow every error here. The homeserver is the one `loginWithPassword`
+ * authenticated against (`getHomeserverUrl()`), so the persisted
+ * `{ homeserver, user_id, access_token }` round-trips against the same
+ * source the session is bound to.
+ */
+function persistMatrixLoginToKeychain(
+  accessToken: string,
+  userId: string,
+): void {
+  const homeserver = getHomeserverUrl();
+  void keychainAdd({
+    sourceKind: "matrix",
+    sourceHost: homeserver,
+    credentials: {
+      homeserver,
+      user_id: userId,
+      access_token: accessToken,
+    },
+  }).catch((err) => {
+    console.warn(
+      "[LoginForm] keychain save for matrix login failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  });
+}
 
 export function LoginForm() {
   const login = useAuthStore((s) => s.login);
@@ -114,6 +148,7 @@ export function LoginForm() {
           }
         }
         login(result.accessToken, result.userId, result.deviceId);
+        persistMatrixLoginToKeychain(result.accessToken, result.userId);
       } else {
         if (!firstBoot && !openRegistration && !inviteToken.trim()) {
           setError("A valid registration token is required to create an account.");
@@ -128,6 +163,7 @@ export function LoginForm() {
           setShowRegBanner(true);
         }
         login(result.access_token, result.user_id, result.device_id);
+        persistMatrixLoginToKeychain(result.access_token, result.user_id);
         sessionStorage.removeItem(INVITE_STORAGE_KEY);
         window.history.replaceState({}, "", window.location.pathname);
       }
@@ -166,6 +202,7 @@ export function LoginForm() {
     try {
       await loginVerifyTOTP(totpCode, pendingLogin.accessToken);
       login(pendingLogin.accessToken, pendingLogin.userId, pendingLogin.deviceId);
+      persistMatrixLoginToKeychain(pendingLogin.accessToken, pendingLogin.userId);
       setPendingLogin(null);
     } catch (err) {
       setTotpError(err instanceof Error ? err.message : "Invalid code");

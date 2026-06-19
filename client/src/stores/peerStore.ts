@@ -37,6 +37,7 @@ import {
   type PeerSource,
 } from "../api/peerStore";
 import { isTauri } from "../api/servitude";
+import { keychainAdd } from "../api/keychain";
 import {
   addBrowserPeerFromCard,
   grantBrowserPeerAccess,
@@ -217,6 +218,23 @@ export const usePeerStore = create<PeerStoreState>((set, get) => ({
       // IPC round-trip. Cheaper to be boring than to write a parallel
       // merge here that drifts from the backend's semantics.
       await get().load();
+      // Keychain (Phase-2 source routing): persist the paired peer as a
+      // `p2p_peer` source into the primary profile. Best-effort — a
+      // keychain failure must NOT undo a successful pairing, so we log and
+      // swallow. Native-only; the wrapper no-ops on web.
+      void keychainAdd({
+        sourceKind: "p2p_peer",
+        sourceHost: added.peerId,
+        credentials: {
+          peer_id: added.peerId,
+          addrs: added.multiaddrs,
+        },
+      }).catch((err) => {
+        console.warn(
+          "[peerStore] keychain save for paired peer failed (non-fatal):",
+          err instanceof Error ? err.message : err,
+        );
+      });
       return added;
     } catch (err) {
       const message =
