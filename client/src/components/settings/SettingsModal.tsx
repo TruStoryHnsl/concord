@@ -17,6 +17,8 @@ import { HostingTab } from "./HostingTab";
 import { ConnectorsTab } from "./ConnectorsTab";
 import { AdminTab } from "./AdminTab";
 import { ServerSettingsContent } from "./ServerSettingsModal";
+import { SocialPeersPanel } from "../social/peers/SocialPeersPanel";
+import { SocialInboxPanel } from "../social/inbox/SocialInboxPanel";
 
 /**
  * INS-012 + Settings makeover (#5): Unified settings panel.
@@ -53,6 +55,8 @@ type LeafKey =
   | "profile"
   | "users"
   | "connections"
+  | "peers"
+  | "messages"
   | "appearance"
   | "node"
   | "connectors"
@@ -205,6 +209,15 @@ export function SettingsPanel() {
           { key: "profile", label: "Profile", icon: "person", hint: "Name, avatar, security" },
           { key: "users", label: "Identity", icon: "manage_accounts", hint: "Logins & trust" },
           { key: "connections", label: "Connections", icon: "link", hint: "Linked instances & peers" },
+          // p2p-social: the known-peers registry + 1:1 inbox. Native-only —
+          // both ride the embedded servitude swarm (Tauri commands), so they
+          // gate on isTauri like Node/Connectors below.
+          ...(isTauri
+            ? ([
+                { key: "peers", label: "Peers", icon: "groups", hint: "Known-peers registry" },
+                { key: "messages", label: "Messages", icon: "forum", hint: "Per-peer inboxes" },
+              ] as LeafDef[])
+            : []),
         ],
       },
       {
@@ -501,7 +514,20 @@ export function SettingsPanel() {
   );
 
   // ----- Content pane -----
-  const content = (
+  // The Messages (per-peer inbox) surface is a full-height two-pane layout
+  // (conversation rail + transcript), so it opts out of the centered,
+  // max-w-2xl scrolling column the other leaf tabs share and fills the
+  // content area instead.
+  const content =
+    activeTab === "messages" ? (
+      <div
+        key={`${serverSettingsId ?? "user"}:messages`}
+        className="h-full min-h-0"
+        data-testid="settings-content"
+      >
+        <SocialInboxPanel />
+      </div>
+    ) : (
     <div
       key={`${serverSettingsId ?? "user"}:${activeTab}`}
       className="mx-auto w-full max-w-2xl p-6"
@@ -514,6 +540,7 @@ export function SettingsPanel() {
       {activeTab === "profile" && <ProfileTab />}
       {activeTab === "users" && <UsersTab />}
       {activeTab === "connections" && <UserConnectionsTab />}
+      {activeTab === "peers" && <SocialPeersPanel />}
       {activeTab === "appearance" && <AppearanceTab />}
       {activeTab === "node" && <NodeHostingTab />}
       {activeTab === "connectors" && <ConnectorsTab />}
@@ -526,7 +553,7 @@ export function SettingsPanel() {
         <ServerSettingsContent serverId={serverSettingsId} activeTab={serverSubTab!} />
       )}
     </div>
-  );
+    );
 
   // ----- Layout -----
   // Wide: two-pane (rail beside scrolling content).
