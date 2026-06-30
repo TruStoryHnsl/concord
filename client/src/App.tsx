@@ -31,6 +31,9 @@ import { shouldShowKeychainMigration } from "./components/settings/keychainMigra
 // superuser-ux (p2p social): first-run owner-claim gate. Additive mount —
 // native-only, renders nothing on web or once an owner is already claimed.
 import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFirstRunGate";
+// native-pm-ui (Cycle 1): the personal-messenger Home front door. Native-only,
+// mounted OVER the always-alive ChatLayout. Web/docker entry path untouched.
+import { NativeFrontDoor } from "./components/home/NativeFrontDoor";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -777,6 +780,10 @@ export default function App() {
           signaling listener (auto-answers incoming offers). App-root so it
           works on every layout and survives nav. */}
       <WebviewCallLayer />
+      {/* native-pm-ui (Cycle 1): personal-messenger Home as the native default
+          entry surface, gated on isTauri. Sits over the always-mounted
+          ChatLayout; opening a row routes into the existing navStack flow. */}
+      {isTauri && <NativeFrontDoor />}
       {showKeychainMigration && (
         <KeychainMigrationPrompt
           onClose={() => setShowKeychainMigration(false)}

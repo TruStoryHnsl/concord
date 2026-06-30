@@ -85,6 +85,7 @@ import {
 } from "../sources/matrixSourceAuth";
 import { switchToSource } from "../../lib/switchToSource";
 import { isTauri } from "../../api/servitude";
+import { useHomeFeedStore } from "../../stores/homeFeed";
 import { useFormatStore } from "../../stores/format";
 import { useBootReadyStore } from "../../stores/bootReady";
 import { useInstanceAdmin } from "./chatLayout/useInstanceAdmin";
@@ -405,6 +406,61 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     autoActivatedRef.current = true;
     openLocal();
   }, [activeServerId, activeChannelId, dmActive, openLocal]);
+
+  // Native front door (Personal-Messaging UI): the Home conversation list
+  // raises a one-shot "open this conversation" intent on the homeFeed store;
+  // ChatLayout — which owns every navigation primitive — consumes it here and
+  // routes into the EXISTING navStack drill-down / DM / porch surfaces. This
+  // is purely additive: with no pending intent (web, or native steady-state)
+  // the effect is inert, so no existing behavior changes. The homeFeed store's
+  // `surface` flip (set by `requestOpen`) is what reveals this layout from
+  // under the front door — see `NativeFrontDoor`.
+  const homePendingOpen = useHomeFeedStore((s) => s.pendingOpen);
+  useEffect(() => {
+    if (!homePendingOpen) return;
+    const target = useHomeFeedStore.getState().consumePendingOpen();
+    if (!target) return;
+    switch (target.kind) {
+      case "docker": {
+        // Hand off into the existing source/server/channel drill-down.
+        switchToSource(target.sourceId);
+        setMobileView("channels");
+        break;
+      }
+      case "local": {
+        // The device's own porch — same path the home/porch rail tile uses.
+        handleLocalServerSelect("home");
+        setMobileView("channels");
+        break;
+      }
+      case "dm": {
+        // Cycle 2 (WS-C): DMs now open on the native messenger chat surface
+        // (`NativeChatSurface`), so `openConversation` no longer raises a DM
+        // intent here. This case remains as a defensive fallback for any
+        // caller that still raises a raw DM intent — route into the existing
+        // DM/chat view so nothing is broken.
+        if (target.sourceId) switchToSource(target.sourceId);
+        handleMobileDMSelect(target.roomId);
+        break;
+      }
+      case "peer": {
+        // A bare peer has no matrix room→message linkage yet (KnownPeer has
+        // no matrix user/room), so it can't render a native timeline. Open
+        // the existing peers pairing/connect surface (the local porch's
+        // `peers` pseudo-channel), which owns peer connect/call today.
+        // Cycle 3 seam: peer↔room linkage → native peer chat surface.
+        useLocalServerSelectionStore.getState().setPeersOpen(true);
+        handleLocalServerSelect("home");
+        setMobileView("channels");
+        break;
+      }
+    }
+  }, [
+    homePendingOpen,
+    handleLocalServerSelect,
+    handleMobileDMSelect,
+    setMobileView,
+  ]);
 
   // Resizable channel sidebar (desktop only)
   const { sidebarWidth, handleResizeStart, SIDEBAR_MIN, SIDEBAR_MAX } =
