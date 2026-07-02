@@ -57,8 +57,11 @@ export function useConsolidation(): ConsolidationState {
         socialConsolidatePending(),
         socialDevicesList(),
       ]);
-      setProposals(p);
-      setDevices(d);
+      // Defensive: the native command returns a Vec, but coerce to an array
+      // so a mounted-at-app-root prompt never crashes the tree if the IPC
+      // layer hands back a non-array (e.g. an undefined invoke result).
+      setProposals(Array.isArray(p) ? p : []);
+      setDevices(Array.isArray(d) ? d : []);
     } catch (e) {
       setError(errMessage(e));
     } finally {
