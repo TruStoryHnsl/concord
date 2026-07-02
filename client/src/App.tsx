@@ -23,6 +23,7 @@ import { MarkReady } from "./components/MarkReady";
 import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
+import { ConsolidatePrompt } from "./components/social/consolidate/ConsolidatePrompt";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
 import { EffectsOverlay } from "./effects/EffectsOverlay";
 import { WebviewCallLayer } from "./components/voice/WebviewCallLayer";
@@ -795,6 +796,11 @@ export default function App() {
           splash. Native-only; self-dismisses once the owner profile is
           claimed (or if it was already claimed on a prior run). */}
       <SuperuserFirstRunGate active={launchDone} />
+      {/* WS-6 multi-device consolidation: surfaces a merge prompt whenever a
+          same-owner device is discovered and a proposal is pending. Renders
+          null when there are no pending proposals, so it's safe at app root.
+          Native-only (the consolidation store is filesystem-backed). */}
+      {isTauri && <ConsolidatePrompt />}
     </>
   );
 }
