@@ -14,7 +14,7 @@
  * projection and the existing navigation primitives.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { HomeView } from "./HomeView";
 import { NativeChatSurface } from "./NativeChatSurface";
 import type { ConversationRowProps } from "./ConversationRow";
@@ -26,7 +26,7 @@ import {
 } from "../../stores/homeFeed";
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { useSettingsStore } from "../../stores/settings";
-import { useNavStack } from "../../stores/navStack";
+import { personaDefaultGet } from "../../api/userProfile";
 
 const NOOP = () => {};
 
@@ -72,6 +72,26 @@ export function HomeScreen() {
 
   const [showNewDM, setShowNewDM] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  // The active default (mesh) persona's display name, if any. Loaded once on
+  // mount from the porch; `null` on web / when no default persona is set.
+  const [personaLabel, setPersonaLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void personaDefaultGet()
+      .then((persona) => {
+        if (!cancelled) setPersonaLabel(persona?.display_name ?? null);
+      })
+      .catch(() => {
+        // No porch / native-only IPC unavailable — leave the chip in its
+        // "Set persona" prompt state rather than surfacing an error.
+        if (!cancelled) setPersonaLabel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const { rows, byId } = useMemo(() => {
     const rows = conversations.map(toRowProps);
@@ -109,10 +129,34 @@ export function HomeScreen() {
     setShowNewDM(true);
   };
 
-  const openSettings = () => {
-    useNavStack.getState().setOverlay("settings");
+  // Open the existing Settings overlay at a specific tab and step the Home
+  // front door aside so ChatLayout's settings panel shows underneath. Routes
+  // through the settings store (which drives BOTH the desktop overlay and the
+  // mobile settings view) rather than duplicating any account-management UI.
+  const openSettingsAt = (tab?: "users" | "profile") => {
+    setMenuOpen(false);
+    setOverflowOpen(false);
+    useSettingsStore.getState().openSettings(tab);
     useHomeFeedStore.getState().showHandoff();
   };
+
+  // Reachable persona switcher → the existing Identity tab (UsersTab), which
+  // owns persona create/select/designate-default + the SuperuserPanel.
+  const openPersona = () => openSettingsAt("users");
+  // Reachable superuser keychain + account backup/restore → the Profile tab
+  // (ProfileTab: SuperuserBackupSection + AccountServicesSection).
+  const openBackup = () => openSettingsAt("profile");
+
+  // Reachable mesh map: flag it open, then reveal ChatLayout (which renders
+  // <MeshMap/> for the active local source). Mirrors openPairPeer's pattern.
+  const openMeshMap = () => {
+    setMenuOpen(false);
+    setOverflowOpen(false);
+    useLocalServerSelectionStore.getState().setMeshMapOpen(true);
+    requestOpen({ kind: "local" });
+  };
+
+  const openSettings = () => openSettingsAt();
 
   const chatActive = surface === "native-chat" && !!activeChat;
 
@@ -133,9 +177,18 @@ export function HomeScreen() {
           onSelectConversation={handleSelect}
           onQueryChange={setQuery}
           onFilterChange={setFilter}
-          onNewConversation={() => setMenuOpen((open) => !open)}
+          onNewConversation={() => {
+            setOverflowOpen(false);
+            setMenuOpen((open) => !open);
+          }}
           onAddSource={openAddSource}
           onOpenSettings={openSettings}
+          personaLabel={personaLabel ?? undefined}
+          onOpenPersona={openPersona}
+          onOverflow={() => {
+            setMenuOpen(false);
+            setOverflowOpen((open) => !open);
+          }}
         />
 
         {menuOpen && (
@@ -151,6 +204,35 @@ export function HomeScreen() {
               <NewConvMenuItem icon="chat" label="Start a DM" onClick={openNewDM} />
               <NewConvMenuItem icon="hub" label="Pair a peer" onClick={openPairPeer} />
               <NewConvMenuItem icon="add_link" label="Add source" onClick={openAddSource} />
+            </div>
+          </>
+        )}
+
+        {overflowOpen && (
+          <>
+            {/* click-away scrim */}
+            <button
+              type="button"
+              aria-label="Close menu"
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setOverflowOpen(false)}
+            />
+            <div className="safe-top absolute right-3 top-14 z-50 w-56 overflow-hidden rounded-xl bg-surface-container-high elev-md edge-hairline">
+              <NewConvMenuItem
+                icon="hub"
+                label="Mesh map"
+                onClick={openMeshMap}
+              />
+              <NewConvMenuItem
+                icon="manage_accounts"
+                label="Identity & personas"
+                onClick={openPersona}
+              />
+              <NewConvMenuItem
+                icon="backup"
+                label="Account & backup"
+                onClick={openBackup}
+              />
             </div>
           </>
         )}

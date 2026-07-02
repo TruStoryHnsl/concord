@@ -30,6 +30,13 @@ export interface HomeViewProps {
   onNewConversation: () => void;
   onAddSource: () => void;
   onOpenSettings?: () => void;
+  /** Native only: the active default (mesh) persona's display name, if any.
+   *  Undefined = none set yet. Drives the Home-header persona chip. */
+  personaLabel?: string;
+  /** Native only: open the Identity/persona-management surface. */
+  onOpenPersona?: () => void;
+  /** Native only: toggle the Home-header overflow menu (mesh map, backup). */
+  onOverflow?: () => void;
 }
 
 const FILTERS: Array<{ id: HomeFilter; label: string }> = [
@@ -106,7 +113,7 @@ function DetailEmptyState() {
           Select a conversation
         </h2>
         <p className="max-w-sm font-body text-sm text-on-surface-variant">
-          People, local porch chats, and connected sources all start from Home.
+          People, your private space, and connected sources all start from Home.
         </p>
       </div>
     </div>
@@ -134,6 +141,9 @@ function HomeListPanel({
   onNewConversation,
   onAddSource,
   onOpenSettings,
+  personaLabel,
+  onOpenPersona,
+  onOverflow,
 }: HomeListPanelProps) {
   const visibleConversations = conversations.filter(
     (row) => visibleForFilter(row, filter) && matchesQuery(row, query),
@@ -149,6 +159,30 @@ function HomeListPanel({
               Home
             </h1>
           </div>
+          {onOpenPersona && (
+            <button
+              type="button"
+              onClick={onOpenPersona}
+              aria-label={
+                personaLabel
+                  ? `Mesh persona: ${personaLabel}. Manage identities`
+                  : "Set a mesh persona"
+              }
+              title={
+                personaLabel
+                  ? `Mesh persona: ${personaLabel}`
+                  : "Set a mesh persona"
+              }
+              className="btn-press flex h-9 min-w-0 max-w-[7.5rem] items-center gap-1.5 rounded-full bg-surface-container px-2.5 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface edge-hairline"
+            >
+              <span className="material-symbols-outlined flex-shrink-0 text-lg text-secondary">
+                badge
+              </span>
+              <span className="truncate font-label text-xs font-semibold">
+                {personaLabel ?? "Set persona"}
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onNewConversation}
@@ -158,6 +192,17 @@ function HomeListPanel({
           >
             <span className="material-symbols-outlined text-xl">edit_square</span>
           </button>
+          {onOverflow && (
+            <button
+              type="button"
+              onClick={onOverflow}
+              aria-label="More options"
+              title="More options"
+              className="btn-press flex h-9 w-9 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+            >
+              <span className="material-symbols-outlined text-xl">more_vert</span>
+            </button>
+          )}
           {onOpenSettings && (
             <button
               type="button"
@@ -279,6 +324,9 @@ export function HomeView({
   onNewConversation,
   onAddSource,
   onOpenSettings,
+  personaLabel,
+  onOpenPersona,
+  onOverflow,
 }: HomeViewProps) {
   const listPanel = (
     <HomeListPanel
@@ -293,6 +341,9 @@ export function HomeView({
       onNewConversation={onNewConversation}
       onAddSource={onAddSource}
       onOpenSettings={onOpenSettings}
+      personaLabel={personaLabel}
+      onOpenPersona={onOpenPersona}
+      onOverflow={onOverflow}
     />
   );
 
