@@ -5,6 +5,7 @@ import { changePassword, getTOTPStatus, setupTOTP, verifyTOTP, disableTOTP, getR
 import { Avatar } from "../ui/Avatar";
 import { IdentityTrustSection } from "./IdentityTrustSection";
 import { SuperuserBackupSection } from "./SuperuserBackupSection";
+import { AccountServicesSection } from "./AccountServicesSection";
 
 export function ProfileTab() {
   const client = useAuthStore((s) => s.client);
@@ -136,6 +137,10 @@ export function ProfileTab() {
 
       {/* F5 — Hub credential backup: claim/restore the superuser keychain */}
       <SuperuserBackupSection />
+
+      {/* WS-5 — optional docker account-services center: designate / upload /
+          sign-in via the account-relay libp2p protocol */}
+      <AccountServicesSection />
 
       <div className="border-t border-outline-variant/15 pt-6 flex flex-wrap gap-3">
         <button
