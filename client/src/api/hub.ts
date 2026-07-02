@@ -82,41 +82,14 @@ export async function hubClaim(
   });
 }
 
-/** WS-5 — CLAIM over the network: seal the local superuser backup and UPLOAD
- *  it to a docker account-services hub over `/concord/hub/1.0.0`, keyed by
- *  `heroPubkeyHex` (the account/recovery id restored with on a fresh device).
- *  Returns the stored byte size. The hub only ever sees ciphertext. Native-only. */
-export async function hubUpload(
-  hubPeerId: string,
-  heroPubkeyHex: string,
-  passphrase: string,
-): Promise<number> {
-  if (!isTauri()) {
-    throw new Error("hub_upload is native-only");
-  }
-  const { invoke } = await import("@tauri-apps/api/core");
-  return await invoke<number>("hub_upload", {
-    hubPeerId,
-    heroPubkeyHex,
-    passphrase,
-  });
-}
-
-/** WS-5 — DOWNLOAD from the hub: pull the stored ciphertext for `heroPubkeyHex`
- *  and return it base64-encoded, to feed into {@link hubRestore}. Native-only. */
-export async function hubDownload(
-  hubPeerId: string,
-  heroPubkeyHex: string,
-): Promise<string> {
-  if (!isTauri()) {
-    throw new Error("hub_download is native-only");
-  }
-  const { invoke } = await import("@tauri-apps/api/core");
-  return await invoke<string>("hub_download", {
-    hubPeerId,
-    heroPubkeyHex,
-  });
-}
+// WS-5 / WS-10 (security cold review) — `hubUpload` / `hubDownload` (the
+// networked claim/restore over `/concord/hub/1.0.0`) were REMOVED. That
+// transport bound no uploader→hero identity on the Rust side, so it was an
+// integrity/availability hijack surface. Account-services backup/restore rides
+// the AUTHENTICATED account-relay path (`api/accountRelay.ts` →
+// `account_relay_*`), which gates on the Noise-authenticated peer being in the
+// account's authorized-device set. The local `hubClaim` / `hubRestore` seal +
+// decrypt helpers below never touched the network and remain.
 
 /** Restore a superuser keychain on a new device.
  *

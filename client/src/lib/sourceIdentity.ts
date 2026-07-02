@@ -17,7 +17,7 @@
  *     SourcesPanel.tsx), NOT from a `ConcordSource` row. It is reached by
  *     clicking that tile (`onLocalOpen`), never through `switchToSource`.
  *     Consequently EVERY `ConcordSource` on native represents a REMOTE
- *     instance the user linked (e.g. concorrd.com, a friend's porch, a
+ *     instance the user linked (e.g. linked.example.test, a friend's porch, a
  *     Matrix server) and MUST be disconnectable.
  *
  * History — why this is deliberately NOT derived from the active config:
