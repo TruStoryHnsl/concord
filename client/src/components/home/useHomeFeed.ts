@@ -160,7 +160,7 @@ export function useHomeFeed(): Conversation[] {
     // single instance). Always show one local row there.
     const local = isTauri()
       ? localToConversation({
-          label: porchName.trim() || "Local porch",
+          label: porchName.trim() || "My space",
           // Float the user's own place near the top of a fresh feed.
           lastActivityTs: now,
         })

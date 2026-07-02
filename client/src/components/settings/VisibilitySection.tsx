@@ -67,13 +67,13 @@ interface ServerEntry {
 const SERVERS: ServerEntry[] = [
   {
     id: VISIBILITY_SERVER_ID_PORCH,
-    label: "Porch (always-fresh guest entrance)",
+    label: "Guests (always-fresh guest entrance)",
     defaultHint:
       "Defaults to 1 hop — only your directly-paired peers can see it.",
   },
   {
     id: VISIBILITY_SERVER_ID_HOME,
-    label: "Home (your persistent server)",
+    label: "My space (your persistent space)",
     defaultHint:
       "Defaults to 0 hops — owner-only until you opt in. Raise this to let paired peers (or wider) see it in their explore menu.",
   },

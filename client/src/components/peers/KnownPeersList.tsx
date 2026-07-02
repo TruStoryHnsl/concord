@@ -218,7 +218,7 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
         className="inline-flex items-center gap-1.5 text-xs text-on-surface-variant whitespace-nowrap cursor-pointer select-none"
         title={
           peer.accessGranted
-            ? "Access granted — this peer can dial into your porch/home."
+            ? "Access granted — this peer can dial into your space."
             : "Access revoked — peer stays in your visible list but can't dial in."
         }
       >

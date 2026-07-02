@@ -49,8 +49,11 @@ export const LocalServerSidebar = memo(function LocalServerSidebar({
     void loadHomeName();
   }, [loadHomeName]);
 
-  const homeLabel = homeName.trim() || "home";
-  const porchLabel = "porch";
+  // User-facing labels only — the internal `"home"`/`"porch"` keys + testids
+  // below are unchanged. Primary tile = the user's own space (vanity name when
+  // set); the guest doorman reads as "Guests", never "porch".
+  const homeLabel = homeName.trim() || "My space";
+  const porchLabel = "Guests";
 
   const handleSelect = (next: "porch" | "home") => {
     setActive(next);
@@ -92,7 +95,7 @@ export const LocalServerSidebar = memo(function LocalServerSidebar({
     return (
       <div className="h-full bg-surface-container-low overflow-y-auto overflow-x-hidden overscroll-y-auto p-3 flex flex-col">
         <h3 className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest px-2 mb-3">
-          Local Servers
+          Your space
         </h3>
         <div className="space-y-0.5">
           {tiles.map((t) => {
@@ -106,7 +109,7 @@ export const LocalServerSidebar = memo(function LocalServerSidebar({
                 data-active={isActive}
                 onClick={() => handleSelect(t.key)}
                 title={t.label}
-                aria-label={`${t.label} (${t.key} server)`}
+                aria-label={t.label}
                 className={`btn-press w-full flex items-center gap-3 px-3 py-1.5 rounded-xl transition-all ${
                   isActive ? t.mobileActiveRowClass : ""
                 }`}

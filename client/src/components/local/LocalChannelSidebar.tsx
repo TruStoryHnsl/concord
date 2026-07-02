@@ -93,13 +93,15 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
     selectChannel,
   ]);
 
+  // User-facing label only — `active` still switches on the internal
+  // `"home"`/`"porch"` keys. Primary = the user's own space; guest = "Guests".
   const serverLabel =
-    active === "home" ? homeName.trim() || "home" : "porch";
+    active === "home" ? homeName.trim() || "My space" : "Guests";
 
   // Loading status string matches the active server so the user
   // sees consistent vocabulary in BringingUpSplash.
   const loadingStatus =
-    active === "home" ? "Loading home…" : "Loading porch…";
+    active === "home" ? "Loading your space…" : "Loading guests…";
 
   return (
     <div className="w-full h-full flex flex-col min-h-0 bg-surface-container-low">
@@ -126,7 +128,7 @@ export const LocalChannelSidebar = memo(function LocalChannelSidebar({
               This device is in web mode
             </p>
             <p className="mt-2 text-xs text-on-surface-variant/60 font-label">
-              The local {serverLabel} server lives on your desktop install.
+              Your {serverLabel} lives on your desktop install.
             </p>
           </div>
         ) : !isLoaded ? (

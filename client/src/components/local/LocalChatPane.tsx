@@ -96,8 +96,10 @@ export function LocalChatPane() {
   // home server.
   const active = useLocalServerSelectionStore((s) => s.active);
   const homeName = useHomeServerNameStore((s) => s.name);
+  // User-facing label only — `active` still switches on the internal
+  // `"home"`/`"porch"` keys. Primary = the user's own space; guest = "Guests".
   const serverLabel =
-    active === "home" ? homeName.trim() || "home" : "porch";
+    active === "home" ? homeName.trim() || "My space" : "Guests";
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
 

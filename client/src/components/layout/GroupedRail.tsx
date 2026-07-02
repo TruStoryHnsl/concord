@@ -281,7 +281,9 @@ export const GroupedRail = memo(function GroupedRail({
   };
 
   const renderLocalServerTile = (key: "porch" | "home") => {
-    const label = key === "home" ? homeName.trim() || "home" : "porch";
+    // User-facing label only — the `"home"`/`"porch"` keys + testids are
+    // unchanged. Primary reads as the user's own space; guest doorman = "Guests".
+    const label = key === "home" ? homeName.trim() || "My space" : "Guests";
     const isActive = localActive && localSelection === key;
     return (
       <div key={key} className="relative">
@@ -292,7 +294,7 @@ export const GroupedRail = memo(function GroupedRail({
             onServerSelect?.();
           }}
           title={label}
-          aria-label={`${label} (${key} server)`}
+          aria-label={label}
           data-testid={`rail-local-${key}`}
           className={`btn-press w-12 h-12 flex items-center justify-center text-sm font-headline font-bold transition-all ${
             isActive

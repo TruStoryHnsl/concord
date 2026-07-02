@@ -181,7 +181,7 @@ export function localToConversation(input: {
     id: `local:${input.sourceId ?? "porch"}`,
     kind: "local",
     displayName: input.label,
-    preview: "Your local porch",
+    preview: "Your space",
     lastActivityTs: input.lastActivityTs,
     unreadCount: 0,
     localLabel: "LOCAL",

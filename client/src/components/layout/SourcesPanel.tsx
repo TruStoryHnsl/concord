@@ -239,7 +239,7 @@ function SortableSourceTile({
           <span
             data-testid={`source-p2p-badge-${source.id}`}
             className="absolute -bottom-1 -left-1 w-3 h-3 rounded-full bg-secondary ring-2 ring-surface flex items-center justify-center"
-            title="Peer-to-peer (porch) connection"
+            title="Peer-to-peer connection"
             aria-label="Peer-to-peer source"
           >
             <span className="block w-1.5 h-1.5 rounded-full bg-on-secondary" />

@@ -347,7 +347,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     s.channels.find((c) => c.id === s.selectedChannelId) ?? null,
   );
   const porchVanityName = useInstanceNameStore((s) => s.name);
-  const porchLabel = porchVanityName.trim() || "porch";
+  // Rendered header fallback for the local source — the user's own space.
+  // `porchVanityName` / internal keys are unchanged; only the visible label.
+  const porchLabel = porchVanityName.trim() || "My space";
   const loadPorchChannels = usePorchStore((s) => s.loadChannels);
   // F1b-IMPL — hydrate the persistent home-server name on first
   // ChatLayout mount so the home tile in LocalServerSidebar renders
@@ -2867,7 +2869,7 @@ export function AddSourceModal({
             <div className="space-y-2">
               {!canManageSources && (
                 <p className="text-xs text-on-surface-variant px-1 pb-1">
-                  You can connect to a peer's porch below. Adding web or Matrix
+                  You can connect to a peer's space below. Adding web or Matrix
                   sources to this instance is reserved for its admin/owner.
                 </p>
               )}
