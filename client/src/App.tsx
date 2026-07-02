@@ -26,6 +26,7 @@ import { DirectInviteBanner } from "./components/DirectInviteBanner";
 import { ConsolidatePrompt } from "./components/social/consolidate/ConsolidatePrompt";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
 import { EffectsOverlay } from "./effects/EffectsOverlay";
+import { NativeCallLayer } from "./components/voice/NativeCallLayer";
 import { WebviewCallLayer } from "./components/voice/WebviewCallLayer";
 import { KeychainMigrationPrompt } from "./components/settings/KeychainMigrationPrompt";
 import { shouldShowKeychainMigration } from "./components/settings/keychainMigration";
@@ -891,6 +892,11 @@ export default function App() {
           signaling listener (auto-answers incoming offers). App-root so it
           works on every layout and survives nav. */}
       <WebviewCallLayer />
+      {/* p2p video plane (Rust media path) — paints remote call video that
+          the Rust render pipeline decodes and streams over Tauri events.
+          Used where the webview has no WebRTC (Linux WebKitGTK); shows
+          itself only while live frames arrive. */}
+      <NativeCallLayer />
       {/* native-pm-ui (Cycle 1): personal-messenger Home as the native default
           entry surface, gated on isTauri. Sits over the always-mounted
           ChatLayout; opening a row routes into the existing navStack flow. */}
