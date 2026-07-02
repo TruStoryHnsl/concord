@@ -47,6 +47,13 @@ interface MeshGraphNodeWire {
    * pillar via `POST /api/mesh/presence`. Absent on other node kinds.
    */
   kind?: string;
+  /**
+   * WS-8 — `true` when this node is reached LAN-like through a WireGuard
+   * tunnel (a remote peer whose successful dial rode the WG wrap). Stamped
+   * by the native `mesh_graph_snapshot` command from the LAN registry.
+   * Backward-compatible: older/web snapshots omit it (treated as `false`).
+   */
+  via_wg?: boolean;
 }
 
 /** One undirected edge (endpoints lexicographically ordered, snake_case). */
@@ -112,6 +119,14 @@ export interface MeshGraphNode {
    * pillar; `undefined` otherwise. Drives the pillar-satellite visual.
    */
   kind?: string;
+  /**
+   * WS-8 — `true` when the node is reached LAN-like through a WireGuard
+   * tunnel. The map renders it as a reachable "via tunnel" node (same
+   * affordances as a LAN peer), never a distant unreachable island.
+   * `undefined`/`false` for genuine LAN peers, pillar/federation nodes, and
+   * web snapshots.
+   */
+  viaWg?: boolean;
 }
 
 /** An undirected edge between two peer ids. */
@@ -160,6 +175,7 @@ export async function fetchMeshGraph(): Promise<MeshGraph> {
       hopDistance: n.hop_distance,
       via: n.via,
       kind: n.kind,
+      viaWg: n.via_wg ?? false,
     })),
     edges: wire.edges.map((e) => ({ a: e.a, b: e.b })),
   };
@@ -189,6 +205,7 @@ async function fetchMeshGraphWeb(): Promise<MeshGraph> {
         hopDistance: n.hop_distance,
         via: n.via,
         kind: n.kind,
+        viaWg: n.via_wg ?? false,
       })),
       edges: (wire.edges ?? []).map((e) => ({ a: e.a, b: e.b })),
       hub: {

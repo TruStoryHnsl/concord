@@ -270,17 +270,24 @@ export function MeshMap() {
       // distinctly (its own kind/color) and labeled "via pillar" so it
       // reads apart from a direct p2p neighbor.
       const isWebThreaded = n.kind === "web_threaded" || n.via === "pillar";
+      // WS-8 — a peer reached LAN-like through a WireGuard tunnel. Shown as a
+      // reachable "via tunnel" node (kind "known", never a distant island),
+      // and always surfaced regardless of the hop-scale window since it's a
+      // live tunnel-backed connection.
+      const isViaWg = n.viaWg === true;
       // A one-hop-up node the spring surfaced is shown even if it sits
       // beyond the slider window — exposing it IS the point of the
       // governance opt-in. Other nodes respect the hop-scale filter.
-      if (hop > hopScale && !isOneHopUp) continue;
+      if (hop > hopScale && !isOneHopUp && !isViaWg) continue;
       out.push({
         id: n.peerId,
         label: isWebThreaded
           ? `${shortPeerId(n.peerId)} · via pillar`
-          : isOneHopUp
-            ? `${shortPeerId(n.peerId)} · via ${reachedVia}`
-            : shortPeerId(n.peerId),
+          : isViaWg
+            ? `${shortPeerId(n.peerId)} · via tunnel`
+            : isOneHopUp
+              ? `${shortPeerId(n.peerId)} · via ${reachedVia}`
+              : shortPeerId(n.peerId),
         hop,
         // W1.1 has no per-node trust info in the topology graph itself
         // (that's F3's peer-store cross-ref, a follow-up). Web-threaded
