@@ -149,12 +149,114 @@ async function sendSignal(toPeerId: string, message: SignalingMessage): Promise<
   }
 }
 
+/**
+ * Bound a promise. getUserMedia on Linux/WebKitGTK has been OBSERVED to hang
+ * forever (never resolve OR reject) when a capture device wedges — an
+ * unbounded await there freezes the whole call setup, so every capture
+ * acquisition goes through this.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
+/**
+ * E2E capture-device pinning (see `commands/e2e.rs::e2e_media_prefs`). When
+ * the harness runs TWO instances on one desktop host, both would capture the
+ * SAME default mic/cam — so it pins each instance to its own virtual device
+ * (distinct tone / test pattern) by label substring. Returns plain defaults
+ * when the env prefs are unset (i.e. always, outside the harness).
+ */
+export async function e2eCaptureConstraints(video: boolean): Promise<MediaStreamConstraints> {
+  const plain: MediaStreamConstraints = { audio: true, video };
+  try {
+    const prefs = await invoke<{ audio?: string | null; video?: string | null }>(
+      "e2e_media_prefs",
+    );
+    if (!prefs || (!prefs.audio && !prefs.video)) return plain;
+    console.info("[webview-call] e2e pin: enumerating devices");
+    let devices = await withTimeout(
+      navigator.mediaDevices.enumerateDevices(),
+      5000,
+      "enumerateDevices",
+    );
+    // Labels are empty until a capture has been granted once — unlock them
+    // with a throwaway stream (harness-only path; perms are auto-granted).
+    if (devices.every((d) => !d.label)) {
+      console.info("[webview-call] e2e pin: labels locked, throwaway gUM");
+      try {
+        const tmp = await withTimeout(
+          navigator.mediaDevices.getUserMedia({ audio: true, video }),
+          10000,
+          "throwaway getUserMedia",
+        );
+        tmp.getTracks().forEach((t) => t.stop());
+        devices = await navigator.mediaDevices.enumerateDevices();
+      } catch (e) {
+        console.warn("[webview-call] e2e pin: throwaway gUM failed", String(e));
+      }
+    }
+    const findId = (kind: MediaDeviceKind, match?: string | null) =>
+      match
+        ? devices.find(
+            (d) => d.kind === kind && d.label.toLowerCase().includes(match.toLowerCase()),
+          )?.deviceId
+        : undefined;
+    const audioId = findId("audioinput", prefs.audio);
+    const videoId = video ? findId("videoinput", prefs.video) : undefined;
+    console.info(
+      "[webview-call] e2e device pin",
+      JSON.stringify({
+        prefs,
+        audioId: audioId ?? null,
+        videoId: videoId ?? null,
+        labels: devices.map((d) => `${d.kind}:${d.label}`),
+      }),
+    );
+    return {
+      audio: audioId ? { deviceId: { exact: audioId } } : true,
+      video: video ? (videoId ? { deviceId: { exact: videoId } } : true) : false,
+    };
+  } catch {
+    return plain; // not a Tauri/e2e runtime
+  }
+}
+
 /** Acquire (or reuse) the shared local capture stream. */
 async function ensureLocalStream(video: boolean): Promise<MediaStream | null> {
   const existing = useWebviewCall.getState().localStream;
   if (existing) return existing;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+    const constraints = await e2eCaptureConstraints(video);
+    console.info("[webview-call] ensureLocalStream gUM", JSON.stringify(constraints));
+    let stream: MediaStream;
+    try {
+      stream = await withTimeout(
+        navigator.mediaDevices.getUserMedia(constraints),
+        12000,
+        "getUserMedia(pinned)",
+      );
+    } catch (e) {
+      // Pinned/exact constraints can wedge or overconstrain — fall back to
+      // plain defaults so the call still gets SOME capture rather than none.
+      console.warn("[webview-call] pinned gUM failed, retrying defaults", String(e));
+      stream = await withTimeout(
+        navigator.mediaDevices.getUserMedia({ audio: true, video }),
+        12000,
+        "getUserMedia(defaults)",
+      );
+    }
+    console.info(
+      "[webview-call] local capture ok",
+      JSON.stringify({
+        audio: stream.getAudioTracks().map((t) => t.label),
+        video: stream.getVideoTracks().map((t) => t.label),
+      }),
+    );
     const { micEnabled, camEnabled } = useWebviewCall.getState();
     stream.getAudioTracks().forEach((t) => (t.enabled = micEnabled));
     stream.getVideoTracks().forEach((t) => (t.enabled = camEnabled));

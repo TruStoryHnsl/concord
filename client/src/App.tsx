@@ -133,9 +133,61 @@ export default function App() {
         return;
       }
       if (!enabled) return;
+      const e2eReport = (name: string, value: unknown) =>
+        invoke("e2e_report", { name, json: JSON.stringify(value) }).catch(() => {});
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+      // Boot breadcrumb + console tee: E2E runs are headless, so the webview
+      // console is otherwise invisible. Mirror recent console lines (and
+      // uncaught errors) to a report file the driver can read.
+      const logBuf: string[] = [];
+      const pushLog = (line: string) => {
+        logBuf.push(`${new Date().toISOString()} ${line}`);
+        if (logBuf.length > 300) logBuf.splice(0, logBuf.length - 300);
+      };
+      for (const level of ["log", "info", "warn", "error", "debug"] as const) {
+        const orig = console[level].bind(console);
+        console[level] = (...args: unknown[]) => {
+          try {
+            pushLog(
+              `[${level}] ${args
+                .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+                .join(" ")}`,
+            );
+          } catch {
+            /* never break console */
+          }
+          orig(...args);
+        };
+      }
+      window.addEventListener("error", (e) =>
+        pushLog(`[uncaught] ${e.message} @${e.filename}:${e.lineno}`),
+      );
+      window.addEventListener("unhandledrejection", (e) =>
+        pushLog(`[unhandledrejection] ${String(e.reason)}`),
+      );
+      setInterval(() => void e2eReport("e2e_console.json", { lines: logBuf.slice(-150) }), 3000);
+      await e2eReport("e2e_boot.json", {
+        t: Date.now(),
+        ua: navigator.userAgent,
+        rtcPeerConnection: typeof RTCPeerConnection,
+        mediaDevices: typeof navigator.mediaDevices,
+      });
+
+      // Media probe — bounded so a hung getUserMedia can't stall the whole
+      // e2e flow (observed on Linux/WebKitGTK when a capture device wedges),
+      // and PINNED to this instance's e2e devices: two same-host instances
+      // opening the SAME default camera concurrently has been OBSERVED to
+      // freeze one webview's WebProcess entirely (timers stop firing).
+      const { e2eCaptureConstraints } = await import("./voice/webviewVoiceMesh");
       let report: Record<string, unknown>;
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        const s = await Promise.race([
+          e2eCaptureConstraints(true).then((c) => navigator.mediaDevices.getUserMedia(c)),
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error("getUserMedia probe timeout (15s)")), 15000),
+          ),
+        ]);
         report = {
           ok: true,
           audioTracks: s.getAudioTracks().length,
@@ -147,9 +199,6 @@ export default function App() {
       } catch (e) {
         report = { ok: false, error: String(e) };
       }
-      const e2eReport = (name: string, value: unknown) =>
-        invoke("e2e_report", { name, json: JSON.stringify(value) }).catch(() => {});
-      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
       await e2eReport("e2e_media.json", report);
 
       // ── QR pairing (data path: encode → decode → add → store) ────────────
@@ -223,17 +272,53 @@ export default function App() {
       void qrTask;
 
       // ── Autonomous voice+video call ──────────────────────────────────────
+      // Every stage drops a breadcrumb: a hang anywhere in here (import,
+      // init, discovery, dial, offer) must be attributable from report files
+      // alone — the run is headless.
+      const progress = (stage: string, extra?: Record<string, unknown>) =>
+        e2eReport("e2e_call_progress.json", { stage, t: Date.now(), ...extra });
+      await progress("importing");
       const { useWebviewCall, e2eGatherCallStats } = await import(
         "./voice/webviewVoiceMesh"
       );
       // Install the inbound voice-signaling listener on BOTH peers.
       await useWebviewCall.getState().init();
+      await progress("init_done");
 
       let shouldCall = false;
       try {
         shouldCall = await invoke<boolean>("e2e_should_call");
       } catch {
         /* default callee */
+      }
+      // Media-plane selection. Preferred plane = webview browser WebRTC
+      // (iOS WKWebView, Windows WebView2). But distro WebKitGTK builds ship
+      // ENABLE_WEB_RTC=OFF (OBSERVED on Arch: no RTCPeerConnection global,
+      // zero webrtcbin/GstWebRTC symbols in libwebkit2gtk-4.1) — there the
+      // fallback is the RUST media plane: `voice_mesh_join` (webrtc-rs +
+      // cpal + opus over the same libp2p signaling protocol).
+      const rtcAvailable = typeof RTCPeerConnection !== "undefined";
+      const MESH_ROOM = "e2e-av-room";
+      await progress("role", { shouldCall, rtcAvailable });
+
+      if (!rtcAvailable && !shouldCall) {
+        // Rust-plane CALLEE: open an empty call for the room so inbound
+        // Offers route into it (the registry drops envelopes with no
+        // active call). Retry until servitude/libp2p is up.
+        let joined = false;
+        for (let i = 0; i < 60 && !joined; i++) {
+          try {
+            await invoke("voice_mesh_join", {
+              roomId: MESH_ROOM,
+              participants: [],
+              iceServers: [],
+            });
+            joined = true;
+          } catch {
+            await sleep(1000);
+          }
+        }
+        await progress("mesh_callee_joined", { joined });
       }
 
       if (shouldCall) {
@@ -261,6 +346,7 @@ export default function App() {
           }
           if (!peerId) await sleep(1000);
         }
+        await progress("peer_search_done", { peerId });
         if (peerId) {
           // Ensure a libp2p connection exists before signaling (the auto-dial
           // may not have run for a store-sourced peer).
@@ -270,9 +356,21 @@ export default function App() {
             /* may already be connected */
           }
           await sleep(2500);
+          await progress("dialed", { peerId });
           try {
-            await useWebviewCall.getState().startCall(peerId, { video: true });
-            await e2eReport("e2e_call_started.json", { peerId, ok: true });
+            if (rtcAvailable) {
+              await useWebviewCall.getState().startCall(peerId, { video: true });
+            } else {
+              // Rust-plane CALLER: join the room with the remote as a
+              // participant — the registry builds the PeerConnection,
+              // creates the Offer, and pushes it over libp2p.
+              await invoke("voice_mesh_join", {
+                roomId: MESH_ROOM,
+                participants: [peerId],
+                iceServers: [],
+              });
+            }
+            await e2eReport("e2e_call_started.json", { peerId, ok: true, plane: rtcAvailable ? "webview" : "rust-mesh" });
           } catch (e) {
             await e2eReport("e2e_call_started.json", { peerId, ok: false, error: String(e) });
           }
@@ -282,11 +380,23 @@ export default function App() {
       }
 
       // Both peers: report live media stats so the test can verify real flow.
-      for (let i = 0; i < 25; i++) {
+      // 60 × 3s = 3min window — pairing + dial on desktop can eat the first
+      // minute, and the driver samples the file twice to prove GROWTH.
+      for (let i = 0; i < 60; i++) {
         await sleep(3000);
         try {
-          const stats = await e2eGatherCallStats();
-          await e2eReport("e2e_call.json", { tSec: (i + 1) * 3, stats });
+          if (rtcAvailable) {
+            const stats = await e2eGatherCallStats();
+            await e2eReport("e2e_call.json", { tSec: (i + 1) * 3, plane: "webview", stats });
+          } else {
+            let mesh: unknown;
+            try {
+              mesh = await invoke("voice_mesh_status", { roomId: MESH_ROOM });
+            } catch (e) {
+              mesh = { error: String(e) };
+            }
+            await e2eReport("e2e_call.json", { tSec: (i + 1) * 3, plane: "rust-mesh", mesh });
+          }
         } catch {
           /* best effort */
         }
