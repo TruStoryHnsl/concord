@@ -36,9 +36,19 @@ import { dialPairedPeer } from "../libp2p/pairedDial";
  * rejects (peer not found, revoked, no addresses, swarm not running) — an
  * unreachable peer surfaces later as a `DialFailure` swarm event, not here.
  */
-export async function connectToPeer(peer: KnownPeer): Promise<void> {
+export async function connectToPeer(
+  peer: KnownPeer,
+  // WS-4 — optionally front this dial under a specific persona (DB slug).
+  // When provided (native), the peer is re-tagged to that persona so the
+  // connection joins that persona's mesh neighborhood only. Omitted ⇒ the
+  // peer's existing persona binding is preserved (backward compatible).
+  personaId?: string,
+): Promise<void> {
   if (isTauri()) {
-    await invoke("peer_dial", { peerId: peer.peerId });
+    await invoke("peer_dial", {
+      peerId: peer.peerId,
+      ...(personaId !== undefined ? { personaId } : {}),
+    });
     return;
   }
   const node = await ensureBrowserNode();
