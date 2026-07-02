@@ -34,13 +34,18 @@ import {
   userProfileRename,
   userProfileSetPrimary,
   userProfileDelete,
+  personaSetDefault,
+  personaClearDefault,
+  personaPublicIdentity,
   type UserProfile,
   type Provenance,
+  type PersonaIdentity,
 } from "../../api/userProfile";
 import { useAuthStore } from "../../stores/auth";
 import { isTauri } from "../../api/servitude";
 import { useSettingsStore } from "../../stores/settings";
 import { SUPERUSER_BACKUP_ANCHOR_ID } from "./SuperuserBackupSection";
+import { SuperuserPanel } from "../social/superuser/SuperuserPanel";
 
 /** Map provenance variant to a (label, Tailwind class tuple). */
 const PROVENANCE_META: Record<
@@ -92,6 +97,12 @@ export function UsersTab() {
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState("");
 
+  /** WS-1 — the PUBLIC identity this node announces on the mesh (the default
+   *  persona's public key + fingerprint), or null when no default persona is
+   *  designated (node is dark / receive-only). This is the observed proof of
+   *  the mesh-unlock state. */
+  const [meshIdentity, setMeshIdentity] = useState<PersonaIdentity | null>(null);
+
   const setSettingsTab = useSettingsStore((s) => s.setSettingsTab);
 
   /** Native: jump to the Profile tab's keychain-backup section. */
@@ -114,6 +125,13 @@ export function UsersTab() {
     try {
       const list = await userProfileList();
       setProfiles(list);
+      // WS-1: refresh the mesh-announce identity alongside the profile list so
+      // the "announcing / dark" banner always reflects the current default.
+      try {
+        setMeshIdentity(await personaPublicIdentity());
+      } catch {
+        setMeshIdentity(null);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -182,6 +200,29 @@ export function UsersTab() {
     [refresh],
   );
 
+  /** WS-1 — designate a non-primary profile as the default persona (starts
+   *  mesh announce), or clear it (goes dark). */
+  const handleSetDefaultPersona = useCallback(
+    async (id: string) => {
+      try {
+        await personaSetDefault(id);
+        await refresh();
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refresh],
+  );
+
+  const handleClearDefaultPersona = useCallback(async () => {
+    try {
+      await personaClearDefault();
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refresh]);
+
   const onlyOneProfile = useMemo(() => profiles.length <= 1, [profiles.length]);
 
   if (loading) {
@@ -226,6 +267,61 @@ export function UsersTab() {
               data-testid="users-tab-claim-superuser"
             >
               Claim as superuser
+            </button>
+          )}
+        </div>
+      )}
+
+      {native && (
+        <div
+          data-testid="users-tab-mesh-status"
+          data-announcing={meshIdentity ? "true" : "false"}
+          className={`rounded-lg px-3 py-3 flex items-center gap-3 border ${
+            meshIdentity
+              ? "bg-primary/10 border-primary/40"
+              : "bg-surface-container-high border-outline-variant/30"
+          }`}
+        >
+          <span
+            className={`material-symbols-outlined text-2xl ${
+              meshIdentity ? "text-primary" : "text-on-surface-variant"
+            }`}
+          >
+            {meshIdentity ? "cell_tower" : "cloud_off"}
+          </span>
+          <div className="min-w-0 flex-1">
+            {meshIdentity ? (
+              <>
+                <div className="text-sm font-medium text-on-surface">
+                  Announcing on the mesh as {meshIdentity.display_name}
+                </div>
+                <div
+                  className="text-xs text-on-surface-variant font-mono truncate"
+                  data-testid="users-tab-mesh-fingerprint"
+                >
+                  {meshIdentity.fingerprint}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-medium text-on-surface">
+                  Dark on the mesh
+                </div>
+                <div className="text-xs text-on-surface-variant">
+                  No default persona set. Designate one below to become visible
+                  to other instances on the mesh.
+                </div>
+              </>
+            )}
+          </div>
+          {meshIdentity && (
+            <button
+              type="button"
+              onClick={() => void handleClearDefaultPersona()}
+              data-testid="users-tab-clear-default-persona"
+              className="flex-shrink-0 px-3 py-1.5 text-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high"
+            >
+              Go dark
             </button>
           )}
         </div>
@@ -323,6 +419,19 @@ export function UsersTab() {
                 >
                   {meta.label}
                 </span>
+
+                {profile.is_default_persona && (
+                  <span
+                    data-testid="users-tab-default-persona-badge"
+                    title="Announced on the mesh"
+                    className="text-xs px-2 py-0.5 rounded-full border font-label bg-primary/15 text-primary border-primary/40 inline-flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-sm">
+                      cell_tower
+                    </span>
+                    Mesh persona
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -372,6 +481,19 @@ export function UsersTab() {
                   </>
                 ) : (
                   <>
+                    {!profile.is_primary && !profile.is_default_persona && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleSetDefaultPersona(profile.id)
+                        }
+                        data-testid="users-tab-set-default-persona"
+                        title="Announce this identity on the mesh"
+                        className="px-2 py-1 text-sm rounded text-on-surface-variant hover:bg-surface-container-high"
+                      >
+                        Set as mesh persona
+                      </button>
+                    )}
                     {!profile.is_primary && (
                       <button
                         type="button"
@@ -472,6 +594,15 @@ export function UsersTab() {
           )}
         </div>
       )}
+
+      {/* WS-2 — reachable superuser (owner-identity) panel: first-run claim
+          or owner controls, reconciled with the primary profile above. */}
+      <section
+        className="pt-4 border-t border-outline-variant/20"
+        data-testid="users-tab-superuser-panel"
+      >
+        <SuperuserPanel />
+      </section>
     </div>
   );
 }
