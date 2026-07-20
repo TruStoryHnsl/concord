@@ -65,7 +65,18 @@ function relativeTime(iso: string, now: number = Date.now()): string {
   return `${deltaDay}d ago`;
 }
 
-export function SocialPeersPanel() {
+export interface SocialPeersPanelProps {
+  /**
+   * Wave-2 routing seam: when provided, each peer row grows a "Message"
+   * affordance that raises the peer id. The messenger shell uses this to
+   * route Peers-tab rows into the per-peer 1:1 inbox; Wave 2 reuses the
+   * same callback to wire Chats-feed peer rows → conversation routing.
+   * Omitted (e.g. in the Settings mount) → rows render exactly as before.
+   */
+  onOpenConversation?: (peerId: string) => void;
+}
+
+export function SocialPeersPanel({ onOpenConversation }: SocialPeersPanelProps = {}) {
   const addToast = useToastStore((s) => s.addToast);
   const [peers, setPeers] = useState<PeerRecord[]>([]);
   const [sort, setSort] = useState<SocialPeerSort>("lastSeen");
@@ -211,6 +222,7 @@ export function SocialPeersPanel() {
                 onSetLabel={handleSetLabel}
                 onSetTrust={handleSetTrust}
                 onForget={handleForget}
+                onOpenConversation={onOpenConversation}
               />
             </li>
           ))}
@@ -225,11 +237,13 @@ function PeerRow({
   onSetLabel,
   onSetTrust,
   onForget,
+  onOpenConversation,
 }: {
   peer: PeerRecord;
   onSetLabel: (peerId: string, label: string | null) => void;
   onSetTrust: (peerId: string, trust: SocialTrust) => void;
   onForget: (peerId: string) => void;
+  onOpenConversation?: (peerId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(peer.label ?? "");
@@ -314,6 +328,19 @@ function PeerRow({
           </option>
         ))}
       </select>
+
+      {onOpenConversation && (
+        <button
+          type="button"
+          className="btn-press flex h-7 w-7 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          title="Message peer"
+          aria-label={`Message ${peer.label ?? peer.peerId.slice(0, 12)}`}
+          onClick={() => onOpenConversation(peer.peerId)}
+          data-testid={`social-peer-message-${peer.peerId}`}
+        >
+          <span className="material-symbols-outlined text-base">chat</span>
+        </button>
+      )}
 
       <button
         type="button"

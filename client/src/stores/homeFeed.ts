@@ -269,6 +269,14 @@ export { inferSourceBrand };
 export type HomeSurface = "home" | "native-chat" | "handoff";
 
 /**
+ * Primary messenger-shell tab (persistent nav on the native front door).
+ *  - `chats` — the merged Home conversation feed (HomeView).
+ *  - `peers` — the social peers surfaces (known-peers registry + the
+ *              per-peer 1:1 inbox). Native-only, like the rest of the shell.
+ */
+export type HomeTab = "chats" | "peers";
+
+/**
  * The peer/DM conversation currently open on the native messenger chat
  * surface. Carries the presentational bits the header needs plus the
  * matrix `roomId` the existing message hooks bind to. `roomId` is absent
@@ -300,6 +308,8 @@ interface HomeFeedState {
   selectedConversationId: string | null;
   /** Native: which front-door surface is showing. Web ignores this. */
   surface: HomeSurface;
+  /** Native: which primary shell tab is active (Chats / Peers). */
+  tab: HomeTab;
   /** One-shot open intent consumed by ChatLayout's native routing effect
    *  (docker / local / bare-peer handoff only). */
   pendingOpen: HomeOpenTarget | null;
@@ -311,6 +321,9 @@ interface HomeFeedState {
   setQuery: (query: string) => void;
   setFilter: (filter: HomeFilter) => void;
   setSelected: (id: string | null) => void;
+  /** Switch the primary shell tab. Never touches surface/chat state so the
+   *  Chats tab's open conversation survives a Chats ↔ Peers round-trip. */
+  setTab: (tab: HomeTab) => void;
   /**
    * Open a conversation from a Home row. Branches on kind:
    *  - dm           → native messenger chat surface (WS-C).
@@ -336,6 +349,7 @@ export const useHomeFeedStore = create<HomeFeedState>((set, get) => ({
   filter: "all",
   selectedConversationId: null,
   surface: "home",
+  tab: "chats",
   pendingOpen: null,
   activeChat: null,
   dockerHandoff: null,
@@ -343,6 +357,7 @@ export const useHomeFeedStore = create<HomeFeedState>((set, get) => ({
   setQuery: (query) => set({ query }),
   setFilter: (filter) => set({ filter }),
   setSelected: (selectedConversationId) => set({ selectedConversationId }),
+  setTab: (tab) => set({ tab }),
 
   openConversation: (conv) => {
     // A DM is the only kind that already owns a matrix room, so it is the
