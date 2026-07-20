@@ -75,7 +75,7 @@ interface SettingsState {
 
   // UI (not persisted)
   settingsOpen: boolean;
-  settingsTab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "devices" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation";
+  settingsTab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation";
   serverSettingsId: string | null;
 
   // Actions
@@ -121,9 +121,9 @@ interface SettingsState {
   setLogoColorPrimary: (hex: string) => void;
   setLogoColorSecondary: (hex: string) => void;
   resetLogoColors: () => void;
-  openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "devices" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
+  openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
   closeSettings: () => void;
-  setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "devices" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
+  setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
   /**
    * Cross-component hand-off for the "Add Source" modal. Set the screen
    * to pre-open (e.g. "matrix", "concord"), and ChatLayout's effect hook
