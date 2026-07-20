@@ -16,6 +16,7 @@ import { AboutTab } from "./AboutTab";
 import { HostingTab } from "./HostingTab";
 import { ConnectorsTab } from "./ConnectorsTab";
 import { AdminTab } from "./AdminTab";
+import { DevicesTab } from "./DevicesTab";
 import { ServerSettingsContent } from "./ServerSettingsModal";
 import { SocialPeersPanel } from "../social/peers/SocialPeersPanel";
 import { SocialInboxPanel } from "../social/inbox/SocialInboxPanel";
@@ -57,6 +58,7 @@ type LeafKey =
   | "connections"
   | "peers"
   | "messages"
+  | "devices"
   | "appearance"
   | "node"
   | "connectors"
@@ -216,6 +218,7 @@ export function SettingsPanel() {
             ? ([
                 { key: "peers", label: "Peers", icon: "groups", hint: "Known-peers registry" },
                 { key: "messages", label: "Messages", icon: "forum", hint: "Per-peer inboxes" },
+                { key: "devices", label: "Devices", icon: "devices", hint: "This device & merge proposals" },
               ] as LeafDef[])
             : []),
         ],
@@ -541,6 +544,7 @@ export function SettingsPanel() {
       {activeTab === "users" && <UsersTab />}
       {activeTab === "connections" && <UserConnectionsTab />}
       {activeTab === "peers" && <SocialPeersPanel />}
+      {activeTab === "devices" && <DevicesTab />}
       {activeTab === "appearance" && <AppearanceTab />}
       {activeTab === "node" && <NodeHostingTab />}
       {activeTab === "connectors" && <ConnectorsTab />}
