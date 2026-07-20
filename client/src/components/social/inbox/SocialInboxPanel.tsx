@@ -7,22 +7,11 @@
  * per-peer-inboxes branch owns everything under
  * `client/src/components/social/inbox/`.
  */
-import { useEffect } from "react";
 import { InboxConversationList } from "./InboxConversationList";
 import { InboxConversationView } from "./InboxConversationView";
 import { usePeerInbox } from "./usePeerInbox";
 
-export interface SocialInboxPanelProps {
-  /**
-   * Wave-2 routing seam: a peer id to open on mount (and whenever it
-   * changes). The messenger shell passes the peer chosen on the Peers
-   * directory; Wave 2 reuses it to deep-link Chats-feed peer rows into
-   * their 1:1 conversation. `null`/undefined → open with no selection.
-   */
-  initialPeerId?: string | null;
-}
-
-export function SocialInboxPanel({ initialPeerId }: SocialInboxPanelProps = {}) {
+export function SocialInboxPanel() {
   const {
     conversations,
     activePeerId,
@@ -34,13 +23,6 @@ export function SocialInboxPanel({ initialPeerId }: SocialInboxPanelProps = {}) 
     send,
     refresh,
   } = usePeerInbox();
-
-  // Deep-link seam: open the requested peer's conversation. openConversation
-  // is stable (useCallback in usePeerInbox), so this fires only when the
-  // requested peer actually changes.
-  useEffect(() => {
-    if (initialPeerId) openConversation(initialPeerId);
-  }, [initialPeerId, openConversation]);
 
   return (
     <div className="flex h-full min-h-0 bg-surface-container-low">
