@@ -21,8 +21,6 @@ import { useInstanceNameStore } from "../../stores/instanceName";
 import { useUnreadCounts } from "../../hooks/useUnreadCounts";
 import { useDisplayNames } from "../../hooks/useDisplayName";
 import { isTauri } from "../../api/servitude";
-import { socialInboxList } from "../../api/social/inbox";
-import type { ConversationRecord } from "../../api/social/types";
 import {
   type Conversation,
   dmToConversation,
@@ -30,7 +28,6 @@ import {
   sourceToConversation,
   localToConversation,
   mergeConversations,
-  enrichPeersWithInbox,
   isDockerConversationSource,
 } from "../../stores/homeFeed";
 
@@ -108,51 +105,6 @@ export function useHomeFeed(): Conversation[] {
     return () => clearInterval(id);
   }, []);
 
-  // Per-peer p2p inbox conversations (Wave 2 — live conversations). Native
-  // only: the social inbox lives behind Tauri IPC. Loaded once on mount and
-  // re-pulled on the dedicated `social_inbox_message` (inbound recorded) /
-  // `social_inbox_delivered` (outbound confirmed) events, so feed rows bump
-  // with preview + unread WITHOUT any manual refresh.
-  const [inboxConvs, setInboxConvs] = useState<ConversationRecord[]>([]);
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-    const pull = async () => {
-      // Async wrapper so a synchronously-throwing IPC boundary (jsdom /
-      // partial test shims) becomes a swallowed rejection, not a render
-      // crash — the feed simply shows bare peer rows.
-      try {
-        const list = await socialInboxList();
-        // Defensive: a stubbed/partial IPC boundary can resolve non-array.
-        if (!cancelled && Array.isArray(list)) setInboxConvs(list);
-      } catch {
-        /* inbox backend unavailable */
-      }
-    };
-    void pull();
-    const unlisteners: Array<() => void> = [];
-    void (async () => {
-      try {
-        const { listen } = await import("@tauri-apps/api/event");
-        if (cancelled) return;
-        for (const event of [
-          "social_inbox_message",
-          "social_inbox_delivered",
-        ]) {
-          const unlisten = await listen(event, () => void pull());
-          if (cancelled) unlisten();
-          else unlisteners.push(unlisten);
-        }
-      } catch (e) {
-        console.warn("[homeFeed] failed to attach inbox event listeners:", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((u) => u());
-    };
-  }, []);
-
   // Kick the underlying loads so a cold front door populates. Both are
   // idempotent and safe to call on web; peers no-op without a porch.
   useEffect(() => {
@@ -200,23 +152,6 @@ export function useHomeFeed(): Conversation[] {
       });
     });
 
-    // Fold the p2p inbox conversations into the peer rows: preview / unread /
-    // last-activity enrich a known peer's row, and a conversation with no
-    // bare peer row still shows up as its own row.
-    const inboxInputs = inboxConvs.map((c) => {
-      const msgTs = c.lastMessageAt ? Date.parse(c.lastMessageAt) : 0;
-      const ts = Number.isNaN(msgTs) ? 0 : msgTs;
-      return {
-        peerId: c.peerId,
-        displayName: shortPeerId(c.peerId),
-        unreadCount: c.unread,
-        preview: c.lastPreview ?? undefined,
-        lastActivityTs: ts,
-        timestamp: formatActivity(ts, now),
-      };
-    });
-    const peers = enrichPeersWithInbox(peerConvs, inboxInputs);
-
     const dockerConvs = sources
       .filter(isDockerConversationSource)
       .map(sourceToConversation);
@@ -233,9 +168,9 @@ export function useHomeFeed(): Conversation[] {
 
     return mergeConversations({
       dms: dmConvs,
-      peers,
+      peers: peerConvs,
       dockers: dockerConvs,
       local,
     });
-  }, [dms, knownPeers, inboxConvs, sources, unread, client, displayNames, pinnedRoomIds, porchName, now]);
+  }, [dms, knownPeers, sources, unread, client, displayNames, pinnedRoomIds, porchName, now]);
 }

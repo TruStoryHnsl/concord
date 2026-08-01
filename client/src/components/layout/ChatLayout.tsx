@@ -446,13 +446,14 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
         break;
       }
       case "peer": {
-        // Wave 2 (live conversations): peer rows now open on the NATIVE
-        // p2p-inbox chat surface (`NativeChatSurface` → `PeerChatSurface`
-        // backed by `usePeerInbox`), so `openConversation` no longer raises
-        // a peer intent here — the Cycle 3 "bare peer" seam is closed. This
-        // case remains as a defensive fallback for any caller still raising
-        // a raw peer intent: route it onto the same native surface.
-        useHomeFeedStore.getState().openPeerChat(target.peerId);
+        // A bare peer has no matrix room→message linkage yet (KnownPeer has
+        // no matrix user/room), so it can't render a native timeline. Open
+        // the existing peers pairing/connect surface (the local porch's
+        // `peers` pseudo-channel), which owns peer connect/call today.
+        // Cycle 3 seam: peer↔room linkage → native peer chat surface.
+        useLocalServerSelectionStore.getState().setPeersOpen(true);
+        handleLocalServerSelect("home");
+        setMobileView("channels");
         break;
       }
     }

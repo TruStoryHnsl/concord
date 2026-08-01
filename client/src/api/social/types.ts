@@ -34,14 +34,6 @@ export type SocialTrust =
 /** Direction of a 1:1 inbox message relative to the owner. */
 export type MessageDirection = "outbound" | "inbound";
 
-/**
- * Live-delivery state of an outbound inbox message (mirrors the Rust
- * `DeliveryStatus`, `#[serde(default)] = delivered`). Additive: rows
- * serialized before the field existed omit it, so it is optional here and
- * absent means "delivered".
- */
-export type DeliveryStatus = "pending" | "delivered";
-
 /** The authoritative owner ("superuser") profile. Owned by superuser-ux. */
 export interface OwnerIdentity {
   ownerId: OwnerId;
@@ -71,8 +63,6 @@ export interface InboxMessage {
   body: string;
   sentAt: Rfc3339;
   read: boolean;
-  /** Delivery state for outbound rows; absent/omitted = "delivered". */
-  delivery?: DeliveryStatus;
 }
 
 /** Per-peer conversation summary. Owned by per-peer-inboxes. */
