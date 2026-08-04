@@ -189,6 +189,64 @@ export function localToConversation(input: {
   };
 }
 
+/**
+ * Resolved projection of one `social_inbox_list` ConversationRecord — the
+ * caller (useHomeFeed) parses timestamps / formats labels so this stays a
+ * pure, unit-testable input like the other mapper inputs.
+ */
+export interface PeerInboxConversationInput {
+  peerId: string;
+  /** Fallback row label when no bare peer row exists for this peer. */
+  displayName: string;
+  unreadCount: number;
+  preview?: string;
+  /** Epoch ms of the last inbox message (0 when none). */
+  lastActivityTs: number;
+  timestamp?: string;
+}
+
+/**
+ * Fold per-peer inbox conversations into the bare peer rows (Wave 2 /
+ * live-conversations). An inbox conversation ENRICHES its matching bare peer
+ * row — preview, unread badge, and last-activity supersede the pairing
+ * metadata (activity wins over "last seen" when it is newer) — and an inbox
+ * conversation with NO bare peer row still gets its own peer row, so a chat
+ * from a since-forgotten peer never silently disappears from Chats.
+ */
+export function enrichPeersWithInbox(
+  peers: Conversation[],
+  inbox: PeerInboxConversationInput[],
+): Conversation[] {
+  const byPeerId = new Map(inbox.map((c) => [c.peerId, c]));
+  const enriched = peers.map((peer) => {
+    if (peer.kind !== "peer" || peer.target.kind !== "peer") return peer;
+    const conv = byPeerId.get(peer.target.peerId);
+    if (!conv) return peer;
+    byPeerId.delete(peer.target.peerId);
+    const activityWins = conv.lastActivityTs > peer.lastActivityTs;
+    return {
+      ...peer,
+      preview: conv.preview ?? peer.preview,
+      unreadCount: conv.unreadCount,
+      lastActivityTs: activityWins ? conv.lastActivityTs : peer.lastActivityTs,
+      timestamp: activityWins ? conv.timestamp : peer.timestamp ?? conv.timestamp,
+    };
+  });
+  // Inbox conversations without a bare peer row become peer rows themselves.
+  const orphans: Conversation[] = [...byPeerId.values()].map((conv) => ({
+    id: `peer:${conv.peerId}`,
+    kind: "peer",
+    displayName: conv.displayName,
+    preview: conv.preview,
+    lastActivityTs: conv.lastActivityTs,
+    timestamp: conv.timestamp,
+    unreadCount: conv.unreadCount,
+    presence: "offline",
+    target: { kind: "peer", peerId: conv.peerId },
+  }));
+  return [...enriched, ...orphans];
+}
+
 /** Is this source eligible to render as a docker conversation row? */
 export function isDockerConversationSource(source: ConcordSource): boolean {
   return !isLocalInstanceSource(source);
@@ -269,6 +327,14 @@ export { inferSourceBrand };
 export type HomeSurface = "home" | "native-chat" | "handoff";
 
 /**
+ * Primary messenger-shell tab (persistent nav on the native front door).
+ *  - `chats` — the merged Home conversation feed (HomeView).
+ *  - `peers` — the social peers surfaces (known-peers registry + the
+ *              per-peer 1:1 inbox). Native-only, like the rest of the shell.
+ */
+export type HomeTab = "chats" | "peers";
+
+/**
  * The peer/DM conversation currently open on the native messenger chat
  * surface. Carries the presentational bits the header needs plus the
  * matrix `roomId` the existing message hooks bind to. `roomId` is absent
@@ -279,6 +345,8 @@ export interface ActiveNativeChat {
   kind: "peer" | "dm";
   displayName: string;
   roomId?: string;
+  /** p2p peer id — present for kind "peer"; drives the inbox-backed surface. */
+  peerId?: string;
   sourceId?: string;
   userId?: string;
   presence?: PresenceState;
@@ -300,6 +368,8 @@ interface HomeFeedState {
   selectedConversationId: string | null;
   /** Native: which front-door surface is showing. Web ignores this. */
   surface: HomeSurface;
+  /** Native: which primary shell tab is active (Chats / Peers). */
+  tab: HomeTab;
   /** One-shot open intent consumed by ChatLayout's native routing effect
    *  (docker / local / bare-peer handoff only). */
   pendingOpen: HomeOpenTarget | null;
@@ -311,13 +381,21 @@ interface HomeFeedState {
   setQuery: (query: string) => void;
   setFilter: (filter: HomeFilter) => void;
   setSelected: (id: string | null) => void;
+  /** Switch the primary shell tab. Never touches surface/chat state so the
+   *  Chats tab's open conversation survives a Chats ↔ Peers round-trip. */
+  setTab: (tab: HomeTab) => void;
   /**
    * Open a conversation from a Home row. Branches on kind:
-   *  - dm           → native messenger chat surface (WS-C).
-   *  - peer (room)  → native chat surface if a roomId is supplied.
-   *  - peer (no room), docker, local → reveal ChatLayout via `pendingOpen`.
+   *  - dm   → native messenger chat surface (WS-C), matrix-backed.
+   *  - peer → native messenger chat surface, p2p-inbox-backed (Wave 2 —
+   *           the Cycle 3 "bare peer" handoff seam is closed).
+   *  - docker, local → reveal ChatLayout via `pendingOpen`.
    */
   openConversation: (conv: Conversation) => void;
+  /** Open a peer's 1:1 p2p conversation on the native chat surface directly
+   *  (used by ChatLayout's defensive `pendingOpen` fallback and any caller
+   *  that only has a peerId, e.g. a live-message notification). */
+  openPeerChat: (peerId: string, displayName?: string) => void;
   /** Raise a raw open intent + reveal the underlying ChatLayout. Kept for
    *  the pair-peer / add-source shortcuts that don't have a full row. */
   requestOpen: (target: HomeOpenTarget, conversationId?: string) => void;
@@ -336,6 +414,7 @@ export const useHomeFeedStore = create<HomeFeedState>((set, get) => ({
   filter: "all",
   selectedConversationId: null,
   surface: "home",
+  tab: "chats",
   pendingOpen: null,
   activeChat: null,
   dockerHandoff: null,
@@ -343,12 +422,31 @@ export const useHomeFeedStore = create<HomeFeedState>((set, get) => ({
   setQuery: (query) => set({ query }),
   setFilter: (filter) => set({ filter }),
   setSelected: (selectedConversationId) => set({ selectedConversationId }),
+  setTab: (tab) => set({ tab }),
 
   openConversation: (conv) => {
-    // A DM is the only kind that already owns a matrix room, so it is the
-    // one that lands on the native messenger chat surface. A bare peer has
-    // no room→message linkage yet (KnownPeer carries no matrix user/room —
-    // WS-C seam), so it falls through to the existing peers surface.
+    // DMs land on the matrix-backed native chat surface; peers land on the
+    // SAME surface backed by the p2p social inbox (Wave 2 — usePeerInbox
+    // owns send / mark-read / live refresh). Only docker/local still hand
+    // off to the underlying ChatLayout drill-down.
+    if (conv.target.kind === "peer") {
+      set({
+        surface: "native-chat",
+        selectedConversationId: conv.id,
+        pendingOpen: null,
+        dockerHandoff: null,
+        activeChat: {
+          conversationId: conv.id,
+          kind: "peer",
+          displayName: conv.displayName,
+          peerId: conv.target.peerId,
+          presence: conv.presence,
+          avatarUrl: conv.avatarUrl,
+          federationLabel: conv.federationLabel,
+        },
+      });
+      return;
+    }
     if (conv.target.kind === "dm") {
       set({
         surface: "native-chat",
@@ -369,7 +467,7 @@ export const useHomeFeedStore = create<HomeFeedState>((set, get) => ({
       });
       return;
     }
-    // docker / local / bare-peer → reveal the existing ChatLayout drill-down.
+    // docker / local → reveal the existing ChatLayout drill-down.
     set({
       surface: "handoff",
       selectedConversationId: conv.id,
@@ -386,6 +484,20 @@ export const useHomeFeedStore = create<HomeFeedState>((set, get) => ({
           : null,
     });
   },
+
+  openPeerChat: (peerId, displayName) =>
+    set({
+      surface: "native-chat",
+      selectedConversationId: `peer:${peerId}`,
+      pendingOpen: null,
+      dockerHandoff: null,
+      activeChat: {
+        conversationId: `peer:${peerId}`,
+        kind: "peer",
+        displayName: displayName ?? `Peer ${peerId.slice(0, 8)}`,
+        peerId,
+      },
+    }),
 
   requestOpen: (target, conversationId) =>
     set({

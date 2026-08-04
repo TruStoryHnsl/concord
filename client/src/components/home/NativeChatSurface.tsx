@@ -16,6 +16,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RoomEvent } from "matrix-js-sdk";
+import { usePeerInbox } from "../social/inbox/usePeerInbox";
+import type { InboxMessage } from "../../api/social/types";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { useToastStore } from "../../stores/toast";
@@ -248,7 +250,20 @@ function MessageBubble({ message, outgoing, showReceipt, read }: BubbleProps) {
   );
 }
 
+/**
+ * Dispatcher: a peer conversation (kind "peer" with a peerId) renders the
+ * p2p-inbox-backed surface (Wave 2 — live conversations); everything else is
+ * the original matrix-backed surface. Same header, same bubble language —
+ * the user cannot tell which plane a chat rides on.
+ */
 export function NativeChatSurface({ chat }: { chat: ActiveNativeChat }) {
+  if (chat.kind === "peer" && chat.peerId) {
+    return <PeerChatSurface chat={chat} peerId={chat.peerId} />;
+  }
+  return <MatrixChatSurface chat={chat} />;
+}
+
+function MatrixChatSurface({ chat }: { chat: ActiveNativeChat }) {
   const roomId = chat.roomId ?? null;
   const userId = useAuthStore((s) => s.userId);
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -507,6 +522,207 @@ export function NativeChatSurface({ chat }: { chat: ActiveNativeChat }) {
             placeholder={roomId ? "Message" : "No conversation room"}
             disabled={!roomId}
             className="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-2xl bg-surface-container px-3 py-2.5 font-body text-sm text-on-surface outline-none placeholder:text-on-surface-variant/60 disabled:opacity-50"
+          />
+
+          <button
+            type="button"
+            onClick={() => void handleSend()}
+            disabled={!canSend}
+            aria-label="Send"
+            title="Send"
+            className={cx(
+              "btn-press flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition-colors",
+              canSend
+                ? "bg-primary text-on-primary"
+                : "bg-surface-container text-on-surface-variant/50",
+            )}
+          >
+            <span className="material-symbols-outlined text-xl">send</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Peer chat surface — the SAME messenger presentation, backed by the p2p
+ * social inbox instead of a matrix room (Wave 2 / live conversations).
+ * usePeerInbox owns the plumbing: send → `social_inbox_send`, mark-read on
+ * open, live inbound refresh via `social_inbox_message`, and outbound
+ * delivery flips via `social_inbox_delivered`.
+ * ────────────────────────────────────────────────────────────────────── */
+
+function PeerMessageBubble({ message }: { message: InboxMessage }) {
+  const outgoing = message.direction === "outbound";
+  const ts = Date.parse(message.sentAt);
+  // Absent delivery = legacy/pre-field row = delivered (mirrors the Rust
+  // serde default). Only an explicit "pending" shows the clock.
+  const pending = outgoing && message.delivery === "pending";
+  return (
+    <div
+      className={cx("flex w-full", outgoing ? "justify-end" : "justify-start")}
+    >
+      <div
+        className={cx(
+          "max-w-[78%] px-3 py-2",
+          outgoing
+            ? "rounded-2xl rounded-br-md bg-primary text-on-primary"
+            : "rounded-2xl rounded-bl-md bg-surface-container-high text-on-surface",
+        )}
+      >
+        <p className="whitespace-pre-wrap break-words font-body text-sm">
+          {message.body}
+        </p>
+        <span
+          className={cx(
+            "mt-0.5 flex items-center justify-end gap-1",
+            outgoing ? "text-on-primary/70" : "text-on-surface-variant/70",
+          )}
+        >
+          {!Number.isNaN(ts) && (
+            <time className="font-label text-[10px] tabular-nums">
+              {timeLabel(ts)}
+            </time>
+          )}
+          {outgoing && (
+            <span
+              className="material-symbols-outlined text-[14px] leading-none"
+              style={{ fontSize: 14 }}
+              aria-label={pending ? "Pending" : "Delivered"}
+              title={pending ? "Pending" : "Delivered"}
+            >
+              {pending ? "schedule" : "done"}
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PeerChatSurface({
+  chat,
+  peerId,
+}: {
+  chat: ActiveNativeChat;
+  peerId: string;
+}) {
+  const addToast = useToastStore((s) => s.addToast);
+  const goHome = useHomeFeedStore((s) => s.goHome);
+  const { messages, loadingMessages, error, openConversation, send } =
+    usePeerInbox();
+
+  // Open (load transcript + mark read) whenever the surfaced peer changes.
+  useEffect(() => {
+    openConversation(peerId);
+  }, [peerId, openConversation]);
+
+  const [draft, setDraft] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Auto-scroll to the newest message when the transcript grows.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [messages.length]);
+
+  const handleSend = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setDraft("");
+    await send(body);
+  };
+
+  const noCallYet = () => {
+    // Peer 1:1 calls still live on the peers connect surface — WS-C seam:
+    // native peer calling needs the peer↔room linkage.
+    addToast("Open this peer from the Peers panel to start a call.");
+  };
+
+  const canSend = draft.trim().length > 0;
+  const displayName = chat.displayName;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface nav-frame-forward">
+      <ChatHeader
+        chat={chat}
+        displayName={displayName}
+        onBack={goHome}
+        onCall={noCallYet}
+        onVideo={noCallYet}
+      />
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-4">
+        {messages.length === 0 ? (
+          loadingMessages ? (
+            <div className="flex h-full items-center justify-center">
+              <BringingUpSplash size="compact" status="Loading messages…" />
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+              <p className="font-label text-sm font-semibold text-on-surface">
+                No messages yet
+              </p>
+              <p className="max-w-64 font-body text-xs text-on-surface-variant">
+                Say hello to {displayName}.
+              </p>
+            </div>
+          )
+        ) : (
+          <div className="space-y-1.5">
+            {messages.map((message, i) => {
+              const ts = Date.parse(message.sentAt);
+              const prev = messages[i - 1];
+              const prevTs = prev ? Date.parse(prev.sentAt) : NaN;
+              const showDivider =
+                !Number.isNaN(ts) &&
+                (Number.isNaN(prevTs) ||
+                  new Date(prevTs).toDateString() !==
+                    new Date(ts).toDateString());
+              return (
+                <div key={message.id} className="space-y-1.5">
+                  {showDivider && (
+                    <div className="flex justify-center py-1">
+                      <span className="text-overline rounded-full bg-surface-container px-2.5 py-0.5 text-[10px] text-on-surface-variant/70">
+                        {dayLabel(ts, now)}
+                      </span>
+                    </div>
+                  )}
+                  <PeerMessageBubble message={message} />
+                </div>
+              );
+            })}
+            <div ref={bottomRef} />
+          </div>
+        )}
+
+        {error && (
+          <div className="px-1 pt-1.5 font-label text-[11px] text-error">
+            {error}
+          </div>
+        )}
+      </div>
+
+      <div className="safe-bottom flex-shrink-0 border-t border-outline-variant/10 bg-surface-container-low px-3 py-2">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={draft}
+            rows={1}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void handleSend();
+              }
+            }}
+            placeholder="Message"
+            className="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-2xl bg-surface-container px-3 py-2.5 font-body text-sm text-on-surface outline-none placeholder:text-on-surface-variant/60"
           />
 
           <button

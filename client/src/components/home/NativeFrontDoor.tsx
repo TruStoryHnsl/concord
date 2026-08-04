@@ -16,6 +16,9 @@
  *
  * Native-only: App gates this mount on `isTauri`. Web/docker never render it
  * and their entry path is untouched.
+ *
+ * The Home shell (HomeScreen) carries the persistent messenger navigation
+ * (Chats / Peers tabs + Settings) — see `useHomeFeedStore.tab`.
  */
 
 import { HomeScreen } from "./HomeScreen";
