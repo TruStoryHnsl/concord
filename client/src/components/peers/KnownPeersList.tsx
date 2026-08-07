@@ -2,8 +2,10 @@
  * KnownPeersList (Phase 5 — peer pairing).
  *
  * Renders the paired-peers list from `usePeerStore`. Each row shows:
- *   - A short fingerprint (first 12 chars + ellipsis) so the row stays
- *     compact in the Profile tab's narrow column.
+ *   - A truncated PEER ID (first 12 chars + ellipsis) so the row stays
+ *     compact in the Profile tab's narrow column. It is a peer id, not a
+ *     fingerprint — the two are different strings and this list has never
+ *     shown the latter.
  *   - A source badge (Qr / Link / Matrix / DHT) so the user knows where
  *     the pairing came from.
  *   - A relative "last seen" timestamp.

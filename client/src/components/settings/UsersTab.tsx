@@ -295,11 +295,16 @@ export function UsersTab() {
                 <div className="text-sm font-medium text-on-surface">
                   Announcing on the mesh as {meshIdentity.display_name}
                 </div>
+                {/* NUI-F29 — named. This is the PERSONA's fingerprint,
+                    HKDF-derived from the owner seed under the persona id: a
+                    third key, neither your identity fingerprint nor this
+                    device's. Rendered bare it was indistinguishable from
+                    either. */}
                 <div
                   className="text-xs text-on-surface-variant font-mono truncate"
                   data-testid="users-tab-mesh-fingerprint"
                 >
-                  {meshIdentity.fingerprint}
+                  Persona fingerprint: {meshIdentity.fingerprint}
                 </div>
               </>
             ) : (

@@ -27,15 +27,26 @@ import { isTauri } from "../api/servitude";
 export const IDENTITY_ERROR_NATIVE_ONLY = "native-only";
 
 /**
- * Combined identity + swarm store. Phase 2 fields (fingerprint /
- * publicKeyHex / isLoading / error / load) ARE NOT changed in shape —
- * the swarm fields are additive only. The Profile tab consumes both
- * subsections without re-rendering each on the other's updates because
+ * Combined identity + swarm store.
+ *
+ * NUI-F29 — the single `fingerprint` field was split into
+ * `ownerFingerprint` (the person, carried by the recovery phrase, identical
+ * across that person's devices) and `deviceFingerprint` (this machine,
+ * derived from the key the libp2p PeerId inlines, and the only one a peer
+ * can independently verify). Consumers MUST pick one and label it; there is
+ * deliberately no field a renderer can bind to and call "the fingerprint".
+ *
+ * The swarm fields (
+ * `swarmPeerId` and friends) are additive only. The Profile tab consumes
+ * both subsections without re-rendering each on the other's updates because
  * zustand's selector hooks subscribe per-field.
  */
 export interface IdentityState {
-  // ── Phase 2 — Ed25519 device identity ────────────────────────────
-  fingerprint: string | null;
+  // ── Ed25519 identity — TWO fingerprints, see the module note ─────
+  /** The OWNER's. Same on every device restored from one recovery phrase. */
+  ownerFingerprint: string | null;
+  /** THIS DEVICE's. What a peer verifies; differs per device. */
+  deviceFingerprint: string | null;
   publicKeyHex: string | null;
   isLoading: boolean;
   error: string | null;
@@ -60,7 +71,8 @@ export interface IdentityState {
 }
 
 export const useIdentityStore = create<IdentityState>((set) => ({
-  fingerprint: null,
+  ownerFingerprint: null,
+  deviceFingerprint: null,
   publicKeyHex: null,
   isLoading: false,
   error: null,
@@ -80,7 +92,8 @@ export const useIdentityStore = create<IdentityState>((set) => ({
       set({
         isLoading: false,
         error: IDENTITY_ERROR_NATIVE_ONLY,
-        fingerprint: null,
+        ownerFingerprint: null,
+        deviceFingerprint: null,
         publicKeyHex: null,
       });
       return;
@@ -90,7 +103,8 @@ export const useIdentityStore = create<IdentityState>((set) => ({
     try {
       const identity = await fetchPeerIdentity();
       set({
-        fingerprint: identity.fingerprint,
+        ownerFingerprint: identity.ownerFingerprint,
+        deviceFingerprint: identity.deviceFingerprint,
         publicKeyHex: identity.publicKeyHex,
         isLoading: false,
         error: null,
@@ -104,7 +118,8 @@ export const useIdentityStore = create<IdentityState>((set) => ({
         // Preserve any previously-loaded values? No — a failed reload should
         // not silently mask the failure. Null them out so the UI can detect
         // the un-loaded state and render the error surface.
-        fingerprint: null,
+        ownerFingerprint: null,
+        deviceFingerprint: null,
         publicKeyHex: null,
       });
     }

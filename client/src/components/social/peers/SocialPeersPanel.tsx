@@ -5,8 +5,9 @@
  * branch owns everything under `client/src/components/social/peers/`.
  *
  * Renders the persistent social registry (`social_peers_list`), which folds
- * in already-paired peer_store entries on the backend. Each row shows a short
- * fingerprint, the owner label (editable inline), a trust-tier selector, a
+ * in already-paired peer_store entries on the backend. Each row shows a
+ * truncated PEER ID — not a fingerprint, which this surface has never
+ * rendered — plus the owner label (editable inline), a trust-tier selector, a
  * relative "last seen" timestamp, and a Forget action. A sort selector at the
  * top re-queries the backend with the chosen key.
  *

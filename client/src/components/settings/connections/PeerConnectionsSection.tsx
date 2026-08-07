@@ -70,18 +70,36 @@ export function PeerConnectionsSection() {
 }
 
 /**
- * Peer identity surface (Phase 2 — Ed25519 device identity).
+ * Peer identity surface — the install's TWO fingerprints, each named.
  *
- * Renders the fingerprint string returned by the Tauri `peer_identity`
- * command, with a copy-to-clipboard control alongside it. The private key
- * never enters this component — see `../../../stores/identity.ts` and
- * `../../../api/peerIdentity.ts` for the wire-contract guards.
+ * NUI-F29. Since the NUI-F27 device-transport split this install holds two
+ * keys, and this component used to render ONE of them (the owner's) under
+ * the label "Peer Identity", directly above a correctly-labelled device
+ * peer id. On an install that has never been restored from a recovery
+ * phrase the two fingerprints are identical, so the mislabelling was
+ * invisible; on a restored install the value under "Peer Identity" belongs
+ * to the person and not to the machine whose peer id sits below it.
+ *
+ * So both are rendered, both are labelled, and each carries a sentence
+ * saying what it is for:
+ *
+ *   - "Your identity" (owner) — who you are, across every device you
+ *     restore your recovery phrase onto. A peer cannot check it.
+ *   - "This device" (device) — the machine, derived from the key this
+ *     install's peer id inlines. THIS is the one to read aloud when
+ *     pairing: a peer derives it from our authenticated peer id and sees
+ *     the same string we do.
+ *
+ * The private key never enters this component — see
+ * `../../../stores/identity.ts` and `../../../api/peerIdentity.ts` for the
+ * wire-contract guards.
  *
  * Web build (no `__TAURI_INTERNALS__`): renders the per-tab ephemeral
  * browser identity via `BrowserSessionIdentityRow`.
  */
 export function PeerIdentitySection() {
-  const fingerprint = useIdentityStore((s) => s.fingerprint);
+  const ownerFingerprint = useIdentityStore((s) => s.ownerFingerprint);
+  const deviceFingerprint = useIdentityStore((s) => s.deviceFingerprint);
   const isLoading = useIdentityStore((s) => s.isLoading);
   const error = useIdentityStore((s) => s.error);
   const addToast = useToastStore((s) => s.addToast);
@@ -93,62 +111,118 @@ export function PeerIdentitySection() {
     useIdentityStore.getState().load();
   }, []);
 
-  const handleCopy = async () => {
-    if (!fingerprint) return;
+  const copier = (value: string | null, what: string) => async () => {
+    if (!value) return;
     try {
-      await navigator.clipboard.writeText(fingerprint);
-      addToast("Peer fingerprint copied", "success");
+      await navigator.clipboard.writeText(value);
+      addToast(`${what} copied`, "success");
     } catch {
       addToast("Couldn't copy to clipboard", "error");
     }
   };
 
   // Phase 9 (browser P2P UI surface): on web, render the per-tab
-  // ephemeral identity instead of a native-only placeholder.
+  // ephemeral identity instead of a native-only placeholder. That build has
+  // no Stronghold and therefore neither of the two fingerprints below; the
+  // component supplies its own ephemeral value to the copier.
   if (!isTauri() || error === IDENTITY_ERROR_NATIVE_ONLY) {
-    return <BrowserSessionIdentityRow handleCopy={handleCopy} />;
+    return <BrowserSessionIdentityRow handleCopy={copier(null, "Session fingerprint")} />;
   }
 
   return (
-    <div className="flex items-center justify-between py-2 gap-3">
-      <span className="text-sm text-on-surface-variant">Peer Identity</span>
-      <div className="flex items-center gap-2 min-w-0">
-        {isLoading && !fingerprint ? (
-          <span className="text-sm text-on-surface-variant italic">Loading…</span>
-        ) : error && !fingerprint ? (
-          <span
-            className="text-sm text-error truncate"
-            title={error}
-          >
-            Failed to load
-          </span>
-        ) : fingerprint ? (
-          <>
-            <span
-              className="text-sm text-on-surface-variant font-mono truncate"
-              title={fingerprint}
-            >
-              {fingerprint}
+    <div className="space-y-1">
+      <FingerprintRow
+        label="Your identity"
+        caption="Names you, the person — not this machine. It comes from your recovery phrase, so every device you restore that phrase onto shows this same value. Peers never receive this key and cannot check it."
+        value={ownerFingerprint}
+        isLoading={isLoading}
+        error={error}
+        onCopy={copier(ownerFingerprint, "Identity fingerprint")}
+        copyLabel="Copy identity fingerprint"
+        testId="peer-identity-owner-fingerprint"
+      />
+      <FingerprintRow
+        label="This device"
+        caption="Names THIS machine, and it is the one to read aloud when you pair. A peer derives it from the peer id below and sees the same string. Each of your other devices has its own."
+        value={deviceFingerprint}
+        isLoading={isLoading}
+        error={error}
+        onCopy={copier(deviceFingerprint, "Device fingerprint")}
+        copyLabel="Copy device fingerprint"
+        testId="peer-identity-device-fingerprint"
+      />
+    </div>
+  );
+}
+
+/**
+ * One labelled fingerprint row.
+ *
+ * Extracted so the owner and device rows cannot drift apart in
+ * presentation — the defect this fixes was two fingerprints rendered as if
+ * they were interchangeable, and two divergent copies of this markup is
+ * exactly how that comes back.
+ */
+function FingerprintRow({
+  label,
+  caption,
+  value,
+  isLoading,
+  error,
+  onCopy,
+  copyLabel,
+  testId,
+}: {
+  label: string;
+  caption: string;
+  value: string | null;
+  isLoading: boolean;
+  error: string | null;
+  onCopy: () => void;
+  copyLabel: string;
+  testId: string;
+}) {
+  return (
+    <div className="py-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-on-surface-variant">{label}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          {isLoading && !value ? (
+            <span className="text-sm text-on-surface-variant italic">Loading…</span>
+          ) : error && !value ? (
+            <span className="text-sm text-error truncate" title={error}>
+              Failed to load
             </span>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="btn-press inline-flex items-center justify-center px-2 py-1 rounded-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors"
-              aria-label="Copy peer fingerprint"
-              title="Copy peer fingerprint"
-            >
+          ) : value ? (
+            <>
               <span
-                className="material-symbols-outlined text-base leading-none"
-                style={{ fontVariationSettings: '"FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24' }}
+                className="text-sm text-on-surface-variant font-mono truncate"
+                title={value}
+                data-testid={testId}
               >
-                content_copy
+                {value}
               </span>
-            </button>
-          </>
-        ) : (
-          <span className="text-sm text-on-surface-variant italic">—</span>
-        )}
+              <button
+                type="button"
+                onClick={onCopy}
+                className="btn-press inline-flex items-center justify-center px-2 py-1 rounded-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors"
+                aria-label={copyLabel}
+                title={copyLabel}
+              >
+                <span
+                  className="material-symbols-outlined text-base leading-none"
+                  style={{ fontVariationSettings: '"FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24' }}
+                >
+                  content_copy
+                </span>
+              </button>
+            </>
+          ) : (
+            <span className="text-sm text-on-surface-variant italic">—</span>
+          )}
+        </div>
       </div>
+      <p className="text-xs text-on-surface-variant/70 mt-0.5">{caption}</p>
     </div>
   );
 }
@@ -267,10 +341,13 @@ export function BrowserSessionIdentityRow(_props: { handleCopy: () => void }) {
 /**
  * Phase 3 — libp2p swarm status row.
  *
- * Renders directly beneath the Phase 2 [`PeerIdentitySection`] because
- * the two surfaces are derived from the same per-install Ed25519 seed
- * (see `src-tauri/src/servitude/identity.rs` for the architectural
- * unification note).
+ * Renders directly beneath [`PeerIdentitySection`]. The peer id below is
+ * the DEVICE identity — the same key that section's "This device"
+ * fingerprint is derived from, and NOT the key behind its "Your identity"
+ * fingerprint. Those were one key until the NUI-F27 device-transport split
+ * and are two keys now, so the old note here claiming both surfaces come
+ * from one per-install seed is no longer true. See
+ * `src-tauri/crates/concord-engine/src/servitude/identity.rs`.
  */
 export function SwarmStatusSection() {
   const peerId = useIdentityStore((s) => s.swarmPeerId);
@@ -298,10 +375,10 @@ export function SwarmStatusSection() {
 
   return (
     <div className="space-y-2 py-2">
-      {/* Our PeerId */}
+      {/* This device's peer id — the DEVICE key, not the owner's. */}
       <div className="flex items-start justify-between gap-3">
         <span className="text-sm text-on-surface-variant pt-0.5">
-          Our PeerId
+          This device&rsquo;s peer ID
         </span>
         <div className="flex items-center gap-2 min-w-0">
           {isLoading && !peerId ? (
