@@ -22,6 +22,7 @@ import { NewDMModal } from "../dm/NewDMModal";
 import { useHomeFeed } from "./useHomeFeed";
 import { SocialPeersPanel } from "../social/peers/SocialPeersPanel";
 import { SocialInboxPanel } from "../social/inbox/SocialInboxPanel";
+import { GroupsPanel } from "../social/groups/GroupsPanel";
 import {
   useHomeFeedStore,
   type Conversation,
@@ -146,12 +147,13 @@ function HomeNavBar({
  * Peers tab — the social surfaces, reachable at last:
  *   - Directory: the known-peers registry (SocialPeersPanel).
  *   - Inbox: the per-peer 1:1 conversation surface (SocialInboxPanel).
+ *   - Groups: the p2p group surface (GroupsPanel).
  * A peer row's "Message" affordance jumps Directory → that peer's inbox
  * conversation. Wave 2 reuses the same seams (onOpenConversation /
  * initialPeerId) to route Chats-feed peer rows + live events here.
  */
 function PeersSurface() {
-  const [view, setView] = useState<"directory" | "inbox">("directory");
+  const [view, setView] = useState<"directory" | "inbox" | "groups">("directory");
   const [inboxPeerId, setInboxPeerId] = useState<string | null>(null);
 
   const openPeerConversation = (peerId: string) => {
@@ -174,6 +176,7 @@ function PeersSurface() {
               [
                 { id: "directory", label: "Directory" },
                 { id: "inbox", label: "Inbox" },
+                { id: "groups", label: "Groups" },
               ] as const
             ).map((item) => (
               <button
@@ -200,6 +203,8 @@ function PeersSurface() {
           <div className="h-full overflow-y-auto px-4 py-3">
             <SocialPeersPanel onOpenConversation={openPeerConversation} />
           </div>
+        ) : view === "groups" ? (
+          <GroupsPanel />
         ) : (
           <SocialInboxPanel initialPeerId={inboxPeerId} />
         )}

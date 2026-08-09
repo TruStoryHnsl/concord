@@ -26,6 +26,8 @@ import {
   MIN_PASSPHRASE_LEN,
   type HubClaimPayload,
 } from "../../api/hub";
+import { exportSeedMnemonic, importSeedMnemonic, seedErrorMessage } from "../../api/seed";
+import { socialOwnerGet } from "../../api/social/superuser";
 import { useToastStore } from "../../stores/toast";
 
 const inputClass =
@@ -265,6 +267,220 @@ function SuperuserBackupNative() {
           {restoreBusy ? "Restoring…" : "Restore keychain"}
         </button>
       </div>
+
+      {/* Recovery phrase — BIP39 seed export / import */}
+      <RecoveryPhraseSection />
+    </div>
+  );
+}
+
+/**
+ * BIP39 recovery-phrase surface (NUI-F19 identity portability).
+ *
+ * Export: two-step confirmation before the 24 words are revealed — the
+ * phrase IS the identity, so the first click only shows the warning, and a
+ * second explicit action reveals it. The phrase is held in component state
+ * only while revealed and dropped on dismiss.
+ *
+ * Import: restore this install's seed from a phrase. Only offered when no
+ * owner is claimed yet (the command refuses a claimed install anyway; the
+ * UI hides the affordance so the refusal is never a surprise). On success
+ * the install becomes a second device under the phrase's owner.
+ */
+function RecoveryPhraseSection() {
+  const addToast = useToastStore((s) => s.addToast);
+
+  // Export flow: idle → confirm → revealed.
+  const [confirming, setConfirming] = useState(false);
+  const [understood, setUnderstood] = useState(false);
+  const [phrase, setPhrase] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+
+  // Import flow.
+  const [draftPhrase, setDraftPhrase] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [ownerClaimed, setOwnerClaimed] = useState<boolean | null>(null);
+
+  // Whether restore is even offered: only on an unclaimed install.
+  useEffect(() => {
+    let cancelled = false;
+    socialOwnerGet()
+      .then((owner) => {
+        if (!cancelled) setOwnerClaimed(owner.claimed);
+      })
+      .catch(() => {
+        if (!cancelled) setOwnerClaimed(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleReveal = async () => {
+    if (!understood) return;
+    setExportBusy(true);
+    try {
+      const words = await exportSeedMnemonic();
+      setPhrase(words);
+      setConfirming(false);
+      setUnderstood(false);
+    } catch (err) {
+      addToast(seedErrorMessage(err));
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const copyPhrase = async () => {
+    if (!phrase) return;
+    try {
+      await navigator.clipboard.writeText(phrase);
+      addToast("Recovery phrase copied", "success");
+    } catch {
+      addToast("Copy failed");
+    }
+  };
+
+  const handleImport = async () => {
+    const words = draftPhrase.trim();
+    if (!words || importBusy) return;
+    setImportBusy(true);
+    try {
+      const id = await importSeedMnemonic(words);
+      setDraftPhrase("");
+      addToast(
+        `Identity restored — owner fingerprint ${id.ownerFingerprint.slice(0, 8)}…`,
+        "success",
+      );
+    } catch (err) {
+      addToast(seedErrorMessage(err));
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3" data-testid="recovery-phrase-section">
+      <h5 className="text-xs font-medium text-on-surface">Recovery phrase</h5>
+      <p className="text-xs text-on-surface-variant">
+        The 24-word phrase that carries this install&apos;s identity. Anyone
+        holding it can sign as this device and decrypt anything sealed to it.
+      </p>
+
+      {/* Export */}
+      {phrase === null ? (
+        <div className="space-y-2">
+          {!confirming ? (
+            <button
+              onClick={() => setConfirming(true)}
+              data-testid="recovery-phrase-export-start"
+              className={primaryBtn}
+            >
+              Show recovery phrase
+            </button>
+          ) : (
+            <div className="space-y-2 rounded border border-outline-variant/30 bg-surface-container p-3">
+              <p className="text-xs text-on-surface-variant">
+                This phrase is the identity. Anyone who has it can sign as this
+                device and decrypt anything sealed to it. Write it down and
+                keep it somewhere safe — it is the only way to restore this
+                identity on a new device.
+              </p>
+              <label className="flex items-center gap-2 text-xs text-on-surface">
+                <input
+                  type="checkbox"
+                  checked={understood}
+                  onChange={(e) => setUnderstood(e.target.checked)}
+                  data-testid="recovery-phrase-understood"
+                />
+                I understand — I will keep this phrase private.
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => void handleReveal()}
+                  disabled={!understood || exportBusy}
+                  data-testid="recovery-phrase-reveal"
+                  className={primaryBtn}
+                >
+                  {exportBusy ? "Revealing…" : "Reveal phrase"}
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirming(false);
+                    setUnderstood(false);
+                  }}
+                  data-testid="recovery-phrase-export-cancel"
+                  className="px-4 py-2 text-sm text-on-surface-variant hover:text-on-surface transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2 rounded border border-outline-variant/30 bg-surface-container p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-on-surface-variant">
+              Your 24-word recovery phrase
+            </span>
+            <button
+              onClick={copyPhrase}
+              data-testid="recovery-phrase-copy"
+              className="text-xs text-primary hover:underline whitespace-nowrap"
+            >
+              Copy
+            </button>
+          </div>
+          <textarea
+            readOnly
+            value={phrase}
+            data-testid="recovery-phrase-value"
+            className="w-full h-28 px-2 py-1 bg-surface-container-low border border-outline-variant rounded text-xs text-on-surface font-mono break-all resize-none focus:outline-none"
+          />
+          <button
+            onClick={() => setPhrase(null)}
+            data-testid="recovery-phrase-dismiss"
+            className="text-xs text-on-surface-variant hover:text-on-surface transition-colors"
+          >
+            Done — hide phrase
+          </button>
+        </div>
+      )}
+
+      {/* Import — only on an unclaimed install */}
+      {ownerClaimed === false && (
+        <div className="space-y-2">
+          <p className="text-xs text-on-surface-variant">
+            Restore this install from a phrase. This replaces the current
+            identity and makes this device a second device under the
+            phrase&apos;s owner.
+          </p>
+          <textarea
+            value={draftPhrase}
+            onChange={(e) => setDraftPhrase(e.target.value)}
+            placeholder="24 words, space-separated"
+            spellCheck={false}
+            autoComplete="off"
+            data-testid="recovery-phrase-import-input"
+            className={`${inputClass} h-24 font-mono break-all resize-none`}
+          />
+          <button
+            onClick={() => void handleImport()}
+            disabled={!draftPhrase.trim() || importBusy}
+            data-testid="recovery-phrase-import-submit"
+            className={primaryBtn}
+          >
+            {importBusy ? "Restoring…" : "Restore from phrase"}
+          </button>
+        </div>
+      )}
+      {ownerClaimed === true && (
+        <p className="text-xs text-on-surface-variant italic">
+          Restore is only available on a fresh install — this device already
+          has a claimed owner.
+        </p>
+      )}
     </div>
   );
 }
