@@ -553,15 +553,27 @@ function MatrixChatSurface({ chat }: { chat: ActiveNativeChat }) {
  * delivery flips via `social_inbox_delivered`.
  * ────────────────────────────────────────────────────────────────────── */
 
-function PeerMessageBubble({ message }: { message: InboxMessage }) {
+function PeerMessageBubble({
+  message,
+  onToggleReaction,
+}: {
+  message: InboxMessage;
+  /** 1.2 — toggle OUR reaction on this message. Absent = chips read-only. */
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+}) {
   const outgoing = message.direction === "outbound";
   const ts = Date.parse(message.sentAt);
   // Absent delivery = legacy/pre-field row = delivered (mirrors the Rust
   // serde default). Only an explicit "pending" shows the clock.
   const pending = outgoing && message.delivery === "pending";
+  const deleted = message.deleted === true;
+  const reactions = message.reactions ?? [];
   return (
     <div
-      className={cx("flex w-full", outgoing ? "justify-end" : "justify-start")}
+      className={cx(
+        "flex w-full flex-col",
+        outgoing ? "items-end" : "items-start",
+      )}
     >
       <div
         className={cx(
@@ -571,15 +583,34 @@ function PeerMessageBubble({ message }: { message: InboxMessage }) {
             : "rounded-2xl rounded-bl-md bg-surface-container-high text-on-surface",
         )}
       >
-        <p className="whitespace-pre-wrap break-words font-body text-sm">
-          {message.body}
-        </p>
+        {message.isReply && !deleted && (
+          <p
+            className={cx(
+              "mb-1 max-w-full truncate border-l-2 pl-2 font-body text-xs italic",
+              outgoing
+                ? "border-on-primary/40 text-on-primary/70"
+                : "border-outline-variant/40 text-on-surface-variant/80",
+            )}
+          >
+            {message.replySnippet ?? "Original message unavailable"}
+          </p>
+        )}
+        {deleted ? (
+          <p className="font-body text-sm italic opacity-60">Message deleted</p>
+        ) : (
+          <p className="whitespace-pre-wrap break-words font-body text-sm">
+            {message.body}
+          </p>
+        )}
         <span
           className={cx(
             "mt-0.5 flex items-center justify-end gap-1",
             outgoing ? "text-on-primary/70" : "text-on-surface-variant/70",
           )}
         >
+          {message.edited && !deleted && (
+            <span className="font-label text-[10px]">(edited)</span>
+          )}
           {!Number.isNaN(ts) && (
             <time className="font-label text-[10px] tabular-nums">
               {timeLabel(ts)}
@@ -597,6 +628,28 @@ function PeerMessageBubble({ message }: { message: InboxMessage }) {
           )}
         </span>
       </div>
+      {reactions.length > 0 && !deleted && (
+        <div className={cx("mt-1 flex flex-wrap gap-1", outgoing ? "mr-1" : "ml-1")}>
+          {reactions.map((r) => (
+            <button
+              key={r.emoji}
+              type="button"
+              onClick={() => onToggleReaction?.(message.id, r.emoji)}
+              disabled={!onToggleReaction}
+              className={cx(
+                "flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-label text-xs transition-colors",
+                r.mine
+                  ? "border-primary/40 bg-primary/15 text-on-surface"
+                  : "border-outline-variant/20 bg-surface-container-high text-on-surface-variant",
+              )}
+              title={r.mine ? "Tap to remove your reaction" : "Tap to react too"}
+            >
+              <span>{r.emoji}</span>
+              <span>{r.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -610,8 +663,17 @@ function PeerChatSurface({
 }) {
   const addToast = useToastStore((s) => s.addToast);
   const goHome = useHomeFeedStore((s) => s.goHome);
-  const { messages, loadingMessages, error, openConversation, send } =
-    usePeerInbox();
+  const {
+    messages,
+    loadingMessages,
+    error,
+    peerTyping,
+    openConversation,
+    send,
+    toggleReaction,
+    notifyComposerActivity,
+    notifyComposerIdle,
+  } = usePeerInbox();
 
   // Open (load transcript + mark read) whenever the surfaced peer changes.
   useEffect(() => {
@@ -627,15 +689,17 @@ function PeerChatSurface({
     return () => clearInterval(id);
   }, []);
 
-  // Auto-scroll to the newest message when the transcript grows.
+  // Auto-scroll to the newest message when the transcript grows (or the
+  // peer's typing bubble appears).
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
+  }, [messages.length, peerTyping]);
 
   const handleSend = async () => {
     const body = draft.trim();
     if (!body) return;
     setDraft("");
+    notifyComposerIdle();
     await send(body);
   };
 
@@ -694,10 +758,25 @@ function PeerChatSurface({
                       </span>
                     </div>
                   )}
-                  <PeerMessageBubble message={message} />
+                  <PeerMessageBubble
+                    message={message}
+                    onToggleReaction={toggleReaction}
+                  />
                 </div>
               );
             })}
+            {peerTyping && (
+              <div
+                className="flex justify-start"
+                data-testid="peer-typing-indicator"
+              >
+                <div className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-surface-container-high px-3 py-2 text-on-surface-variant">
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:0ms]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:150ms]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:300ms]" />
+                </div>
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
         )}
@@ -714,7 +793,12 @@ function PeerChatSurface({
           <textarea
             value={draft}
             rows={1}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (e.target.value.trim()) notifyComposerActivity();
+              else notifyComposerIdle();
+            }}
+            onBlur={() => notifyComposerIdle()}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

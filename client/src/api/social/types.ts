@@ -39,8 +39,18 @@ export type MessageDirection = "outbound" | "inbound";
  * `DeliveryStatus`, `#[serde(default)] = delivered`). Additive: rows
  * serialized before the field existed omit it, so it is optional here and
  * absent means "delivered".
+ *
+ * "sent" = written to the wire with no ack back (peer speaks only 1.0.0, or
+ * the ack has not landed). Never render "sent" as "delivered".
+ * "refused" = the peer's pairing gate dropped the body; not retried.
+ * "failed" = terminal transport verdict; the reconnect flush skips it.
  */
-export type DeliveryStatus = "pending" | "delivered";
+export type DeliveryStatus =
+  | "pending"
+  | "sent"
+  | "delivered"
+  | "refused"
+  | "failed";
 
 /** The authoritative owner ("superuser") profile. Owned by superuser-ux. */
 export interface OwnerIdentity {
@@ -63,6 +73,32 @@ export interface PeerRecord {
   multiaddrs: string[];
 }
 
+/**
+ * One emoji's aggregated reactions on a message (mirrors Rust
+ * `MessageReaction`). In a 1:1 conversation `count` is 1 or 2 and `mine`
+ * drives "tap again to retract".
+ */
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
+/** One stored attachment (mirrors Rust `InboxAttachment`). */
+export interface InboxAttachment {
+  id: string;
+  messageId: string;
+  fileName: string;
+  /** SNIFFED media type — never the peer's claim. */
+  mime: string;
+  byteSize: number;
+  sha256: string;
+  /** Only when true may a surface try to render the bytes inline. */
+  isImage: boolean;
+  /** Absolute path to the blob inside the app's attachment directory. */
+  path: string;
+}
+
 /** One message in a per-peer 1:1 conversation. Owned by per-peer-inboxes. */
 export interface InboxMessage {
   id: string;
@@ -73,6 +109,27 @@ export interface InboxMessage {
   read: boolean;
   /** Delivery state for outbound rows; absent/omitted = "delivered". */
   delivery?: DeliveryStatus;
+  /** Media attached to this message, when there is any (1.2). */
+  attachment?: InboxAttachment | null;
+  /** Body edited at least once; render an "(edited)" marker (1.2). */
+  edited?: boolean;
+  /** Tombstone — render "message deleted" in place of the body (1.2). */
+  deleted?: boolean;
+  /** Composed as a reply to another message (1.2). */
+  isReply?: boolean;
+  /**
+   * Display snippet of the replied-to message, resolved at read time.
+   * `null` while `isReply` means the original is unavailable — say so
+   * rather than invent a quote (1.2).
+   */
+  replySnippet?: string | null;
+  /** Aggregated reactions, one entry per distinct emoji (1.2). */
+  reactions?: MessageReaction[];
+  /**
+   * GROUPS — the authenticated author, only on inbound rows of a group
+   * conversation (where `peerId` is the group id).
+   */
+  senderPeer?: PeerId | null;
 }
 
 /** Per-peer conversation summary. Owned by per-peer-inboxes. */
@@ -81,6 +138,24 @@ export interface ConversationRecord {
   unread: number;
   lastMessageAt?: Rfc3339 | null;
   lastPreview?: string | null;
+  /** This row is a GROUP conversation; `peerId` is the group id. */
+  isGroup?: boolean;
+  groupName?: string | null;
+  memberCount?: number;
+  /** The owner was removed from (or left) this group; read-only surface. */
+  removed?: boolean;
+}
+
+/**
+ * Ack of a local transcript mutation (edit / delete / reaction toggle) —
+ * mirrors the shell's `InboxMutationAck`. `queued` says a wire update was
+ * queued for the peer; `added` (reaction toggles only) says the reaction is
+ * now present.
+ */
+export interface InboxMutationAck {
+  peerId: PeerId;
+  queued: boolean;
+  added: boolean;
 }
 
 /** A device claiming the same owner. Owned by multi-device-consolidation. */

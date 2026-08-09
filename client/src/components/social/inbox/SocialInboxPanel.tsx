@@ -30,8 +30,15 @@ export function SocialInboxPanel({ initialPeerId }: SocialInboxPanelProps = {}) 
     loadingList,
     loadingMessages,
     error,
+    peerTyping,
     openConversation,
     send,
+    sendReply,
+    editMessage,
+    deleteMessage,
+    toggleReaction,
+    notifyComposerActivity,
+    notifyComposerIdle,
     refresh,
   } = usePeerInbox();
 
@@ -83,6 +90,13 @@ export function SocialInboxPanel({ initialPeerId }: SocialInboxPanelProps = {}) 
             messages={messages}
             loading={loadingMessages}
             onSend={send}
+            onSendReply={sendReply}
+            onEdit={editMessage}
+            onDelete={deleteMessage}
+            onToggleReaction={toggleReaction}
+            peerTyping={peerTyping}
+            onComposerActivity={notifyComposerActivity}
+            onComposerIdle={notifyComposerIdle}
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-on-surface-variant">
