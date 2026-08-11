@@ -145,25 +145,9 @@ export async function setMeshtasticInterface(
 }
 
 /** Raw wire shape for a connector layer graph (snake_case, mirrors
- *  `MeshGraph` in `meshGraph.ts`). The Reticulum connector additionally emits
- *  the F7a per-node enrichment fields (absent on the Meshtastic layer). */
-interface ConnectorLayerNodeWire {
-  peer_id: string;
-  hop_distance: number | null;
-  /** Reticulum node role — see `MeshGraphNode.nodeKind`. */
-  node_kind?: "self" | "infrastructure" | "announce-peer" | "interface";
-  /** Reticulum reachability — `"online"` | `"offline"`. */
-  connection_state?: "online" | "offline";
-  /** Reticulum-reported raw hop count (advisory). */
-  hop_count?: number;
-  /** Reticulum interface the node is reached over. */
-  interface_type?: string;
-  /** `true` when the node is a Reticulum transit/transport node. */
-  transport?: boolean;
-}
-
+ *  `MeshGraph` in `meshGraph.ts`). */
 interface ConnectorLayerWire {
-  nodes: ConnectorLayerNodeWire[];
+  nodes: { peer_id: string; hop_distance: number | null }[];
   edges: { a: string; b: string }[];
 }
 
@@ -190,12 +174,6 @@ export async function fetchConnectorLayerGraph(
       nodes: wire.nodes.map((n) => ({
         peerId: n.peer_id,
         hopDistance: n.hop_distance,
-        // Reticulum-layer enrichment (undefined on other layers).
-        nodeKind: n.node_kind,
-        connectionState: n.connection_state,
-        hopCount: n.hop_count,
-        interfaceType: n.interface_type,
-        transport: n.transport,
       })),
       edges: wire.edges.map((e) => ({ a: e.a, b: e.b })),
     };

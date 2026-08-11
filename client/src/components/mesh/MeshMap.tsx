@@ -56,10 +56,6 @@ import {
   type MeshEdge,
 } from "./MeshCanvas";
 import { LayerToggles, type MeshLayerId } from "./LayerToggles";
-import {
-  toReticulumMeshNodes,
-  toReticulumMeshEdges,
-} from "./reticulumLayer";
 import { BringingUpSplash } from "../BringingUpSplash";
 
 /** Shorten a base58 peer id for a node label. */
@@ -97,10 +93,6 @@ export function MeshMap() {
   // The Meshtastic layer graph (W2.4) — populated when its connector is
   // enabled and the Meshtastic layer toggle is on.
   const [meshtasticGraph, setMeshtasticGraph] =
-    useState<MeshGraph>(EMPTY_MESH_GRAPH);
-  // The Reticulum layer graph (F7a) — live rnsd discovery, populated when its
-  // connector is enabled and the Reticulum layer toggle is on.
-  const [reticulumGraph, setReticulumGraph] =
     useState<MeshGraph>(EMPTY_MESH_GRAPH);
 
   // W1.3 / F4b — local-spring (one-hop-up) governance. CONSERVATIVE
@@ -195,32 +187,6 @@ export function MeshMap() {
   useEffect(() => {
     void refetchMeshtastic();
   }, [refetchMeshtastic]);
-
-  // Fetch the Reticulum layer graph when its layer is enabled, and keep it
-  // current: Reticulum discovery is live (rnsd's rnpath poll), so while the
-  // layer is on we re-pull on a timer (the libp2p `mesh_graph_changed` push
-  // event doesn't fire for Reticulum topology moves). Empty + no polling when
-  // the layer is off — the canvas just shows the other layers.
-  const reticulumOn = enabledLayers.has("reticulum");
-  const refetchReticulum = useCallback(async () => {
-    if (!isNative || !reticulumOn) {
-      setReticulumGraph(EMPTY_MESH_GRAPH);
-      return;
-    }
-    try {
-      setReticulumGraph(await fetchConnectorLayerGraph("reticulum"));
-    } catch (err) {
-      console.warn("[MeshMap] reticulum layer fetch failed:", err);
-      setReticulumGraph(EMPTY_MESH_GRAPH);
-    }
-  }, [isNative, reticulumOn]);
-
-  useEffect(() => {
-    void refetchReticulum();
-    if (!isNative || !reticulumOn) return;
-    const handle = setInterval(() => void refetchReticulum(), 5000);
-    return () => clearInterval(handle);
-  }, [refetchReticulum, isNative, reticulumOn]);
 
   // Hydrate once: local peer id (center node) + initial snapshot. Runs on
   // BOTH native and web. On native, the local peer id comes from the swarm
@@ -353,20 +319,6 @@ export function MeshMap() {
         });
       }
     }
-
-    // F7a — overlay the Reticulum layer when enabled. Node ids are namespaced
-    // (`reticulum:<hash>`) so they never collide with Concord base58 ids; the
-    // raw hash is the identicon seed + short label. Each node carries its
-    // Reticulum sub-kind (self / infrastructure / announce-peer / interface),
-    // reachability, hop count and transport flag so MeshCanvas draws the
-    // distinct treatment (identicon discs, transit squares, dashed offline).
-    if (reticulumOn) {
-      const seen = new Set(out.map((n) => n.id));
-      for (const rn of toReticulumMeshNodes(reticulumGraph)) {
-        if (seen.has(rn.id)) continue;
-        out.push(rn);
-      }
-    }
     return out;
   }, [
     graph,
@@ -377,8 +329,6 @@ export function MeshMap() {
     reachedViaByPeer,
     meshtasticOn,
     meshtasticGraph,
-    reticulumOn,
-    reticulumGraph,
   ]);
 
   // Edges, filtered to those whose BOTH endpoints survived the node
@@ -397,28 +347,8 @@ export function MeshMap() {
         if (visible.has(e.a) && visible.has(e.b)) out.push({ from: e.a, to: e.b });
       }
     }
-    // F7a — Reticulum layer edges. Endpoints are namespaced to match the
-    // overlaid node ids; an edge to an offline node renders dashed (crosstalk
-    // convention — MeshCanvas also dashes automatically when an endpoint node
-    // is `offline`, this flag makes the intent explicit).
-    if (reticulumOn) {
-      const offlineIds = new Set(
-        nodes.filter((n) => n.offline).map((n) => n.id),
-      );
-      for (const e of toReticulumMeshEdges(reticulumGraph, offlineIds)) {
-        if (visible.has(e.from) && visible.has(e.to)) out.push(e);
-      }
-    }
     return out;
-  }, [
-    graph,
-    nodes,
-    concordOn,
-    meshtasticOn,
-    meshtasticGraph,
-    reticulumOn,
-    reticulumGraph,
-  ]);
+  }, [graph, nodes, concordOn, meshtasticOn, meshtasticGraph]);
 
   const toggleLayer = useCallback((id: MeshLayerId) => {
     setEnabledLayers((prev) => {
@@ -440,22 +370,6 @@ export function MeshMap() {
   // Count of non-host nodes currently visible.
   const visiblePeerCount = nodes.filter((n) => n.kind !== "host").length;
 
-  // F7a — Reticulum layer header stats (crosstalk's infra / people / iface
-  // counts). Derived from the raw layer graph so they reflect the whole
-  // discovered neighborhood, independent of the hop-scale view filter.
-  const reticulumStats = {
-    infrastructure: reticulumGraph.nodes.filter(
-      (n) => n.nodeKind === "infrastructure",
-    ).length,
-    people: reticulumGraph.nodes.filter((n) => n.nodeKind === "announce-peer")
-      .length,
-    interfaces: reticulumGraph.nodes.filter((n) => n.nodeKind === "interface")
-      .length,
-    offline: reticulumGraph.nodes.filter(
-      (n) => n.connectionState === "offline",
-    ).length,
-  };
-
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Controls row: layer toggles + hop slider + count. */}
@@ -474,31 +388,6 @@ export function MeshMap() {
                 : `${visiblePeerCount} node${visiblePeerCount === 1 ? "" : "s"} within ${hopScale} hop${hopScale === 1 ? "" : "s"}`}
           </span>
         </div>
-        {/* F7a — Reticulum layer stats (infra / people / interfaces / offline),
-            crosstalk's header vocabulary. Only shown when the Reticulum layer
-            is on. */}
-        {reticulumOn && (
-          <div
-            data-testid="mesh-reticulum-stats"
-            className="flex items-center gap-2 flex-wrap text-[10px] font-label uppercase tracking-widest text-on-surface-variant"
-          >
-            <span className="px-2 py-0.5 rounded bg-surface-variant/40">
-              {reticulumStats.infrastructure} infrastructure
-            </span>
-            <span className="px-2 py-0.5 rounded bg-surface-variant/40">
-              {reticulumStats.people} people
-            </span>
-            <span className="px-2 py-0.5 rounded bg-surface-variant/40">
-              {reticulumStats.interfaces} interface
-              {reticulumStats.interfaces === 1 ? "" : "s"}
-            </span>
-            {reticulumStats.offline > 0 && (
-              <span className="px-2 py-0.5 rounded bg-error/15 text-error">
-                {reticulumStats.offline} offline
-              </span>
-            )}
-          </div>
-        )}
         {/* Web/docker hub-role banner. The browser sources the graph over
             HTTP from the docker node, which acts as the mesh's relay +
             encrypted-backup "big brother". Surface that role so the map
