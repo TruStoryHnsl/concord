@@ -58,32 +58,3 @@ export function socialConsolidateReject(proposalId: string): Promise<void> {
   if (!isTauri()) return Promise.reject(new ConsolidationUnavailableError());
   return invoke<void>("social_consolidate_reject", { proposalId });
 }
-
-/**
- * Outcome discriminant of a consolidation attempt. `"enqueued"` means a
- * verified exchange completed and a proposal now awaits the user's
- * Merge/Reject in Settings → Devices.
- */
-export type ConsolidateAttemptOutcome =
-  | "enqueued"
-  | "alreadyPending"
-  | "skippedUnchanged"
-  | "declined"
-  | "unsupported";
-
-/**
- * NUI-F35 — run one consolidation exchange against `peerId` NOW instead of
- * waiting for the next connection event. Used as the post-escalation kick:
- * the standing trigger is DialSuccess, and escalating an already-connected
- * peer raises no new connection event. A trigger, not a bypass — the Rust
- * side re-checks the own-device gate before opening any stream, and rejects
- * a peer that is not one of the user's linked devices.
- */
-export function socialConsolidateAttempt(
-  peerId: string,
-): Promise<ConsolidateAttemptOutcome> {
-  if (!isTauri()) return Promise.reject(new ConsolidationUnavailableError());
-  return invoke<ConsolidateAttemptOutcome>("social_consolidate_attempt", {
-    peerId,
-  });
-}
