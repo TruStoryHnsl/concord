@@ -45,3 +45,64 @@ export function applyInstanceUpdate(token: string) {
     token,
   );
 }
+
+// --- Full-stack update (multi-container compose deploy) --------------------
+// Rebuilds AND relaunches ALL containers/images (never selective), health-gated
+// with rollback. SECURITY-SENSITIVE server-side; admin-gated. See
+// docs/architecture/docker-self-update-threat-model.md.
+
+export interface FullStackUpdateStart {
+  started: boolean;
+  job_id: string;
+  updater_container: string;
+  compose_dir: string;
+  message: string;
+}
+
+export type FullStackUpdatePhase =
+  | "idle"
+  | "starting"
+  | "snapshot"
+  | "pulling"
+  | "building"
+  | "recreating"
+  | "health_check"
+  | "success"
+  | "rolling_back"
+  | "rolled_back"
+  | "rollback_failed"
+  | "failed";
+
+export interface FullStackUpdateStatus {
+  phase: FullStackUpdatePhase;
+  ok: boolean | null;
+  message: string;
+  job_id?: string;
+  started_at?: number;
+  updated_at?: number;
+}
+
+export function startFullStackUpdate(token: string) {
+  return apiFetch<FullStackUpdateStart>(
+    "/instance/update/full-stack",
+    { method: "POST" },
+    token,
+  );
+}
+
+export function getFullStackUpdateStatus(token: string) {
+  return apiFetch<FullStackUpdateStatus>(
+    "/instance/update/full-stack/status",
+    {},
+    token,
+  );
+}
+
+/** Phases from which no further progress will come (job is over). */
+export const FULLSTACK_TERMINAL_PHASES: FullStackUpdatePhase[] = [
+  "success",
+  "rolled_back",
+  "rollback_failed",
+  "failed",
+  "idle",
+];
