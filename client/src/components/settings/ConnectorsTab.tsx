@@ -21,7 +21,6 @@ import {
   type ConnectorDescriptor,
   type MeshtasticInterfaceKind,
 } from "../../api/connectors";
-import { ReticulumInterfacesPanel } from "./ReticulumInterfacesPanel";
 
 export function ConnectorsTab() {
   const native = isTauri();
@@ -171,12 +170,6 @@ export function ConnectorsTab() {
                   />
                 </button>
               </div>
-
-              {/* Reticulum interface manager — only when this row is the
-                  Reticulum connector and it's compiled in. */}
-              {c.id === "reticulum" && c.compiledIn && (
-                <ReticulumInterfacesPanel />
-              )}
 
               {/* Meshtastic device interface config — only when this row is
                   the Meshtastic connector and it's compiled in. */}

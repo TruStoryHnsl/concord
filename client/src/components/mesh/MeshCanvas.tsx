@@ -44,12 +44,46 @@ export interface MeshNode {
    * more variants without breaking this contract.
    */
   kind: "host" | "paired" | "known" | "unknown" | "pillar";
+  /**
+   * Reticulum-layer (F7a) sub-kind. When set, the node is drawn with the
+   * Reticulum vocabulary instead of the plain `kind` circle:
+   *   * `self` — this install's Reticulum identity (accent ring + identicon),
+   *   * `infrastructure` — a transit/transport node (rounded-square, blue),
+   *   * `announce-peer` — a heard destination (identicon disc),
+   *   * `interface` — a local interface (online green / offline red disc).
+   * `undefined` on Concord/Meshtastic nodes (drawn by `kind`).
+   */
+  ret?: "self" | "infrastructure" | "announce-peer" | "interface";
+  /**
+   * Inline `data:image/svg+xml` identicon URI (see `identicon.ts`). Drawn
+   * clipped to the node disc for Reticulum `self` / `announce-peer` nodes.
+   * CSP-safe (data URI only). `undefined` → no image, solid fill.
+   */
+  identicon?: string;
+  /**
+   * `true` when the node has no live path (offline). Drawn dimmed with a
+   * hollow ring; its edges render dashed (crosstalk convention).
+   */
+  offline?: boolean;
+  /**
+   * Reticulum hop count to show as a small badge on the node. `undefined` →
+   * no badge (Concord nodes derive position from `hop` instead).
+   */
+  hopBadge?: number;
+  /** `true` when this Reticulum node relays for others (transport). Adds a
+   * small green marker dot, mirroring crosstalk's transport indicator. */
+  transportMarker?: boolean;
 }
 
 /** An undirected edge between two node ids. */
 export interface MeshEdge {
   from: string;
   to: string;
+  /**
+   * Draw the edge dashed (crosstalk convention for a link to an offline /
+   * no-live-path node). `undefined`/`false` → solid.
+   */
+  dashed?: boolean;
 }
 
 export interface MeshCanvasProps {
@@ -88,11 +122,26 @@ interface PlacedNode extends MeshNode {
 /** Node radius in CSS pixels by kind. Host is largest; web-threaded
  * pillar peers are drawn slightly larger than a regular peer so they
  * stand out as relayed-through-the-pillar nodes. */
-function radiusFor(kind: MeshNode["kind"]): number {
-  if (kind === "host") return 22;
-  if (kind === "pillar") return 17;
+function radiusFor(node: MeshNode): number {
+  if (node.ret) {
+    if (node.ret === "self") return 20;
+    if (node.ret === "infrastructure") return 17;
+    return 15; // announce-peer / interface
+  }
+  if (node.kind === "host") return 22;
+  if (node.kind === "pillar") return 17;
   return 14;
 }
+
+/** Reticulum-layer accent palette (crosstalk's established mesh vocabulary —
+ * the same greens/blues/reds its NetworkVisualiser uses, so the two surfaces
+ * read as one system). */
+const RET = {
+  online: "#2ee781",
+  offline: "#ff5c72",
+  infra: "#60a5fa",
+  infraTransport: "#93c5fd",
+} as const;
 
 /** Distinct accent for web-threaded pillar peers (Spec B). Falls back to a
  * teal that reads apart from the primary (host/paired) and variant
@@ -112,6 +161,21 @@ export function MeshCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  // Identicon images decode asynchronously; cache the HTMLImageElement per
+  // data-URI and bump `imgTick` when one finishes so the paint effect reruns
+  // and draws it. Decoded from inline data: URIs only (CSP-safe).
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const [imgTick, setImgTick] = useState(0);
+  const getImage = useCallback((uri: string): HTMLImageElement | null => {
+    const cache = imageCacheRef.current;
+    const existing = cache.get(uri);
+    if (existing) return existing.complete ? existing : null;
+    const img = new Image();
+    img.onload = () => setImgTick((t) => t + 1);
+    img.src = uri;
+    cache.set(uri, img);
+    return img.complete ? img : null;
+  }, []);
   // Placed nodes are stashed so the click handler can hit-test without
   // recomputing layout — the same array the last paint used.
   const placedRef = useRef<PlacedNode[]>([]);
@@ -166,7 +230,7 @@ export function MeshCanvas({
       for (const [hop, group] of byHop) {
         if (hop === 0) {
           for (const n of group) {
-            placed.push({ ...n, x: cx, y: cy, r: radiusFor(n.kind) });
+            placed.push({ ...n, x: cx, y: cy, r: radiusFor(n) });
           }
           continue;
         }
@@ -180,7 +244,7 @@ export function MeshCanvas({
             ...n,
             x: cx + Math.cos(angle) * ring,
             y: cy + Math.sin(angle) * ring,
-            r: radiusFor(n.kind),
+            r: radiusFor(n),
           });
         });
       }
@@ -218,24 +282,149 @@ export function MeshCanvas({
     ctx.lineWidth = 1;
     ctx.strokeStyle = colorOutline;
     const host = placed.find((p) => p.kind === "host");
-    const drawEdge = (a?: PlacedNode, b?: PlacedNode) => {
+    const drawEdge = (a?: PlacedNode, b?: PlacedNode, dashed?: boolean) => {
       if (!a || !b) return;
+      // Dashed edge for a link to an offline / no-live-path node (crosstalk
+      // convention). An edge is dashed if explicitly flagged OR either
+      // endpoint is an offline Reticulum node.
+      const isDashed = dashed || a.offline || b.offline;
+      ctx.setLineDash(isDashed ? [4, 4] : []);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
     };
     if (edges && edges.length > 0) {
-      for (const e of edges) drawEdge(byId.get(e.from), byId.get(e.to));
+      for (const e of edges) drawEdge(byId.get(e.from), byId.get(e.to), e.dashed);
     } else if (host) {
       for (const p of placed) {
         if (p.id !== host.id) drawEdge(host, p);
       }
     }
+    ctx.setLineDash([]);
+
+    // Draw a data-URI identicon clipped to the node disc. No-op (returns
+    // false) until the image has decoded — the paint reruns via `imgTick`.
+    const drawIdenticon = (p: PlacedNode, uri: string): boolean => {
+      const img = getImage(uri);
+      if (!img) return false;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+      ctx.restore();
+      return true;
+    };
+
+    const drawLabel = (p: PlacedNode) => {
+      ctx.fillStyle = colorOnSurface;
+      ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const label = p.label.length > 18 ? `${p.label.slice(0, 17)}…` : p.label;
+      ctx.fillText(label, p.x, p.y + p.r + 4);
+    };
 
     // Nodes.
     const colorPillar = pillarColor();
     for (const p of placed) {
+      // ---- Reticulum-layer node treatment (F7a) ----------------------------
+      if (p.ret) {
+        const online = !p.offline;
+        if (p.ret === "infrastructure") {
+          // Transit node: a rounded square so it reads apart from the peer
+          // discs, blue border (brighter when it's a transport relay).
+          const border = p.offline
+            ? RET.offline
+            : p.transportMarker
+              ? RET.infraTransport
+              : RET.infra;
+          const s = p.r; // half-side
+          ctx.beginPath();
+          const rr = 5;
+          const x0 = p.x - s;
+          const y0 = p.y - s;
+          const w = s * 2;
+          const h = s * 2;
+          ctx.moveTo(x0 + rr, y0);
+          ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, rr);
+          ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, rr);
+          ctx.arcTo(x0, y0 + h, x0, y0, rr);
+          ctx.arcTo(x0, y0, x0 + w, y0, rr);
+          ctx.closePath();
+          ctx.fillStyle = cssVar("--color-surface-container-high", "#1e293b");
+          ctx.globalAlpha = p.offline ? 0.5 : 1;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = border;
+          ctx.lineWidth = p.transportMarker ? 2.4 : 1.8;
+          ctx.stroke();
+        } else if (p.ret === "interface") {
+          // Local interface: online green / offline red disc.
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fillStyle = online ? RET.online : RET.offline;
+          ctx.globalAlpha = p.offline ? 0.55 : 1;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        } else {
+          // self / announce-peer: identicon disc with a state-colored ring.
+          const drew = p.identicon ? drawIdenticon(p, p.identicon) : false;
+          if (!drew) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fillStyle = colorVariant;
+            ctx.globalAlpha = p.offline ? 0.5 : 1;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.strokeStyle =
+            p.ret === "self"
+              ? colorPrimary
+              : p.offline
+                ? RET.offline
+                : RET.online;
+          ctx.lineWidth = p.ret === "self" ? 3 : 2;
+          ctx.stroke();
+        }
+
+        // Transport relay marker: a small green dot, top-right (crosstalk).
+        if (p.transportMarker) {
+          ctx.beginPath();
+          ctx.arc(p.x + p.r * 0.7, p.y - p.r * 0.7, 3.2, 0, Math.PI * 2);
+          ctx.fillStyle = RET.online;
+          ctx.fill();
+          ctx.strokeStyle = colorOnSurface;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        // Hop-count badge, bottom-right, so distance is visible at a glance.
+        if (p.hopBadge != null) {
+          const bx = p.x + p.r * 0.72;
+          const by = p.y + p.r * 0.72;
+          ctx.beginPath();
+          ctx.arc(bx, by, 7, 0, Math.PI * 2);
+          ctx.fillStyle = cssVar("--color-surface-container-high", "#1e293b");
+          ctx.fill();
+          ctx.strokeStyle = colorOutline;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = colorOnSurface;
+          ctx.font = "9px ui-sans-serif, system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(p.hopBadge), bx, by + 0.5);
+        }
+
+        drawLabel(p);
+        continue;
+      }
+
+      // ---- Concord / Meshtastic node treatment (unchanged) -----------------
       const fill =
         p.kind === "host" || p.kind === "paired"
           ? colorPrimary
@@ -257,15 +446,9 @@ export function MeshCanvas({
         ctx.stroke();
       }
 
-      // Label under the node, clipped to a reasonable width.
-      ctx.fillStyle = colorOnSurface;
-      ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      const label = p.label.length > 18 ? `${p.label.slice(0, 17)}…` : p.label;
-      ctx.fillText(label, p.x, p.y + p.r + 4);
+      drawLabel(p);
     }
-  }, [size, layout, edges]);
+  }, [size, layout, edges, imgTick, getImage]);
 
   // Hit-test clicks against the last painted node positions.
   const handleClick = useCallback(
