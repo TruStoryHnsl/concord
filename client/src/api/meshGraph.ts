@@ -128,6 +128,32 @@ export interface MeshGraphNode {
    * web snapshots.
    */
   viaWg?: boolean;
+
+  // --- Reticulum-layer enrichment (F7a). Absent on Concord/Meshtastic. ---
+  /**
+   * Reticulum node role: `"self"` (this install's transport identity),
+   * `"infrastructure"` (a transit/transport node), `"announce-peer"` (a heard
+   * destination), or `"interface"` (a local interface — TODO, needs interface
+   * stats). `undefined` on non-Reticulum nodes.
+   */
+  nodeKind?: "self" | "infrastructure" | "announce-peer" | "interface";
+  /** Reachability: `"online"` (live path) or `"offline"`. Reticulum only. */
+  connectionState?: "online" | "offline";
+  /**
+   * Reticulum-reported hop count to the destination (raw `rnpath` hops,
+   * advisory — distinct from the BFS `hopDistance`). Reticulum only.
+   */
+  hopCount?: number;
+  /**
+   * The Reticulum interface this destination is reached over (e.g.
+   * `"TCPInterface[...]"`). Reticulum only.
+   */
+  interfaceType?: string;
+  /** `true` when this is a Reticulum transit/transport node. Reticulum only. */
+  transport?: boolean;
+  // TODO(F7b): frequency/bandwidth/sf/cr radio params arrive once the RNode
+  // LoRa-interface backend lands (they come from an RNodeInterface announce's
+  // app_data). The map already reserves the tooltip slots for them.
 }
 
 /** An undirected edge between two peer ids. */
