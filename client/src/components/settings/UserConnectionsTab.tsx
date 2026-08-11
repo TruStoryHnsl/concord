@@ -5,6 +5,7 @@ import { disconnectSource } from "../../lib/disconnectSource";
 import { useBrowserLibp2p } from "../../hooks/useBrowserLibp2p";
 import { SourceBrandIcon } from "../sources/sourceBrand";
 import { PeerConnectionsSection } from "./connections/PeerConnectionsSection";
+import { LanAutoPairSection } from "./connections/LanAutoPairSection";
 import { TunnelHardeningSection } from "./connections/TunnelHardeningSection";
 
 /**
@@ -109,6 +110,7 @@ export function UserConnectionsTab() {
 
       <ConnectedAccountsList />
       <PeerConnectionsSection />
+      <LanAutoPairSection />
       <TunnelHardeningSection />
     </div>
   );

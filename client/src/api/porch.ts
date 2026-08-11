@@ -725,8 +725,20 @@ export async function porchMyDeviceId(): Promise<string> {
   return await invoke<string>("porch_my_device_id");
 }
 
-/** Phase F — promote `peerId` to "personal device" status. Dials the
- *  remote, exchanges device-ids, commits the local side of the link.
+/** C2 — result of a completed initiator-side supertrust handshake.
+ *  Mirrors the Rust `supertrust_wire::HandshakeOutcome` (snake_case). */
+export interface SupertrustHandshakeOutcome {
+  peer_id: string;
+  escalated_to_supertrusted: boolean;
+  linked_as_device: boolean;
+}
+
+/** Phase F / C2 — promote `peerId` to "personal device" status by running
+ *  the INITIATOR side of the mutual-signed supertrust escalation handshake.
+ *  Succeeds only if the remote user independently armed consent on THAT
+ *  machine (`supertrustRespond(peer, true)` — see `./supertrust.ts`);
+ *  otherwise the responder closes the stream without signing and nothing
+ *  is linked on either side.
  *  NUI-F36: `label` is OUR name for the peer (stored locally only);
  *  `offeredLabel` is this device's self-identifying name, sent to the
  *  peer so it can store a sensible name for us. */
@@ -734,11 +746,11 @@ export async function porchLinkPersonalDevice(
   peerId: string,
   label: string | null,
   offeredLabel: string | null = null,
-): Promise<DeviceLink> {
+): Promise<SupertrustHandshakeOutcome> {
   if (!isTauri()) {
     throw new Error("porch_link_personal_device is native-only");
   }
-  return await invoke<DeviceLink>("porch_link_personal_device", {
+  return await invoke<SupertrustHandshakeOutcome>("porch_link_personal_device", {
     peerId,
     label,
     offeredLabel,
