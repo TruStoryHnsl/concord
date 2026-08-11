@@ -726,14 +726,10 @@ export async function porchMyDeviceId(): Promise<string> {
 }
 
 /** Phase F — promote `peerId` to "personal device" status. Dials the
- *  remote, exchanges device-ids, commits the local side of the link.
- *  NUI-F36: `label` is OUR name for the peer (stored locally only);
- *  `offeredLabel` is this device's self-identifying name, sent to the
- *  peer so it can store a sensible name for us. */
+ *  remote, exchanges device-ids, commits the local side of the link. */
 export async function porchLinkPersonalDevice(
   peerId: string,
   label: string | null,
-  offeredLabel: string | null = null,
 ): Promise<DeviceLink> {
   if (!isTauri()) {
     throw new Error("porch_link_personal_device is native-only");
@@ -741,7 +737,6 @@ export async function porchLinkPersonalDevice(
   return await invoke<DeviceLink>("porch_link_personal_device", {
     peerId,
     label,
-    offeredLabel,
   });
 }
 
