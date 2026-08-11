@@ -16,6 +16,7 @@ import {
 } from "../../../api/social/groups";
 import type { GroupRecord } from "../../../api/social/groups";
 import type { InboxMessage } from "../../../api/social/types";
+import { isTauri } from "../../../api/servitude";
 
 export interface GroupsState {
   /** Every group this store holds, newest-created first. */
@@ -141,6 +142,56 @@ export function useGroups(): GroupsState {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Live updates: the Rust side emits dedicated Tauri events when the swarm
+  // records an inbound group message (`social_group_message`, payload
+  // `{ groupId, peerId }`) and when a group's membership state changes on
+  // disk — created on first contact, roster/name superseded, or this device
+  // removed (`social_group_membership`, payload `{ groupId }`). Subscribe
+  // once per hook instance — mirroring `usePeerInbox`'s inbox listeners — so
+  // an open GroupsPanel updates WITHOUT a manual refresh: either event
+  // re-pulls the group list, and when it names the OPEN group the transcript
+  // reloads too (membership notes like "You were added/removed" land in the
+  // transcript, so membership changes must re-read it as well).
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        if (cancelled) return;
+        const reload = (groupId: string) => {
+          if (activeGroupRef.current === groupId) {
+            void loadMessages(groupId);
+          }
+          void refresh();
+        };
+        const unlistenMessage = await listen<{
+          groupId: string;
+          peerId: string;
+        }>("social_group_message", (event) => {
+          reload(event.payload.groupId);
+        });
+        if (cancelled) unlistenMessage();
+        else unlisteners.push(unlistenMessage);
+        const unlistenMembership = await listen<{ groupId: string }>(
+          "social_group_membership",
+          (event) => {
+            reload(event.payload.groupId);
+          },
+        );
+        if (cancelled) unlistenMembership();
+        else unlisteners.push(unlistenMembership);
+      } catch (e) {
+        console.warn("[groups] failed to attach group event listeners:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((u) => u());
+    };
+  }, [loadMessages, refresh]);
 
   return {
     groups,
