@@ -34,18 +34,38 @@ services:
     networks:
       - concord
 
-  # Minimal-privilege proxy that lets concord-api restart the conduwuit
-  # container when the federation allowlist changes. Only CONTAINERS list
-  # and POST (restart) are enabled — no image, volume, or network access.
-  # This avoids mounting the host's /var/run/docker.sock directly into
-  # concord-api, shrinking the blast radius if concord-api is compromised.
+  # Proxy that mediates concord-api's Docker access so the raw
+  # /var/run/docker.sock is never mounted into concord-api itself.
+  #
+  # SECURITY: every allowlist flag below is justified in
+  # docs/architecture/docker-self-update-threat-model.md. Do NOT widen this
+  # casually. Note (see threat model §3.1): CONTAINERS+POST is already a
+  # host-root primitive — POST /containers/create accepts arbitrary host binds
+  # — so it is NOT "minimal privilege" despite the historical framing. The
+  # IMAGES/BUILD/NETWORKS additions below do not raise the maximum blast radius
+  # beyond what CONTAINERS+POST already grants; they enable the admin-triggered
+  # full-stack self-update (pull + build --pull + up -d of ALL services).
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     environment:
-      CONTAINERS: "1"
-      POST: "1"
-      # Everything else stays at its secure default (disabled).
+      CONTAINERS: "1"   # container lifecycle: restart (federation apply) +
+                        # create/start/recreate/inspect for the compose update
+      POST: "1"         # global switch enabling write verbs on allowed paths
+      # --- Additions for admin-triggered full-stack self-update only ---
+      IMAGES: "1"       # `compose pull` (POST /images/create) + rollback
+                        # retag/inspect (POST /images/*/tag, GET /images/*)
+      BUILD: "1"        # `compose build --pull` (POST /build) — rebuild
+                        # concord-api + web from source. Build context is the
+                        # operator-owned host compose dir, not the API request
+                        # (threat model §3.3).
+      NETWORKS: "1"     # `compose up` reconciles the `concord` network
+                        # (GET /networks*). Under this proxy's coarse method
+                        # model, POST also grants network create/delete — the
+                        # widening under most scrutiny (threat model §3.4).
+      # Everything else (VOLUMES, EXEC, SWARM, SECRETS, CONFIGS, SYSTEM, AUTH,
+      # …) stays at its secure default (disabled). The stack uses host bind
+      # mounts, not named volumes, so VOLUMES is intentionally NOT granted.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
