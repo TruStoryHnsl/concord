@@ -12,14 +12,6 @@
  * snake_case (`group_id`, `self_peer`, …) — unlike `InboxMessage` /
  * `OwnerIdentity` which are camelCase. The interface below mirrors the wire
  * shape 1:1.
- *
- * LIVE EVENTS (subscribed in `useGroups`, mirroring `usePeerInbox`): the
- * shell bridges swarm events onto two dedicated Tauri channels —
- * `social_group_message` (`{ groupId, peerId }`, an inbound group message
- * was recorded) and `social_group_membership` (`{ groupId }`, the group was
- * created here / its roster or name was superseded / this device was
- * removed). Both are cheap "re-read" signals: re-pull the list, and the
- * transcript when the named group is open.
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { InboxMessage } from "./types";
