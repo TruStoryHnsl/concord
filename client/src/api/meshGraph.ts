@@ -24,7 +24,6 @@
 
 import { isTauri } from "./servitude";
 import { getApiBase } from "./serverUrl";
-import { useAuthStore } from "../stores/auth";
 
 /** Web poll interval for the HTTP topology endpoint (ms). The docker
  * node's federation-derived topology changes slowly (an admin editing the
@@ -190,16 +189,8 @@ export async function fetchMeshGraph(): Promise<MeshGraph> {
  */
 async function fetchMeshGraphWeb(): Promise<MeshGraph> {
   try {
-    // Tunneled-spring gate (Spec B P3): the endpoint serves the public
-    // pillar+federation skeleton to everyone, but only folds in the live
-    // web-threaded peer set for an authenticated caller. Attach the
-    // Matrix token when logged in so trusted viewers see the peers;
-    // pre-login the bare request still renders the skeleton map.
-    const headers: Record<string, string> = { Accept: "application/json" };
-    const accessToken = useAuthStore.getState().accessToken;
-    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
     const resp = await fetch(`${getApiBase()}/mesh/topology`, {
-      headers,
+      headers: { Accept: "application/json" },
     });
     if (!resp.ok) {
       console.warn(
