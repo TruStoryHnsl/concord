@@ -1,39 +1,33 @@
-"""Public-facing federation discovery ("explore") endpoints.
+"""User-scoped federation discovery ("explore") endpoints.
 
-This router exposes the Concord instance's current federation allowlist in
-a form suitable for the client-side "Explore servers" UI. It is a thin,
-read-only projection over the same ``tuwunel.toml`` state that the admin
-allowlist writer (``/api/admin/federation/allowlist``) owns — meaning any
-change the admin makes shows up here on the next request, no separate
-store to keep in sync.
+Historically this router projected the instance-global federation
+allowlist (``tuwunel.toml``) to EVERY authenticated user — which meant
+one user adding a Matrix server surfaced a source tile for everyone on
+the instance. That was an instance-scoping bug: the catalogue of
+connections is user-specific.
 
-Design notes:
-- Auth: the endpoint requires a logged-in user (via ``get_user_id``) but
-  NOT admin. Browsing the allowlist is a regular-user feature.
-- Shape: ``{domain, name, description}`` matches the explore card model
-  the frontend already uses for server discovery. ``description`` is
-  ``None`` for now because the allowlist TOML only stores hostnames;
-  richer metadata can be added later without changing the wire contract.
-- Decoding: the TOML persists anchored regex patterns
-  (``^matrix\\.org$``). We run them back through
-  :func:`decode_server_name_patterns` to surface plain hostnames. Patterns
-  that can't be decoded (hand-edited advanced regexes) are returned
-  verbatim — the UI will render them as-is rather than silently hiding
-  entries the admin took the trouble to add.
+The endpoint now returns:
+  1. the core instance itself (always first — it is the only default
+     connection any account starts with), and
+  2. the caller's OWN sources from the per-user catalogue
+     (``user_sources`` — see ``routers/user_sources.py``).
+
+The federation allowlist remains a transport-level, admin-owned concern
+(``/api/admin/federation``); it is no longer surfaced to regular users
+as a discovery list.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import get_db
 from dependencies import get_user_id
-from services.tuwunel_config import (
-    decode_server_name_patterns,
-    read_federation,
-)
+from models import UserSource
 
 router = APIRouter(prefix="/api/explore", tags=["explore"])
 
@@ -55,35 +49,38 @@ class ExploreServerEntry(BaseModel):
 @router.get("/servers", response_model=list[ExploreServerEntry])
 async def list_federated_servers(
     user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
 ) -> list[ExploreServerEntry]:
-    """Return the federation allowlist as a list of explore cards.
+    """Return the caller's explore cards: the core instance + their own sources.
 
-    Any authenticated user may call this. The endpoint is a projection
-    over ``read_federation()`` — no separate cache, no extra state — so
-    the explore list is always consistent with what the admin last saved
-    in ``tuwunel.toml``.
+    User-scoped by design: no user ever sees another account's
+    connections here. The instance-global allowlist is deliberately NOT
+    projected — it is homeserver transport config, not a user catalogue.
     """
-    # ``read_federation()`` is synchronous blocking I/O: it opens
-    # ``tuwunel.toml``, takes an ``fcntl`` exclusive lock, and parses
-    # TOML. Calling it directly from this async handler would stall the
-    # FastAPI event loop for the duration of the lock + parse, hurting
-    # concurrent request latency on a shared worker. Offload it to the
-    # default thread-pool executor instead. We intentionally do NOT
-    # rewrite ``read_federation`` itself — it has other (also-async)
-    # callers in ``routers/admin.py`` that would need the same treatment
-    # and the targeted fix here keeps the blast radius small.
-    loop = asyncio.get_event_loop()
-    settings = await loop.run_in_executor(None, read_federation)
-    hostnames = decode_server_name_patterns(settings.allowed_remote_server_names)
-
     # Always show the local instance first. Derived from the required
     # CONDUWUIT_SERVER_NAME env var — never hardcoded to any domain.
     local = os.environ.get("CONDUWUIT_SERVER_NAME", "").strip()
     entries: list[ExploreServerEntry] = []
     if local:
-        entries.append(ExploreServerEntry(domain=local, name=local, description="This instance"))
-    for host in hostnames:
-        # Skip if the allowlist somehow contains the local domain (avoid dupe)
-        if host and host != local:
-            entries.append(ExploreServerEntry(domain=host, name=host, description=None))
+        entries.append(
+            ExploreServerEntry(domain=local, name=local, description="This instance")
+        )
+
+    result = await db.execute(
+        select(UserSource)
+        .where(
+            UserSource.user_id == user_id,
+            UserSource.kind.in_(["matrix", "concord"]),
+        )
+        .order_by(UserSource.created_at)
+    )
+    for row in result.scalars().all():
+        if row.host and row.host != local:
+            entries.append(
+                ExploreServerEntry(
+                    domain=row.host,
+                    name=row.display_name or row.host,
+                    description=None,
+                )
+            )
     return entries

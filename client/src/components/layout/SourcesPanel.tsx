@@ -20,7 +20,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
-import { useSourcesStore, type ConcordSource } from "../../stores/sources";
+import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
+import { useSourcesStore, useVisibleSources, type ConcordSource } from "../../stores/sources";
 import { usePeerStore } from "../../stores/peerStore";
 import { isTauri } from "../../api/servitude";
 import { useInstanceNameStore } from "../../stores/instanceName";
@@ -457,6 +458,7 @@ export function SourcesPanel({
   onSourceOpen,
   onLocalOpen,
   onExplore,
+  onReticulumOpen,
   mobile = false,
   canManageSources = true,
 }: {
@@ -480,10 +482,13 @@ export function SourcesPanel({
    */
   onLocalOpen?: () => void;
   onExplore?: () => void;
+  /** Mobile: called after a reticulum tile opens its surface, so the
+   *  nav stack can advance to the content frame. */
+  onReticulumOpen?: () => void;
   mobile?: boolean;
 }) {
   const currentUserId = useAuthStore((s) => s.userId);
-  const rawSources = useSourcesStore((s) => s.sources);
+  const rawSources = useVisibleSources();
   const toggleSource = useSourcesStore((s) => s.toggleSource);
   const setSourceOrder = useSourcesStore((s) => s.setSourceOrder);
   const updateSource = useSourcesStore((s) => s.updateSource);
@@ -531,8 +536,16 @@ export function SourcesPanel({
   // visibility lives in the right-click menu. Clicking always reveals the
   // source first so a click can never hide the source you're trying to reach.
   const handleOpenSource = (id: string) => {
-    if (!sources.find((s) => s.id === id)?.enabled) {
+    const src = sources.find((s) => s.id === id);
+    if (src && !src.enabled) {
       updateSource(id, { enabled: true });
+    }
+    // Reticulum sources open their dedicated framework-shaped surface —
+    // there is no Matrix session to switch into (and never will be).
+    if (src?.platform === "reticulum") {
+      useReticulumSurfaceStore.getState().open(id);
+      onReticulumOpen?.();
+      return;
     }
     onSourceSelect?.(id);
     // A foreign source with no stored session can't be switched into —

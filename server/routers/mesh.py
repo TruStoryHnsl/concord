@@ -101,7 +101,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import DATA_DIR, MATRIX_SERVER_NAME
 from database import get_db
 from dependencies import get_optional_user_id, get_user_id
-from models import MeshPresence
+from models import MeshPresence, PersonaBinding
 from services.tuwunel_config import (
     decode_server_name_patterns,
     read_federation,
@@ -451,8 +451,16 @@ def merge_presence_nodes(
     return out_nodes, out_edges
 
 
-async def _load_active_presence(db: AsyncSession) -> list[MeshPresence]:
-    """Return all non-expired ``mesh_presence`` rows.
+async def _load_active_presence(
+    db: AsyncSession, viewer_user_id: str
+) -> list[MeshPresence]:
+    """Return the viewer's OWN non-expired ``mesh_presence`` rows.
+
+    Mesh/p2p data is user-scoped: the pillar folds in only presence rows
+    published by the viewing account (``owner_user_id``), never the whole
+    instance-wide live peer set. Rows with a NULL owner (published before
+    the column existed) are visible to nobody — fail-closed; they are
+    TTL'd so the NULL population self-clears.
 
     A row is active iff ``expires_at`` is still in the future. Expired rows
     are excluded here (and the background sweep deletes them), so the live
@@ -463,7 +471,10 @@ async def _load_active_presence(db: AsyncSession) -> list[MeshPresence]:
     now = datetime.now(timezone.utc)
     try:
         result = await db.execute(
-            select(MeshPresence).where(MeshPresence.expires_at > now)
+            select(MeshPresence).where(
+                MeshPresence.expires_at > now,
+                MeshPresence.owner_user_id == viewer_user_id,
+            )
         )
         return list(result.scalars().all())
     except Exception as exc:  # pragma: no cover - defensive
@@ -508,22 +519,24 @@ async def get_mesh_topology(
     homeservers at hop 1). Always returns at least the local host node,
     so the map renders the "big brother" hub even before any peer appears.
 
-    Tunneled-spring gate (Spec B P3): the web-threaded peers that native
-    instances reported to this pillar (non-expired ``mesh_presence`` rows)
-    are folded in as hop-1 ``via="pillar"`` nodes ONLY for a viewer
-    authenticated with this pillar. An anonymous viewer gets the skeleton
-    alone — the live who-is-here list is never world-readable. A caller
-    presenting an invalid token gets 401 from ``get_optional_user_id``
-    (fail-closed), never a silent anonymous downgrade.
+    Tunneled-spring gate (Spec B P3) + user scoping: the web-threaded
+    peers folded in as hop-1 ``via="pillar"`` nodes are ONLY the
+    non-expired ``mesh_presence`` rows the *viewing account itself*
+    published (``owner_user_id``). An anonymous viewer gets the skeleton
+    alone; an authenticated viewer gets their own p2p/mesh data, never
+    another account's. A caller presenting an invalid token gets 401
+    from ``get_optional_user_id`` (fail-closed), never a silent
+    anonymous downgrade.
     """
     hub_enabled = _hub_enabled()
     backup_count = _backup_blob_count()
 
-    # Fail-closed default: no presence peers. Only a caller with a valid
-    # Matrix session on this pillar sees the live web-threaded peer set.
+    # Fail-closed default: no presence peers. An authenticated caller
+    # sees ONLY the presence rows their own account published — the
+    # live peer set is user-scoped, never instance-wide.
     presence_rows: list[MeshPresence] = []
     if viewer_user_id is not None:
-        presence_rows = await _load_active_presence(db)
+        presence_rows = await _load_active_presence(db, viewer_user_id)
 
     # 1. Prefer a real libp2p snapshot from a headless servitude.
     rust = _load_rust_snapshot()
@@ -636,6 +649,31 @@ async def post_mesh_presence(
     adjacency_json = json.dumps(req.adjacency)
     via_pillar = (MATRIX_SERVER_NAME or "localhost").strip() or "localhost"
 
+    # Persona↔account binding: a persona belongs to exactly ONE account on
+    # this instance (trust-on-first-use at the account level — the same
+    # posture as the pubkey TOFU below, one layer up). First authenticated
+    # publisher claims the persona; a later publish from a different
+    # account is rejected even with a valid signature. This is what makes
+    # mesh data user-scopable at read time.
+    binding = (
+        await db.execute(
+            select(PersonaBinding).where(PersonaBinding.persona_id == req.persona_id)
+        )
+    ).scalar_one_or_none()
+    if binding is not None:
+        if binding.user_id != publisher_user_id:
+            raise HTTPException(403, "persona is bound to a different account")
+        if binding.persona_pubkey is None:
+            binding.persona_pubkey = pubkey_bytes
+    else:
+        db.add(
+            PersonaBinding(
+                user_id=publisher_user_id,
+                persona_id=req.persona_id,
+                persona_pubkey=pubkey_bytes,
+            )
+        )
+
     # Upsert: one live row per persona. Re-publishing refreshes the TTL.
     existing = (
         await db.execute(
@@ -667,6 +705,7 @@ async def post_mesh_presence(
         existing.expires_at = expires_at
         existing.posted_at = now
         existing.via_pillar = via_pillar
+        existing.owner_user_id = publisher_user_id
     else:
         db.add(
             MeshPresence(
@@ -678,6 +717,7 @@ async def post_mesh_presence(
                 expires_at=expires_at,
                 posted_at=now,
                 via_pillar=via_pillar,
+                owner_user_id=publisher_user_id,
             )
         )
     await db.commit()

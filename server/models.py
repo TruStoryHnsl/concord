@@ -432,6 +432,14 @@ class MeshPresence(Base):
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
     via_pillar: Mapped[str] = mapped_column(String, nullable=False)
+    # The instance account that published this row (Matrix user id from the
+    # authenticated intake session). Mesh/p2p data is USER-scoped: topology
+    # reads only fold in rows owned by the viewing account. Nullable so rows
+    # published before the column existed keep working until they expire —
+    # a NULL owner is visible to nobody (fail-closed).
+    owner_user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )
 
 
 class Extension(Base):
@@ -510,6 +518,89 @@ class User(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class UserSource(Base):
+    """A platform source (connection) belonging to ONE user of this instance.
+
+    The docker instance is a *portal*: each account curates its own
+    catalogue of outward connections — federated Matrix homeservers,
+    the Reticulum mesh, other Concord instances, p2p meshes. Rows here
+    are the authoritative per-user source catalogue the client rail
+    renders; they are NEVER served to any other user. The only source
+    every user shares is the core instance itself, which is implicit
+    (it is not stored here — the client seeds it from ``.well-known``).
+
+    Credentials are deliberately NOT stored: access tokens for a remote
+    homeserver stay on the user's client (localStorage / Stronghold).
+    The server holds descriptors only, so the catalogue can follow the
+    user across devices without the instance ever holding third-party
+    session tokens.
+
+    Columns:
+      kind      "matrix" | "reticulum" | "concord" | "concord-p2p".
+      host      canonical hostname of the remote service. Empty string
+                for host-less kinds (reticulum, concord-p2p).
+      meta      client-defined JSON blob (branding, ordering hints, …).
+    """
+
+    __tablename__ = "user_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "kind", "host", name="uq_user_sources_user_kind_host"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: secrets.token_urlsafe(12)
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    host: Mapped[str] = mapped_column(String, nullable=False, default="")
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    api_base: Mapped[str | None] = mapped_column(String, nullable=True)
+    homeserver_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    meta: Mapped[str] = mapped_column(String, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class PersonaBinding(Base):
+    """Binds a peer-facing persona to ONE account on this instance.
+
+    This is the docker half of the native superuser→persona link. The
+    superuser itself is device↔device only and never crosses a
+    peer-facing channel — what the instance learns is only which
+    *personae* the authenticated account claims. The binding is what
+    lets the instance scope p2p/mesh data (``mesh_presence`` rows and
+    anything derived from them) to the account that owns the persona,
+    instead of serving the whole live peer set to every viewer.
+
+    A persona_id may be bound to exactly ONE account (unique). First
+    authenticated claim wins (trust-on-first-use at the account level,
+    mirroring the existing pubkey TOFU in ``routers/mesh.py``); a later
+    claim by a different account is rejected with 409.
+    """
+
+    __tablename__ = "persona_bindings"
+    __table_args__ = (
+        UniqueConstraint("persona_id", name="uq_persona_bindings_persona"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    persona_pubkey: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
     )
 
 

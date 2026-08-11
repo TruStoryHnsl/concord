@@ -1,6 +1,6 @@
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
-import { useSourcesStore } from "../../stores/sources";
+import { useVisibleSources } from "../../stores/sources";
 import { disconnectSource } from "../../lib/disconnectSource";
 import { useBrowserLibp2p } from "../../hooks/useBrowserLibp2p";
 import { SourceBrandIcon } from "../sources/sourceBrand";
@@ -22,7 +22,7 @@ import { TunnelHardeningSection } from "./connections/TunnelHardeningSection";
 export function UserConnectionsTab() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const requestAddSource = useSettingsStore((s) => s.requestAddSource);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
 
   // Phase 9 (browser P2P UI surface): opening Settings → Connections is
   // the trigger for booting the browser libp2p swarm. No-op on Tauri.
@@ -124,7 +124,7 @@ export function UserConnectionsTab() {
  * there are no sources — keeps the tab clean on a fresh install.
  */
 function ConnectedAccountsList() {
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
 
   if (sources.length === 0) return null;
 

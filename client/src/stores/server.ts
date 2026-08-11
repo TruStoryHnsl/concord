@@ -18,7 +18,7 @@ import {
   rejoinServerRooms as apiRejoinServerRooms,
 } from "../api/concord";
 import { useToastStore } from "./toast";
-import { useSourcesStore } from "./sources";
+import { selectVisibleSources, useSourcesStore } from "./sources";
 import { useServerConfigStore } from "./serverConfig";
 import { isLocalInstanceSource } from "../lib/sourceIdentity";
 
@@ -239,7 +239,11 @@ export const useServerStore = create<ServerState>((set, get) => ({
   loadForeignServers: async () => {
     const cfg = useServerConfigStore.getState().config;
     const activeHost = cfg?.host?.toLowerCase() ?? null;
-    const allSources = useSourcesStore.getState().sources;
+    // Aggregate only the CURRENT user's visible sources — rows persisted
+    // for other accounts on this browser must not contribute rail tiles
+    // (or get fetched with their stale tokens).
+    const { sources: persistedSources, boundUserId } = useSourcesStore.getState();
+    const allSources = selectVisibleSources(persistedSources, boundUserId);
 
     // Candidate foreign sources: enabled, Concord-platform, authenticated,
     // and NOT the active instance. When no homeserver override is set the

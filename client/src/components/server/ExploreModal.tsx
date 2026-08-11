@@ -4,7 +4,7 @@ import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
 import {
   sourceMatchesMatrixDomain,
-  useSourcesStore,
+  useVisibleSources,
   type ConcordSource,
 } from "../../stores/sources";
 import { listExploreServers } from "../../api/concord";
@@ -161,7 +161,7 @@ export function ExploreModal({ isOpen, onClose }: Props) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const userId = useAuthStore((s) => s.userId);
   const addToast = useToastStore((s) => s.addToast);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
   const [serversState, setServersState] = useState<ServersLoadState>({
     status: "idle",
   });

@@ -1,11 +1,12 @@
 import { memo, useMemo, useState, useEffect, Fragment } from "react";
 import { useServerStore } from "../../stores/server";
-import { useSourcesStore, type ConcordSource } from "../../stores/sources";
+import { useSourcesStore, useVisibleSources, type ConcordSource } from "../../stores/sources";
 import { useAuthStore } from "../../stores/auth";
 import { useDMStore } from "../../stores/dm";
 import { usePeerStore } from "../../stores/peerStore";
 import { useHomeServerNameStore } from "../../stores/homeServerName";
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
+import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
 import { useUnreadCounts, useHighlightCounts } from "../../hooks/useUnreadCounts";
 import { useVoiceParticipants } from "../../hooks/useVoiceParticipants";
 import { switchToSource } from "../../lib/switchToSource";
@@ -93,6 +94,10 @@ export function buildMatrixRailGroups(params: {
     // its own group, or those server tiles vanish (regression from 900bac3).
     if (isLocalInstanceSource(src) && src.id !== activeSourceId) continue;
     if ((src.platform ?? "concord") === "concord-p2p") continue; // p2p porches aren't Matrix groups here
+    // Reticulum is a source but not a Matrix-shaped one — no servers, no
+    // channels. It renders as its own rail group (see renderReticulumTile)
+    // opening the dedicated Reticulum surface, never a "no servers" group.
+    if (src.platform === "reticulum") continue;
     if (!src.enabled) {
       collapsed.push(src);
       continue;
@@ -110,6 +115,8 @@ interface GroupedRailProps {
   canManageSources?: boolean;
   onAddSource: () => void;
   onExplore?: () => void;
+  /** Open a reticulum source's dedicated (non-Discord) surface. */
+  onReticulumSelect?: (sourceId: string) => void;
   /** Activate a local mesh server (porch/home). ChatLayout wires this to
    *  openLocal() + the local-server selection so the channel column shows
    *  that surface. */
@@ -125,6 +132,7 @@ export const GroupedRail = memo(function GroupedRail({
   canManageSources = true,
   onAddSource,
   onExplore,
+  onReticulumSelect,
   onLocalServerSelect,
   localActive,
   mobile = false,
@@ -134,7 +142,7 @@ export const GroupedRail = memo(function GroupedRail({
   const foreignServers = useServerStore((s) => s.foreignServers);
   const activeServerId = useServerStore((s) => s.activeServerId);
   const setActiveServer = useServerStore((s) => s.setActiveServer);
-  const allSources = useSourcesStore((s) => s.sources);
+  const allSources = useVisibleSources();
   const toggleSource = useSourcesStore((s) => s.toggleSource);
   const currentUserId = useAuthStore((s) => s.userId);
   const syncing = useAuthStore((s) => s.syncing);
@@ -176,6 +184,14 @@ export const GroupedRail = memo(function GroupedRail({
   }, [currentUserId, allSources]);
 
   const activeServers = useMemo(() => servers.filter((s) => !s.federated), [servers]);
+
+  // Reticulum sources — rendered as their own rail group with a
+  // framework-shaped surface behind them, never as Matrix groups.
+  const reticulumSources = useMemo(
+    () => allSources.filter((s) => s.platform === "reticulum" && s.enabled),
+    [allSources],
+  );
+  const reticulumActiveId = useReticulumSurfaceStore((s) => s.sourceId);
 
   const { groups, collapsed } = useMemo(
     () =>
@@ -256,6 +272,31 @@ export const GroupedRail = memo(function GroupedRail({
         }`}
       >
         <SourceBrandIcon brand={brand} size={22} />
+      </button>
+    );
+  };
+
+  const renderReticulumTile = (src: ConcordSource) => {
+    const isActive = reticulumActiveId === src.id;
+    const label = src.instanceName || "Reticulum";
+    return (
+      <button
+        key={src.id}
+        onClick={() => {
+          setDMActive(false);
+          onServerSelect?.();
+          onReticulumSelect?.(src.id);
+        }}
+        title={label}
+        aria-label={label}
+        data-testid={`rail-reticulum-${src.id}`}
+        className={`btn-press w-12 h-12 flex items-center justify-center transition-all ${
+          isActive
+            ? "bg-green-700 text-white rounded-xl"
+            : "bg-surface-container-high text-green-700 rounded-2xl hover:rounded-xl hover:bg-surface-container-highest"
+        }`}
+      >
+        <span className="material-symbols-outlined text-xl">hub</span>
       </button>
     );
   };
@@ -383,6 +424,27 @@ export const GroupedRail = memo(function GroupedRail({
             <div className="flex-1 flex flex-col items-center gap-2 py-1 min-w-0">
               {renderLocalServerTile("porch")}
               {renderLocalServerTile("home")}
+            </div>
+          </div>
+          {groups.length > 0 && <Divider />}
+        </>
+      )}
+
+      {/* Reticulum sources — mesh group, framework-shaped surface. */}
+      {reticulumSources.length > 0 && (
+        <>
+          <div className="flex w-full">
+            <div className="w-11 flex-shrink-0 flex items-center justify-center">
+              <div
+                className="w-9 h-9 rounded-xl bg-green-700/15 ring-1 ring-green-700/30 flex items-center justify-center text-green-700"
+                title="Reticulum mesh"
+                data-testid="rail-reticulum-anchor"
+              >
+                <span className="material-symbols-outlined text-xl">podcasts</span>
+              </div>
+            </div>
+            <div className="flex-1 flex flex-col items-center gap-2 py-1 min-w-0">
+              {reticulumSources.map((src) => renderReticulumTile(src))}
             </div>
           </div>
           {groups.length > 0 && <Divider />}

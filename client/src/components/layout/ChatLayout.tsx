@@ -34,8 +34,12 @@ import {
 import {
   sourceMatchesMatrixDomain,
   useSourcesStore,
+  useVisibleSources,
   type ConcordSource,
 } from "../../stores/sources";
+import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
+import { ReticulumSurface } from "../reticulum/ReticulumSurface";
+import { ReticulumSidebar } from "../reticulum/ReticulumSidebar";
 import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
 import { useDisplayName } from "../../hooks/useDisplayName";
@@ -225,10 +229,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [placeBannerDismissed, setPlaceBannerDismissed] = useState(false);
   // INS-070 — admin gate + Extension Library modal visibility.
   const isInstanceAdmin = useInstanceAdmin(accessToken);
-  // Only an instance admin/owner (or a native app user, who owns their
-  // own install) may ADD web/Matrix/Reticulum sources. Plain web visitors
-  // can still connect to a peer's porch — that path stays open to all.
-  const canManageSources = isInstanceAdmin || isTauri();
+  // The source catalogue is USER-scoped (each account curates its own
+  // connections; the core instance is the only shared default), so every
+  // signed-in non-guest user may add sources — the instance-admin gate
+  // only ever guarded what was, back then, instance-global state. Guests
+  // are ephemeral and keep the peer-porch pairing path only.
+  const isGuest = useAuthStore((s) => s.isGuest);
+  const canManageSources = (!!userId && !isGuest) || isTauri();
   const [extensionCatalogOpen, setExtensionCatalogOpen] = useState(false);
 
   // ── Navigation stack (replaces the flat scroll-snap page-depth enum) ──
@@ -313,9 +320,18 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Source browser — opened when the user clicks a source tile.
   const [sourceBrowserSourceId, setSourceBrowserSourceId] = useState<string | null>(null);
-  const sources = useSourcesStore((s) => s.sources);
+  // USER-scoped view of the persisted source set: rows owned by other
+  // accounts on this browser stay persisted but never render.
+  const sources = useVisibleSources();
   const openSourceBrowser = useCallback(
     (sourceId: string) => {
+      // Reticulum sources have no Matrix-shaped server directory — route
+      // to the dedicated Reticulum surface instead of the browser modal.
+      const src = useSourcesStore.getState().sources.find((s) => s.id === sourceId);
+      if (src?.platform === "reticulum") {
+        useReticulumSurfaceStore.getState().open(sourceId);
+        return;
+      }
       setSourceBrowserSourceId(sourceId);
     },
     [],
@@ -332,6 +348,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   //   - client/src/components/local/LocalChannelSidebar.tsx
   //   - client/src/components/local/LocalChatPane.tsx
   const [localActive, setLocalActive] = useState(false);
+  // Reticulum source surface — a non-Discord, framework-shaped surface
+  // (network/announces/interfaces). Mutually exclusive with the
+  // server/DM/local surfaces; see the clearing effects below.
+  const reticulumSourceId = useReticulumSurfaceStore((s) => s.sourceId);
+  const reticulumOpen = reticulumSourceId !== null;
   // W0.3 / F1 — when the local source's `lan_map` pseudo-channel is the
   // active view, the chat pane renders LanDiscoveryMap instead of a porch
   // channel. Tracked in the localServerSelection store so the sidebar row
@@ -366,6 +387,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     // tapped — see the Matrix-tile click handlers in ServerSidebar /
     // SourcesPanel, which clear `localActive` via the effects below.
     setLocalActive(true);
+    useReticulumSurfaceStore.getState().close();
     useDMStore.getState().setDMActive(false);
     useServerStore.setState({ activeServerId: null, activeChannelId: null });
     // Kick a channel-list load so the channel column populates as soon
@@ -389,8 +411,17 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   useEffect(() => {
     if (activeServerId || activeChannelId || dmActive) {
       setLocalActive(false);
+      useReticulumSurfaceStore.getState().close();
     }
   }, [activeServerId, activeChannelId, dmActive]);
+
+  // Opening the Reticulum surface displaces the local/porch surface —
+  // the two share the main pane. (Server/DM selection is cleared at the
+  // click site; localActive is ChatLayout-local state, so it's cleared
+  // here.)
+  useEffect(() => {
+    if (reticulumOpen) setLocalActive(false);
+  }, [reticulumOpen]);
 
   // Auto-activate the porch on first ChatLayout mount when nothing
   // else is selected — the porch IS the device's default surface, so
@@ -774,6 +805,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                     canManageSources={canManageSources}
                     onAddSource={openAddSource}
                     onExplore={openExplore}
+                    onReticulumSelect={(sourceId) => {
+                      useReticulumSurfaceStore.getState().open(sourceId);
+                      useServerStore.setState({ activeServerId: null, activeChannelId: null });
+                    }}
                     onLocalServerSelect={handleLocalServerSelect}
                     localActive={localActive}
                   />
@@ -782,7 +817,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 {/* Channel / DM sidebar */}
                 <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
                   <SectionBoundary>
-                    {localActive ? (
+                    {reticulumOpen ? (
+                      <ReticulumSidebar />
+                    ) : localActive ? (
                       <LocalChannelSidebar />
                     ) : dmActive ? (
                       <DMSidebar />
@@ -1118,6 +1155,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               }}
               onExplore={openExplore}
               onSourceOpen={openSourceBrowser}
+              onReticulumOpen={() => setMobileView("chat")}
               onLocalOpen={() => {
                 openLocal();
                 setMobileView("servers");
@@ -1138,7 +1176,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           )}
           {mobileView === "channels" && (
             <SectionBoundary>
-              {localActive ? (
+              {reticulumOpen ? (
+                <ReticulumSidebar onNavigate={() => setMobileView("chat")} />
+              ) : localActive ? (
                 <LocalChannelSidebar
                   mobile
                   onChannelSelect={() => setMobileView("chat")}
@@ -1392,6 +1432,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                         ? "Connecting..."
                         : "Loading servers..."}
                   </span>
+                ) : reticulumOpen ? (
+                  sources.find((s) => s.id === reticulumSourceId)?.instanceName ??
+                  "Reticulum"
                 ) : servers.length === 0 ? (
                   "Welcome — join or create a server to get started"
                 ) : (
@@ -1475,6 +1518,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Shared chat/voice content
   const renderChatContent = () => {
+    // Reticulum source surface — framework-shaped (network/announces/
+    // interfaces), NOT the Discord-style chat panes. Takes the pane over
+    // every chat surface while a reticulum source is open.
+    if (reticulumOpen) {
+      return <ReticulumSurface />;
+    }
     // Local source surfaces. The LAN map is a special cross-server view
     // that takes precedence over the porch channel when its pseudo-channel
     // row is selected; otherwise the porch chat renders as before.
@@ -2482,7 +2531,7 @@ export function AddSourceModal({
 
   const addSource = useSourcesStore((s) => s.addSource);
   const updateSource = useSourcesStore((s) => s.updateSource);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
   const resumeHandled = useRef(false);
 
   useEffect(() => {

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { MatrixClient } from "matrix-js-sdk";
 import { createMatrixClient } from "../api/matrix";
+import { getApiBase } from "../api/serverUrl";
+import { bindPortal, clearPortal } from "../lib/sourceSync";
 import { useServerStore } from "./server";
 import { useSourcesStore } from "./sources";
 
@@ -64,6 +66,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // the multi-instance source set is preserved across switches.
     if (opts?.rebindSources !== false) {
       useSourcesStore.getState().bindToUser(userId);
+      // This login is a HOME/portal login (not an instance switch, which
+      // passes rebindSources:false) — bind the per-user source-catalogue
+      // sync to this instance + session. Best-effort background reconcile.
+      bindPortal({ apiBase: getApiBase(), accessToken, userId });
     }
     localStorage.setItem(
       STORAGE_KEY,
@@ -89,6 +95,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     useServerStore.getState().resetState();
     useSourcesStore.getState().bindToUser(null);
+    clearPortal();
     localStorage.removeItem(STORAGE_KEY);
     set({
       client: null,
@@ -144,6 +151,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // id when no source set has been bound yet (first launch).
       const boundUserId = useSourcesStore.getState().boundUserId;
       useSourcesStore.getState().bindToUser(boundUserId ?? userId);
+      // Re-bind the portal catalogue sync ONLY when the restored session
+      // is the home user's (after an instance switch the persisted session
+      // belongs to a foreign instance — its token must not be used
+      // against the home portal's /api/me endpoints).
+      if (boundUserId === null || boundUserId === userId) {
+        bindPortal({ apiBase: getApiBase(), accessToken, userId });
+      }
       set({
         client,
         userId,

@@ -71,6 +71,10 @@ async def _lightweight_migrations():
         ("soundboard_clips", "license", "TEXT"),
         ("soundboard_clips", "license_url", "TEXT"),
         ("soundboard_clips", "attribution", "TEXT"),
+        # User-scoped mesh data: the account that published a presence row
+        # (introduced 2026-08-11). NULL = pre-migration row, visible to
+        # nobody; rows are TTL'd so the NULL population self-clears.
+        ("mesh_presence", "owner_user_id", "TEXT"),
     ]
     async with engine.begin() as conn:
         for table, column, sql_type in migrations:

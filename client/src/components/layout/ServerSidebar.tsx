@@ -21,7 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useServerStore } from "../../stores/server";
 import { useDMStore } from "../../stores/dm";
 import { useAuthStore } from "../../stores/auth";
-import { useSourcesStore } from "../../stores/sources";
+import { useVisibleSources } from "../../stores/sources";
 import { useServerConfigStore } from "../../stores/serverConfig";
 import { useSettingsStore } from "../../stores/settings";
 import { switchToSource } from "../../lib/switchToSource";
@@ -227,7 +227,7 @@ export const ServerSidebar = memo(function ServerSidebar({ mobile, onServerSelec
   // (extracted from the synthetic server id or room id).
   // `__TAURI_INTERNALS__` — canonical Tauri v2 global. See the
   // explanation in `client/src/api/serverUrl.ts`.
-  const allSources = useSourcesStore((s) => s.sources);
+  const allSources = useVisibleSources();
 
   // Multi-instance aggregation: servers fetched from OTHER connected
   // sources (not the active instance). Rendered as read-only tiles after

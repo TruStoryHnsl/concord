@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
-import { useSourcesStore, type ConcordSource } from "../../stores/sources";
+import { useVisibleSources, type ConcordSource } from "../../stores/sources";
 import { BringingUpSplash } from "../BringingUpSplash";
 import { searchMatrixDirectory, type MatrixDirectoryUser } from "../../api/matrix";
 import { Avatar } from "../ui/Avatar";
@@ -50,7 +50,7 @@ export function NewDMModal({ onClose }: Props) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const startDM = useDMStore((s) => s.startDM);
   const addToast = useToastStore((s) => s.addToast);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AggregatedUser[]>([]);

@@ -297,11 +297,17 @@ async def list_servers(
                         role="member",
                     )
                     db.add(membership)
-                    lobby_channels = await db.execute(
-                        select(Channel).where(Channel.server_id == default_id)
+                    lobby_channels = list(
+                        (
+                            await db.execute(
+                                select(Channel).where(Channel.server_id == default_id)
+                            )
+                        )
+                        .scalars()
+                        .all()
                     )
                     join_failures: list[tuple[str, str]] = []
-                    for ch in lobby_channels.scalars().all():
+                    for ch in lobby_channels:
                         try:
                             await join_room(access_token, ch.matrix_room_id)
                         except Exception as join_err:
@@ -313,9 +319,7 @@ async def list_servers(
                             "failed: %s",
                             user_id,
                             len(join_failures),
-                            len(join_failures) + (
-                                lobby_channels.rowcount or 0
-                            ),
+                            len(lobby_channels),
                             join_failures,
                         )
                     else:

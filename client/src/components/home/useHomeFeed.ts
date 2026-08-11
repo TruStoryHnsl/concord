@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuthStore } from "../../stores/auth";
 import { useDMStore } from "../../stores/dm";
 import { usePeerStore } from "../../stores/peerStore";
-import { useSourcesStore } from "../../stores/sources";
+import { useVisibleSources } from "../../stores/sources";
 import { useInstanceNameStore } from "../../stores/instanceName";
 import { useUnreadCounts } from "../../hooks/useUnreadCounts";
 import { useDisplayNames } from "../../hooks/useDisplayName";
@@ -93,7 +93,7 @@ export function useHomeFeed(): Conversation[] {
   const loadConversations = useDMStore((s) => s.loadConversations);
   const knownPeers = usePeerStore((s) => s.knownPeers);
   const loadPeers = usePeerStore((s) => s.load);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
   const unread = useUnreadCounts();
   const client = useAuthStore((s) => s.client);
   const accessToken = useAuthStore((s) => s.accessToken);
