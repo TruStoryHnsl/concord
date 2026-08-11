@@ -56,12 +56,30 @@ the map can show *why* this node matters:
 
 ## Security / privacy
 
-This endpoint is intentionally unauthenticated (like ``/.well-known``):
-it reveals only the instance's own public-facing federation posture —
-its server name and the allowlist it already advertises via well-known
-discovery — plus boolean role flags and an opaque backup *count*. No
-user data, no private keys, no blob identities, no ciphertext. It is a
-read-only projection; it never mutates state.
+Two tiers of visibility (Spec B P3, tunneled-spring gate):
+
+  * The **skeleton** — this pillar + its federated neighbors + hub role
+    flags — is served unauthenticated (like ``/.well-known``): it reveals
+    only the instance's own public-facing federation posture — its server
+    name and the allowlist it already advertises via well-known discovery
+    — plus boolean role flags and an opaque backup *count*. No user data,
+    no private keys, no blob identities, no ciphertext. The map's hollow
+    pre-login start page renders from this tier.
+  * The **live web-threaded peer set** (``mesh_presence`` rows) is the
+    sensitive part — *who is connected to this pillar right now*. It is
+    only folded into the topology for a caller authenticated with this
+    pillar (a valid Matrix session on this homeserver — the auth pathway
+    Spec B routes native connections through). Anonymous callers never
+    see it; a presented-but-invalid token is a 401, not a silent
+    downgrade. Fail-closed.
+
+``POST /api/mesh/presence`` is Matrix-auth'd per Spec B ("Presence intake
+endpoint (NEW) — POST /api/mesh/presence (Matrix-auth'd)"): the payload's
+Ed25519 persona signature proves *key possession*, and the Bearer token
+proves the publisher actually *connected via the auth pathway* — without
+it any independent signer on the internet could inject presence rows
+(empirically proven against a live pillar, see
+``.orrch/events/20260804T032704-c60373.md``).
 """
 from __future__ import annotations
 
@@ -82,6 +100,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import DATA_DIR, MATRIX_SERVER_NAME
 from database import get_db
+from dependencies import get_optional_user_id, get_user_id
 from models import MeshPresence
 from services.tuwunel_config import (
     decode_server_name_patterns,
@@ -398,11 +417,10 @@ def merge_presence_nodes(
     ``local`` anchors the new edges; it is whatever the caller used as the
     hop-0 center so the edge endpoints line up with the rest of the graph.
 
-    TODO(Spec B P3 / tunneled-spring gate): visibility gating is OUT OF
-    SCOPE here. Today every caller of /api/mesh/topology sees the live
-    presence peers. Before P3 ships, this set MUST be gated on the
-    caller's pairing/trust with the pillar (fail-closed for unpaired
-    callers) — see the "tunneled spring" instruction doc.
+    Visibility gating (Spec B P3 / tunneled-spring) happens in the
+    caller: ``get_mesh_topology`` only passes ``presence_rows`` for a
+    viewer authenticated with this pillar; anonymous viewers get an empty
+    list here and therefore only the pillar + federation skeleton.
     """
     local = (local_server_name or "localhost").strip() or "localhost"
     existing = {n.peer_id for n in nodes}
@@ -480,22 +498,32 @@ def _local_node_id(nodes: list[MeshGraphNode]) -> str:
 )
 async def get_mesh_topology(
     db: AsyncSession = Depends(get_db),
+    viewer_user_id: str | None = Depends(get_optional_user_id),
 ) -> MeshTopologyResponse:
     """Return the mesh topology this docker node observes, plus its hub role.
 
     Prefers a fresh headless-Rust ``mesh_snapshot.json`` (real libp2p
     N-hop topology) when present; otherwise assembles the
     federation-derived graph (this hub at the center, its federated
-    homeservers at hop 1). Either way, the web-threaded peers that native
+    homeservers at hop 1). Always returns at least the local host node,
+    so the map renders the "big brother" hub even before any peer appears.
+
+    Tunneled-spring gate (Spec B P3): the web-threaded peers that native
     instances reported to this pillar (non-expired ``mesh_presence`` rows)
-    are folded in as hop-1 ``via="pillar"`` nodes. Always returns at least
-    the local host node, so the map renders the "big brother" hub even
-    before any peer appears.
+    are folded in as hop-1 ``via="pillar"`` nodes ONLY for a viewer
+    authenticated with this pillar. An anonymous viewer gets the skeleton
+    alone — the live who-is-here list is never world-readable. A caller
+    presenting an invalid token gets 401 from ``get_optional_user_id``
+    (fail-closed), never a silent anonymous downgrade.
     """
     hub_enabled = _hub_enabled()
     backup_count = _backup_blob_count()
 
-    presence_rows = await _load_active_presence(db)
+    # Fail-closed default: no presence peers. Only a caller with a valid
+    # Matrix session on this pillar sees the live web-threaded peer set.
+    presence_rows: list[MeshPresence] = []
+    if viewer_user_id is not None:
+        presence_rows = await _load_active_presence(db)
 
     # 1. Prefer a real libp2p snapshot from a headless servitude.
     rust = _load_rust_snapshot()
@@ -548,6 +576,7 @@ async def get_mesh_topology(
 async def post_mesh_presence(
     req: MeshPresenceRequest,
     db: AsyncSession = Depends(get_db),
+    publisher_user_id: str = Depends(get_user_id),
 ) -> MeshPresenceResponse:
     """Accept a signed presence record from a connected p2p-capable instance.
 
@@ -557,10 +586,18 @@ async def post_mesh_presence(
     web-threaded hop-1 peers. The pillar never speaks libp2p/WireGuard —
     this is the only way p2p peers appear on its map.
 
-    Authenticity = an Ed25519 signature over the canonical message of
-    ``(persona_id, persona_pubkey, adjacency, ttl)``, verified against the
-    supplied 32-byte public key. Bad signature / malformed key / bad hex
-    → 400 (fail-closed). The requested ttl is clamped to
+    **Matrix-auth'd** (Spec B P1, verbatim: "Presence intake endpoint
+    (NEW) — POST /api/mesh/presence (Matrix-auth'd)"). The caller must
+    hold a valid Matrix session on this pillar (Bearer token → whoami),
+    i.e. actually be "a connected p2p-capable instance" per the auth
+    pathway — the Ed25519 payload signature alone only proves key
+    possession, which any independent signer on the internet has. No
+    token / bad token → 401, nothing stored.
+
+    Authenticity of the *record* = an Ed25519 signature over the canonical
+    message of ``(persona_id, persona_pubkey, adjacency, ttl)``, verified
+    against the supplied 32-byte public key. Bad signature / malformed key
+    / bad hex → 400 (fail-closed). The requested ttl is clamped to
     ``[MESH_PRESENCE_MIN_TTL_SECS, MESH_PRESENCE_MAX_TTL_SECS]`` so a peer
     can't pin a stale row. Re-publishing upserts the persona's single row.
     """
@@ -618,9 +655,9 @@ async def post_mesh_presence(
         # TODO(mesh-pillar P3): the stronger fix is to bind persona_id to the
         # key cryptographically — require persona_id == libp2p PeerId(pubkey)
         # (the Rust side already derives it that way via
-        # persona_peer_id_from_pubkey) and require an authenticated session
-        # before accepting presence at all. Deferred with the tunneled-spring
-        # visibility gate; needs a vetted libp2p PeerId derivation in Python.
+        # persona_peer_id_from_pubkey); needs a vetted libp2p PeerId
+        # derivation in Python. (The authenticated-session requirement
+        # formerly deferred here is DONE — get_user_id gates this route.)
         if existing.persona_pubkey != pubkey_bytes:
             raise HTTPException(409, "persona is owned by a different key")
         existing.persona_pubkey = pubkey_bytes

@@ -78,6 +78,24 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> str:
     return user_id
 
 
+async def get_optional_user_id(
+    authorization: Optional[str] = Header(None),
+) -> Optional[str]:
+    """Like ``get_user_id`` but an ANONYMOUS caller resolves to ``None``
+    instead of 401.
+
+    For endpoints that serve a public skeleton to everyone and a richer,
+    gated view to authenticated callers (e.g. the mesh topology's
+    tunneled-spring peer set, Spec B P3). A caller that PRESENTS an
+    Authorization header still goes through the full ``get_user_id``
+    validation — a bad/expired token raises 401 (fail-closed), it does
+    NOT silently downgrade to the anonymous view.
+    """
+    if authorization is None:
+        return None
+    return await get_user_id(authorization)
+
+
 def get_access_token(authorization: str = Header(...)) -> str:
     """Extract the Matrix access token from the Authorization: Bearer header."""
     if not authorization.startswith("Bearer "):
