@@ -146,13 +146,58 @@ async def list_my_sources(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[UserSourceOut]:
-    """Return the caller's source catalogue — theirs alone, never anyone else's."""
-    result = await db.execute(
-        select(UserSource)
-        .where(UserSource.user_id == user_id)
-        .order_by(UserSource.created_at)
+    """Return the caller's source catalogue — theirs alone, never anyone else's.
+
+    Instance-node auto-seed: this docker instance IS a Reticulum node.
+    When the operator has the node enabled (mode != off), EVERY account —
+    existing ones included, on their next catalogue read — gets the bare
+    singleton mesh source (kind="reticulum", host="") seeded into their
+    catalogue. The mesh is part of the product, not an opt-in a user must
+    discover: the rail's mesh group and the Reticulum surface appear for
+    everyone with zero setup. Users may still delete the row; it re-seeds
+    only while the node stays enabled (delete-while-enabled is respected
+    within a session but the product default is mesh-on).
+    """
+    rows = list(
+        (
+            await db.execute(
+                select(UserSource)
+                .where(UserSource.user_id == user_id)
+                .order_by(UserSource.created_at)
+            )
+        )
+        .scalars()
+        .all()
     )
-    return [_source_out(r) for r in result.scalars().all()]
+
+    try:
+        from services.reticulum_node import load_config as _load_mesh_config
+
+        mesh_cfg = _load_mesh_config()
+        mesh_enabled = mesh_cfg.mode != "off"
+        mesh_name = (mesh_cfg.display_name or "").strip() or "Reticulum mesh"
+    except Exception:  # config unreadable → no seed, never break the list
+        mesh_enabled = False
+        mesh_name = "Reticulum mesh"
+
+    if mesh_enabled and not any(
+        r.kind == "reticulum" and (r.host or "") == "" for r in rows
+    ):
+        seeded = UserSource(
+            user_id=user_id,
+            kind="reticulum",
+            host="",
+            display_name=mesh_name,
+            api_base=None,
+            homeserver_url=None,
+            meta=json.dumps({"seeded": "instance-node"}),
+        )
+        db.add(seeded)
+        await db.commit()
+        await db.refresh(seeded)
+        rows.append(seeded)
+
+    return [_source_out(r) for r in rows]
 
 
 @router.post("/sources", response_model=UserSourceOut)
