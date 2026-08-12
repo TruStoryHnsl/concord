@@ -159,7 +159,7 @@ export const GroupedRail = memo(function GroupedRail({
   useEffect(() => {
     void loadPeers();
   }, [loadPeers]);
-  const showLocalMesh = isTauri() || knownPeers.length > 0;
+  // showLocalMesh removed with the home-server group (retired).
   const homeName = useHomeServerNameStore((s) => s.name);
   const loadHomeName = useHomeServerNameStore((s) => s.load);
   useEffect(() => {
@@ -450,17 +450,18 @@ export const GroupedRail = memo(function GroupedRail({
       )}
 
       {/* Local mesh group FIRST — device anchor centered on porch + home. */}
-      {showLocalMesh && (
+      {/* Local home-server group RETIRED ENTIRELY (user order, incident
+          2026-08-11): the "home server" does not exist. Native's mesh
+          surfaces live in the NativeMeshShell; this rail is the DOCKER
+          instance UI only. renderLocalAnchorTile/renderLocalServerTile
+          remain defined-but-unmounted pending code removal. */}
+      {false && (
         <>
           <div className="flex w-full">
             <div className="w-11 flex-shrink-0 flex items-center justify-center">
               {renderLocalAnchorTile()}
             </div>
             <div className="flex-1 flex flex-col items-center gap-2 py-1 min-w-0">
-              {/* porch/home two-tile architecture RETIRED (user order,
-                  incident 2026-08-11): ONE local space. The ephemeral
-                  guest porch surface stays unmounted until a replacement
-                  design exists. */}
               {renderLocalServerTile("home")}
             </div>
           </div>

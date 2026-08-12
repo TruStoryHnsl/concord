@@ -445,12 +445,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     if (!isNativeApp) return;
     if (activeServerId || activeChannelId || dmActive) return;
     autoActivatedRef.current = true;
-    // The native app is a p2p MESSENGER first (user order, incident
-    // 2026-08-11): boot into the peer messenger (conversation list +
-    // history + peers), NOT the Discord-shaped server shell. The
-    // server/channel chrome appears only when the user opens a docker
-    // source / local space from the rail.
-    usePeerMessengerSurfaceStore.getState().open();
+    // Native boot is owned by NativeMeshShell (crosstalk mesh
+    // messenger). ChatLayout stays neutral until the shell enters an
+    // instance — no auto-opened surface here anymore (the local
+    // home-server auto-open is RETIRED with the home server itself).
   }, [activeServerId, activeChannelId, dmActive, openLocal]);
 
   // Native front door (Personal-Messaging UI): the Home conversation list

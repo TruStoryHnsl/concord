@@ -33,6 +33,10 @@ import { shouldShowKeychainMigration } from "./components/settings/keychainMigra
 // superuser-ux (p2p social): first-run owner-claim gate. Additive mount —
 // native-only, renders nothing on web or once an owner is already claimed.
 import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFirstRunGate";
+// The native app's primary UI: crosstalk-guided mesh-messenger shell.
+// Native-only; the Discord-style ChatLayout beneath is DOCKER ONLY and
+// is revealed only while the user is inside an instance.
+import { NativeMeshShell } from "./components/native/NativeMeshShell";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -894,10 +898,10 @@ export default function App() {
           Used where the webview has no WebRTC (Linux WebKitGTK); shows
           itself only while live frames arrive. */}
       <NativeCallLayer />
-      {/* The June-2026 front-door Home overlay is RETIRED (user order,
-          incident 2026-08-11): every build boots into the ChatLayout
-          source-rail shell. The peer messenger lives there as a primary
-          rail surface (PeerMessengerSurface), not behind an overlay. */}
+      {/* NATIVE = crosstalk-guided mesh messenger (user order): the shell
+          owns the screen; the Discord-style ChatLayout beneath is DOCKER
+          ONLY, revealed while mode==="instance". */}
+      {isTauri && <NativeMeshShell />}
       {showKeychainMigration && (
         <KeychainMigrationPrompt
           onClose={() => setShowKeychainMigration(false)}
