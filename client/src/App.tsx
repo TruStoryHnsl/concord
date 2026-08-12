@@ -36,7 +36,6 @@ import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFi
 // The native app's primary UI: crosstalk-guided mesh-messenger shell.
 // Native-only; the Discord-style ChatLayout beneath is DOCKER ONLY and
 // is revealed only while the user is inside an instance.
-import { NativeMeshShell } from "./components/native/NativeMeshShell";
 import { startMessengerSync, hydrateRoamingPrefs } from "./lib/messengerSync";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
@@ -908,10 +907,6 @@ export default function App() {
           Used where the webview has no WebRTC (Linux WebKitGTK); shows
           itself only while live frames arrive. */}
       <NativeCallLayer />
-      {/* NATIVE = crosstalk-guided mesh messenger (user order): the shell
-          owns the screen; the Discord-style ChatLayout beneath is DOCKER
-          ONLY, revealed while mode==="instance". */}
-      {isTauri && <NativeMeshShell />}
       {showKeychainMigration && (
         <KeychainMigrationPrompt
           onClose={() => setShowKeychainMigration(false)}
