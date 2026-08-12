@@ -53,27 +53,16 @@ export const LocalServerSidebar = memo(function LocalServerSidebar({
   // below are unchanged. Primary tile = the user's own space (vanity name when
   // set); the guest doorman reads as "Guests", never "porch".
   const homeLabel = homeName.trim() || "My space";
-  const porchLabel = "Guests";
 
   const handleSelect = (next: "porch" | "home") => {
     setActive(next);
     onServerSelect?.();
   };
 
+  // porch/home two-tile architecture RETIRED (user order, incident
+  // 2026-08-11): the rail shows ONE local space — the user's persistent
+  // home. The ephemeral guest porch stays unmounted.
   const tiles = [
-    {
-      key: "porch" as const,
-      label: porchLabel,
-      testId: "local-server-tile-porch",
-      // The porch is intentionally LOW-attention — gray surface, not
-      // primary glow — because it's the always-fresh guest doorman,
-      // not the user's primary surface.
-      activeClass:
-        "bg-surface-container-highest text-on-surface ring-2 ring-on-surface-variant/40",
-      restClass:
-        "bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface",
-      mobileActiveRowClass: "bg-surface-container-highest/60",
-    },
     {
       key: "home" as const,
       label: homeLabel,

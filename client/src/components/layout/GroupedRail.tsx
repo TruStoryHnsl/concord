@@ -457,7 +457,10 @@ export const GroupedRail = memo(function GroupedRail({
               {renderLocalAnchorTile()}
             </div>
             <div className="flex-1 flex flex-col items-center gap-2 py-1 min-w-0">
-              {renderLocalServerTile("porch")}
+              {/* porch/home two-tile architecture RETIRED (user order,
+                  incident 2026-08-11): ONE local space. The ephemeral
+                  guest porch surface stays unmounted until a replacement
+                  design exists. */}
               {renderLocalServerTile("home")}
             </div>
           </div>

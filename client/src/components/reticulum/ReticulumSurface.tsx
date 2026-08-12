@@ -23,6 +23,7 @@ import { isTauri } from "../../api/servitude";
 import { fetchConnectorLayerGraph } from "../../api/connectors";
 import type { MeshGraph } from "../../api/meshGraph";
 import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
+import { usePeerMessengerSurfaceStore } from "../../stores/peerMessengerSurface";
 import { useSourcesStore } from "../../stores/sources";
 import { identiconDataUri } from "../mesh/identicon";
 import { MeshMap } from "../mesh/MeshMap";
@@ -113,6 +114,26 @@ function AnnouncesList() {
                   {n.transport && " · transport node"}
                 </div>
               </div>
+              {/* crosstalk-guided discovery→conversation: a discovered
+                  announce-peer is actionable — open its 1:1 conversation
+                  in the peer messenger (reticulum-keyed inbox). Native
+                  only: the send path rides the servitude link bridge. */}
+              {isTauri() && (
+                <button
+                  type="button"
+                  title="Message this peer"
+                  data-testid={`announce-message-${n.peerId}`}
+                  onClick={() => {
+                    useReticulumSurfaceStore.getState().close();
+                    usePeerMessengerSurfaceStore
+                      .getState()
+                      .openConversation(`reticulum:${n.peerId}`);
+                  }}
+                  className="btn-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+                >
+                  <span className="material-symbols-outlined text-lg">forum</span>
+                </button>
+              )}
               <span
                 className={`w-2 h-2 rounded-full flex-shrink-0 ${
                   n.connectionState === "offline"
