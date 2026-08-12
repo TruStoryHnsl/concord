@@ -5,13 +5,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Reticulum Transport (INS-037), OFF by default. When built with
-# --build-arg CONCORD_INSTALL_RNS=1 (set by docker-compose.reticulum.yml)
-# the Reticulum Network Stack daemon `rnsd` is installed into the image via
-# pip so it is discoverable on PATH — this is the "external runtime
-# dependency" decision (rns is NOT bundled; the host/image provides it).
-# With the default value (0) this is a no-op and the image is unchanged.
-ARG CONCORD_INSTALL_RNS=0
+# Reticulum runtime — ON by default; part of the standard image. The
+# Reticulum Network Stack daemon `rnsd` is installed via pip so it is
+# discoverable on PATH — this is the "external runtime dependency"
+# decision (rns is NOT bundled into binaries; the image provides it).
+# Gating this off-by-default shipped images whose reticulum surface was
+# dead code. Override to 0 only for an explicitly minimal build.
+ARG CONCORD_INSTALL_RNS=1
 # Pinned to the version the wire format + pillar node were validated
 # against (docs/reticulum/deployment.md; engine live-validated rns 1.4.2).
 ARG CONCORD_RNS_VERSION=1.4.2

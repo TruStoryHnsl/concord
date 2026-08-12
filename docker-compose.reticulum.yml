@@ -1,98 +1,32 @@
-# docker-compose.reticulum.yml — Reticulum Transport overlay (INS-037)
+# docker-compose.reticulum.yml — DEPRECATED (kept for hardware opt-ins only)
 #
-#   Usage:
-#     docker compose -f docker-compose.yml -f docker-compose.reticulum.yml up -d --build
+# Reticulum is part of the STANDARD stack now: the base docker-compose.yml
+# carries the rnsd runtime (server/Dockerfile installs rns by default), the
+# persistent `reticulum-data` volume, the RETICULUM_CONFIG_DIR/RNS_CONFIG_DIR
+# wiring, and the pillar entrypoint port mapping. A plain
 #
-# This is an OVERLAY. It never stands alone — always compose it on top of the
-# base docker-compose.yml. It layers Reticulum onto the multi-service stack:
+#   docker compose up -d --build
 #
-#   1. Installs `rnsd` (the Reticulum Network Stack daemon) into the
-#      concord-api image via `pip install rns`. This is the settled
-#      "external runtime dependency" decision — rnsd is NOT bundled into the
-#      binary; the image/host provides it. (server/Dockerfile ARG
-#      CONCORD_INSTALL_RNS, default 0 = OFF, unchanged base image.)
+# gives every operator the full reticulum-capable stack; the node itself
+# stays dormant until enabled via the admin UI (PUT /api/admin/reticulum,
+# mode=private|public). No overlay, no build args.
 #
-#   2. Mounts a NAMED VOLUME as rnsd's isolated data/config directory. rnsd is
-#      launched as `rnsd --config <dir>` and writes its identity/keys under
-#      <dir>/storage. We point --config at this volume so key material NEVER
-#      lands in ~/.reticulum and PERSISTS across container restarts.
+# This file remains ONLY for the security-sensitive hardware opt-ins that
+# must never be on by default. Compose it on top of the base if you need one:
 #
-#   3. Documents the loopback control/interface ports (all 127.0.0.1-bound
-#      inside the container — intentionally NOT published to the host).
-#
-#   4. Ships COMMENTED opt-ins for NET_ADMIN and a USB RNode/LoRa device,
-#      both OFF by default (the default config is loopback-TCP only and needs
-#      neither).
-#
-# NOTE ON SCOPE: The `reticulum` transport is compiled into the Concord Rust
-# engine (`concord-servitude` — the single-image build, infra/single/Dockerfile
-# `--build-arg CONCORD_FEATURES=reticulum`, or a desktop `cargo build
-# --features reticulum` build). The multi-service stack's concord-api is the
-# operator-facing home for the rnsd runtime + its isolated data volume +
-# interface plumbing, matching the convention already documented in
-# docs/deployment/README.md and the comment block in docker-compose.yml.
-# See docs/reticulum/deployment.md for the full guide.
+#   docker compose -f docker-compose.yml -f docker-compose.reticulum.yml up -d
 
 services:
-  concord-api:
-    build:
-      context: ./server
-      args:
-        # Install rnsd into the image (pip install rns). See server/Dockerfile.
-        CONCORD_INSTALL_RNS: "1"
-
-    # Isolated Reticulum data/config directory (named volume, persisted).
-    # Base concord-api volumes (./data/concord, ./config) are preserved —
-    # Compose appends volume lists across overlay files.
-    volumes:
-      - reticulum-data:/var/lib/reticulum
-
-    environment:
-      # Concord launches `rnsd --config $RETICULUM_CONFIG_DIR`; rnsd derives
-      # its storage as <dir>/storage. Pointing this at the named volume keeps
-      # keys OUT of ~/.reticulum and persistent across restarts.
-      RETICULUM_CONFIG_DIR: /var/lib/reticulum
-      # RNS also honours RNS_CONFIG_DIR; set both so a bare `rnsd`/`rnstatus`
-      # invocation inside the container targets the same isolated dir.
-      RNS_CONFIG_DIR: /var/lib/reticulum
-
-    # ── PILLAR ENTRYPOINT port ──────────────────────────────────────────────
-    # When the operator enables pillar mode (PUT /api/admin/reticulum with
-    # mode=private|public), the in-process RNS node listens with a
-    # TCPServerInterface on 0.0.0.0:4242 inside the container and acts as a
-    # TRANSPORT node for the mesh. This mapping is what makes the entrypoint
-    # dialable from outside. Harmless while mode=off (nothing listens).
-    #
-    # PRIVATE mode secrecy is by ROUTING KNOWLEDGE, not by this port being
-    # closed: the entry domain is served only to validated users via the
-    # authenticated /api/reticulum/entrypoint endpoint and never published.
-    # Point a DNS name (kept out of any public record you control) at this
-    # host to use it as the secret entry domain.
-    ports:
-      - "${RETICULUM_ENTRYPOINT_PORT:-4242}:4242"
-
-    # ── Loopback control ports (documentation only — DO NOT publish) ────────
-    #   37428/tcp  shared_instance_port   (shared_instance_type = tcp)
-    #   37429/tcp  instance_control_port  (health probe target)
-    # These stay loopback-only inside the container.
-
-    # ── OPT-IN: physical / TUN interfaces (OFF by default) ──────────────────
-    # The default config is loopback-TCP only and needs NO extra capabilities.
-    # Uncomment ONLY if you add a TUN/TAP or IP-level Reticulum interface that
-    # rnsd must create (security-sensitive — grants network administration):
+  concord-api: {}
+    # ── OPT-IN: physical / TUN interfaces (OFF by default) ──────────────
+    # Only if you add a TUN/TAP or IP-level Reticulum interface that rnsd
+    # must create (grants network administration to the container):
     # cap_add:
     #   - NET_ADMIN
 
-    # ── OPT-IN: RNode / LoRa USB radio (OFF by default) ─────────────────────
-    # LoRa/RNode is OFF by default. To attach a serial RNode radio, map its
-    # device into the container (mirrors crosstalk's compose) and declare an
-    # RNodeInterface in the rnsd config (see the commented [[LoRa Radio]]
-    # block that build_rnsd_config() emits):
+    # ── OPT-IN: RNode / LoRa USB radio (OFF by default) ─────────────────
+    # To attach a serial RNode radio, map its device into the container and
+    # declare an RNodeInterface in the rnsd config (see the commented
+    # [[LoRa Radio]] block that build_rnsd_config() emits):
     # devices:
     #   - /dev/ttyUSB0:/dev/ttyUSB0
-
-volumes:
-  # Reticulum identity + key storage. Named (not a bind on ~/.reticulum) so
-  # the operator's host Reticulum config is never touched and the container's
-  # identity survives restarts/recreates.
-  reticulum-data:

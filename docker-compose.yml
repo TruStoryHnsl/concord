@@ -114,8 +114,26 @@ services:
       # become writable too — the blast radius is limited to corr-owned
       # host files and admin-gated backend code paths.
       - ./config:/etc/concord-config:rw
+      # Reticulum identity + key storage (STANDARD stack — no overlay
+      # needed). Named volume (never a bind on ~/.reticulum) so the
+      # operator's host Reticulum config is untouched and the node
+      # identity survives restarts/recreates.
+      - reticulum-data:/var/lib/reticulum
+    ports:
+      # Reticulum PILLAR ENTRYPOINT. Active only when the operator enables
+      # pillar mode (PUT /api/admin/reticulum, mode=private|public) — the
+      # in-process RNS node then listens with a TCPServerInterface here and
+      # acts as a transport node for the mesh. Harmless while mode=off
+      # (nothing listens). PRIVATE-mode secrecy is by routing knowledge,
+      # not this port: the entry domain is served only to validated users
+      # via the authenticated /api/reticulum/entrypoint endpoint.
+      - "${RETICULUM_ENTRYPOINT_PORT:-4242}:4242"
     environment:
       CONCORD_DATA_DIR: /data
+      # rnsd/RNS isolated config dir → the named volume above. Both vars so
+      # bare `rnsd`/`rnstatus` in the container target the same dir.
+      RETICULUM_CONFIG_DIR: /var/lib/reticulum
+      RNS_CONFIG_DIR: /var/lib/reticulum
       MATRIX_HOMESERVER_URL: http://conduwuit:${CONDUWUIT_PORT}
       CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
       CONDUWUIT_REGISTRATION_TOKEN: ${CONDUWUIT_REGISTRATION_TOKEN}
@@ -438,3 +456,9 @@ services:
 networks:
   concord:
     driver: bridge
+
+volumes:
+  # Reticulum identity + key storage for concord-api's in-process RNS
+  # node. Named so the container identity persists across recreates and
+  # the operator's host ~/.reticulum is never touched.
+  reticulum-data:
