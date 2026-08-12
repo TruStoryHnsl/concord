@@ -686,3 +686,38 @@ class PlaceLedgerHeader(Base):
     )
 
 
+
+
+class UserSyncItem(Base):
+    """Superuser roaming sync — per-user state pushed by the NATIVE app.
+
+    The superuser protocol's docker half (roaming): a native install
+    pushes its device-local messenger state — per-peer conversations,
+    message history, learned contacts, personalization prefs — into its
+    account on this instance, so the SAME user opening the browser at
+    the instance domain finds chat history, connections, and
+    personalizations intact.
+
+    Generic key-value rows scoped to (user_id, kind, key):
+      kind  "conversation" | "message" | "contact" | "prefs"
+      key   stable id from the pusher (conversation peer id, message
+            ulid, contact dest hash, or "prefs")
+      data  JSON payload (opaque to the server; the web client renders)
+    Strictly user-scoped: fetch/put only ever touch the caller's rows.
+    Soft-delete via ``deleted`` so devices can retract items.
+    """
+
+    __tablename__ = "user_sync_items"
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", "key", name="uq_user_sync_user_kind_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    data: Mapped[str] = mapped_column(String, nullable=False)  # JSON
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )

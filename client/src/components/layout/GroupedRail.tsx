@@ -13,7 +13,6 @@ import { useVoiceParticipants } from "../../hooks/useVoiceParticipants";
 import { switchToSource } from "../../lib/switchToSource";
 import { isLocalInstanceSource } from "../../lib/sourceIdentity";
 import { inferSourceBrand, SourceBrandIcon } from "../sources/sourceBrand";
-import { isTauri } from "../../api/servitude";
 import type { Server } from "../../api/concord";
 import { NewServerModal } from "../server/NewServerModal";
 
@@ -415,10 +414,9 @@ export const GroupedRail = memo(function GroupedRail({
       </div>
 
       {/* Peer messenger — per-peer inboxes + known peers as a PRIMARY
-          surface (not a settings tab). Native-only until the docker
-          server grows the per-user history store (incident 2026-08-11
-          open item) — the data layer rides Tauri IPC. */}
-      {isTauri() && (
+          surface (not a settings tab). Native = live device inbox; web =
+          the roamed read-only mirror (superuser roaming, /api/me/sync). */}
+      {true && (
         <div className="flex">
           <div className="w-11 flex-shrink-0 flex items-center justify-center">
             <button

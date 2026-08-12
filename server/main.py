@@ -19,7 +19,7 @@ logging.basicConfig(
 
 from database import async_session, init_db
 from errors import ConcordError, ErrorResponse
-from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_extensions, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown, extensions, rooms, service_node, ext_proxy, auth_recovery, matrix_proxy, hosting, mesh, instance_update, user_sources, relay, reticulum
+from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_extensions, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown, extensions, rooms, service_node, ext_proxy, auth_recovery, matrix_proxy, hosting, mesh, instance_update, user_sources, user_sync, relay, reticulum
 from services import voice_health
 
 
@@ -994,6 +994,7 @@ app.include_router(hosting.router)
 app.include_router(mesh.router)
 app.include_router(instance_update.router)
 app.include_router(user_sources.router)
+app.include_router(user_sync.router)
 app.include_router(relay.router)
 app.include_router(reticulum.router)
 

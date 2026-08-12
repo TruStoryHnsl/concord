@@ -96,7 +96,7 @@ INSTANCE_SETTINGS_FILE = DATA_DIR / "instance.json"
 # invalidate. See `docs/deployment/github_bug_report_token.md` for
 # the full rotation runbook and threat model.
 GITHUB_BUG_REPORT_TOKEN = os.getenv("GITHUB_BUG_REPORT_TOKEN", "")
-GITHUB_BUG_REPORT_REPO = os.getenv("GITHUB_BUG_REPORT_REPO", "TruStoryHnsl/concord")
+GITHUB_BUG_REPORT_REPO = os.getenv("GITHUB_BUG_REPORT_REPO", "TruStoryHnsl/concord-docker")
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

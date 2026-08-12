@@ -37,6 +37,7 @@ import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFi
 // Native-only; the Discord-style ChatLayout beneath is DOCKER ONLY and
 // is revealed only while the user is inside an instance.
 import { NativeMeshShell } from "./components/native/NativeMeshShell";
+import { startMessengerSync, hydrateRoamingPrefs } from "./lib/messengerSync";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -84,6 +85,15 @@ export default function App() {
   useEffect(() => {
     runUpdaterStartupCheck();
   }, []);
+
+  // Superuser roaming: native pushes the device messenger state to the
+  // portal; web applies roamed personalization prefs after login.
+  const roamAuthed = useAuthStore((s) => !!s.accessToken);
+  useEffect(() => {
+    if (!roamAuthed) return;
+    if (isTauri) startMessengerSync();
+    else void hydrateRoamingPrefs();
+  }, [roamAuthed, isTauri]);
 
   const [serverConnected, setServerConnected] = useState(() =>
     computeInitialServerConnected({

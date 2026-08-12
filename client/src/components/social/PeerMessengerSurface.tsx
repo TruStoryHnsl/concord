@@ -8,15 +8,16 @@
  * the Discord-style surfaces while open (same pattern as
  * ReticulumSurface).
  *
- * Native-first: the panels ride the embedded servitude via Tauri IPC.
- * The docker/web variant is pending the server-side per-user history
- * store (incident-2026-08-11 open item) — the rail tile is gated on
- * isTauri until that lands, so this surface is never reachable with a
- * broken data layer.
+ * Native: the panels ride the embedded servitude via Tauri IPC (live
+ * send/receive). Web: superuser roaming — the surface renders the
+ * device-pushed mirror from /api/me/sync (read-only history +
+ * contacts), so the browser session shows the same account state.
  */
 import { usePeerMessengerSurfaceStore } from "../../stores/peerMessengerSurface";
 import { SocialInboxPanel } from "./inbox/SocialInboxPanel";
 import { SocialPeersPanel } from "./peers/SocialPeersPanel";
+import { WebPeerHistory } from "./WebPeerHistory";
+import { isTauri } from "../../api/servitude";
 
 const TABS = [
   { id: "messages" as const, icon: "forum", label: "Messages" },
@@ -55,10 +56,17 @@ export function PeerMessengerSurface() {
         ))}
       </div>
       <div className="min-h-0 flex-1">
-        {tab === "messages" ? (
-          <SocialInboxPanel initialPeerId={initialPeerId} />
+        {/* Native: the live device inbox (send + receive). Web: the
+            roamed read-only mirror pushed by the device (superuser
+            roaming — /api/me/sync). */}
+        {isTauri() ? (
+          tab === "messages" ? (
+            <SocialInboxPanel initialPeerId={initialPeerId} />
+          ) : (
+            <SocialPeersPanel onOpenConversation={openConversation} />
+          )
         ) : (
-          <SocialPeersPanel onOpenConversation={openConversation} />
+          <WebPeerHistory tab={tab} />
         )}
       </div>
     </div>

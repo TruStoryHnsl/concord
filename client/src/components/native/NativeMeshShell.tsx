@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNativeShellStore, type NativeShellSection } from "../../stores/nativeShell";
 import { useSettingsStore } from "../../stores/settings";
+import { SettingsPanel } from "../settings/SettingsModal";
 import { useVisibleSources, type ConcordSource } from "../../stores/sources";
 import { switchToSource } from "../../lib/switchToSource";
 import { fetchConnectorLayerGraph } from "../../api/connectors";
@@ -166,6 +167,8 @@ export function NativeMeshShell() {
   const openConversation = useNativeShellStore((s) => s.openConversation);
   const enterInstance = useNativeShellStore((s) => s.enterInstance);
   const openSettings = useSettingsStore((s) => s.openSettings);
+  const settingsOpen = useSettingsStore((s) => s.settingsOpen);
+  const closeSettings = useSettingsStore((s) => s.closeSettings);
   const sources = useVisibleSources();
 
   // Instances = the user's docker/matrix sources. NO local "home server"
@@ -290,6 +293,27 @@ export function NativeMeshShell() {
           </button>
         </div>
       </nav>
+
+      {/* Settings overlay — the shell sits at z-[55], ABOVE ChatLayout's
+          own settings overlay (z-20), so the shell must host settings
+          itself or the gear does nothing. Full user settings, including
+          the superuser surfaces (Identity, Connections, Peers, Messages,
+          Devices), render here over the shell. */}
+      {settingsOpen && (
+        <div className="absolute inset-0 z-10 flex flex-col bg-surface">
+          <div className="flex h-12 flex-shrink-0 items-center gap-2 bg-surface-container-low px-3">
+            <button
+              onClick={() => closeSettings()}
+              className="btn-press flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+              aria-label="Back"
+            >
+              <span className="material-symbols-outlined text-xl">arrow_back</span>
+            </button>
+            <h2 className="font-headline font-semibold">Settings</h2>
+          </div>
+          <SettingsPanel />
+        </div>
+      )}
 
       {/* Main pane. */}
       <main className="min-w-0 flex-1">
