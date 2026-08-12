@@ -1,0 +1,75 @@
+# Environment secrets — never commit real values; .env.example is the template
+.env
+.env.*
+!.env.example
+
+# Docker volume data — runtime state, databases, certs, node identities.
+# NOTHING under data/ is ever committed: it contains live keys
+# (Caddy PKI, ACME accounts, Reticulum identities) and user databases.
+data/
+data.reset-bak-*/
+
+# Node
+node_modules/
+
+# Client build output
+client/dist/
+client/downloads/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+server/.venv/
+.venv/
+
+# Generated at runtime from tuwunel.toml.template by the admin UI
+# (services/tuwunel_config.py). The committed template carries
+# federation defaults only — never tokens.
+config/tuwunel.toml
+config/turn-certs/
+
+# IDE
+.vscode/
+.idea/
+
+# Build caches
+.vite/
+.build-cache/
+
+# OS / misc
+.DS_Store
+*.log
+
+# Claude Code local config
+.claude/
+
+# Workflow / AI tooling state — local only, not for the public repo
+.orrch/
+/PLAN.md
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+agents.md
+DEVLOG.md
+instructions_inbox.md
+entities.json
+mempalace.yaml
+/.mempalace-aliases
+.superpowers/
+.codex-backups/
+.playwright-mcp/
+.worktrees/
+artifacts/
+.orrtemp
+.stignore
+.stfolder
+.bugfix-ledger.md
+.bugfix-analysis.md
+
+# Screenshots and ad-hoc captures (root-level)
+/*.png
+
+# Backup env / config files
+.env.backup-*
+config/**/*.bak

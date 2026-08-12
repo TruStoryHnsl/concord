@@ -1,10 +1,10 @@
 /**
- * LocalServerSidebar — F1b-IMPL two-tile layout.
+ * LocalServerSidebar — single-tile layout.
  *
- * Pins the 2026-06-01 CONSOLIDATED ARCHITECTURE filing's directive that
- * the local source's server-rail renders TWO intrinsic tiles — porch
- * (ephemeral, gray, not renamable) + home (persistent, primary glow,
- * default label "home" via `useHomeServerNameStore`).
+ * The porch/home two-tile architecture was RETIRED (user order,
+ * incident 2026-08-11): the rail shows ONE local space — the user's
+ * persistent home. The ephemeral guest porch stays unmounted. See the
+ * component's tile-construction comment; this suite pins that contract.
  */
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -31,23 +31,19 @@ beforeEach(() => {
   useLocalServerSelectionStore.setState({ active: "home" });
 });
 
-describe("LocalServerSidebar — F1b-IMPL two intrinsic tiles", () => {
-  it("renders BOTH porch and home tiles on desktop", () => {
+describe("LocalServerSidebar — single local-space tile", () => {
+  it("renders ONLY the home tile on desktop — the porch tile stays unmounted", () => {
     render(<LocalServerSidebar />);
-    const porch = screen.getByTestId("local-server-tile-porch");
     const home = screen.getByTestId("local-server-tile-home");
-    expect(porch).toBeTruthy();
     expect(home).toBeTruthy();
-    // Tile abbreviations come from the first char of the label. The guest
-    // doorman tile (internal key "porch") now reads as "Guests" → "G".
-    expect(porch.textContent).toContain("G");
     expect(home.textContent).toContain("H");
+    expect(screen.queryByTestId("local-server-tile-porch")).toBeNull();
   });
 
-  it("renders BOTH tiles on mobile", () => {
+  it("renders ONLY the home tile on mobile", () => {
     render(<LocalServerSidebar mobile />);
-    expect(screen.getByTestId("local-server-tile-porch")).toBeTruthy();
     expect(screen.getByTestId("local-server-tile-home")).toBeTruthy();
+    expect(screen.queryByTestId("local-server-tile-porch")).toBeNull();
   });
 
   it("reflects the user-set home-server name on the home tile", () => {
@@ -64,30 +60,21 @@ describe("LocalServerSidebar — F1b-IMPL two intrinsic tiles", () => {
     expect(home.getAttribute("title")).toBe("studio");
   });
 
-  it("guest-doorman tile is NEVER renamable — label always 'Guests'", () => {
-    // Even if the home name is set, the guest-doorman tile (internal key
-    // "porch") sits at its hard-coded user-facing label.
-    useHomeServerNameStore.setState({
-      name: "studio",
-      loading: false,
-      error: null,
-    });
+  it("falls back to 'My space' when no vanity name is set", () => {
+    useHomeServerNameStore.setState({ name: "", loading: false, error: null });
     render(<LocalServerSidebar />);
-    const porch = screen.getByTestId("local-server-tile-porch");
-    expect(porch.getAttribute("title")).toBe("Guests");
+    const home = screen.getByTestId("local-server-tile-home");
+    expect(home.getAttribute("title")).toBe("My space");
   });
 
-  it("clicking a tile updates the selection store and fires the callback", () => {
+  it("clicking the home tile updates the selection store and fires the callback", () => {
     const onServerSelect = vi.fn();
+    useLocalServerSelectionStore.setState({ active: "porch" });
     render(<LocalServerSidebar onServerSelect={onServerSelect} />);
-
-    fireEvent.click(screen.getByTestId("local-server-tile-porch"));
-    expect(useLocalServerSelectionStore.getState().active).toBe("porch");
-    expect(onServerSelect).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByTestId("local-server-tile-home"));
     expect(useLocalServerSelectionStore.getState().active).toBe("home");
-    expect(onServerSelect).toHaveBeenCalledTimes(2);
+    expect(onServerSelect).toHaveBeenCalledTimes(1);
   });
 
   it("home tile is the default active selection on a fresh store", () => {

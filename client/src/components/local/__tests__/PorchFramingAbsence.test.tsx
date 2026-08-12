@@ -57,7 +57,11 @@ beforeEach(() => {
 });
 
 describe("WS-3 — no porch / home-server framing in rendered UI", () => {
-  it("the local server rail shows 'Guests' + the space name, never 'porch'", () => {
+  // NOTE: the porch/home two-tile architecture is RETIRED (user order,
+  // incident 2026-08-11) — the guest-doorman tile stays unmounted, so the
+  // rail shows only the user's own space. The forbidden-vocabulary scan is
+  // still the contract; the "Guests" replacement label no longer renders.
+  it("the local server rail shows the space name, never 'porch'", () => {
     useHomeServerNameStore.setState({
       name: "studio",
       loading: false,
@@ -69,19 +73,16 @@ describe("WS-3 — no porch / home-server framing in rendered UI", () => {
     for (const bad of FORBIDDEN) {
       expect(visible).not.toMatch(bad);
     }
-    // Replacement vocabulary the user is meant to see.
-    expect(visible).toMatch(/Guests/);
     // The home tile carries the vanity name as its user-facing title.
     expect(visible).toMatch(/studio/);
   });
 
-  it("the guest-doorman tile reads 'Guests' even before a vanity name is set", () => {
+  it("no porch vocabulary before a vanity name is set", () => {
     const { container } = render(<LocalServerSidebar />);
     const visible = userVisibleStrings(container);
     for (const bad of FORBIDDEN) {
       expect(visible).not.toMatch(bad);
     }
-    expect(visible).toMatch(/Guests/);
     // Default local-space label when no vanity name is set.
     expect(visible).toMatch(/My space|home/);
   });
