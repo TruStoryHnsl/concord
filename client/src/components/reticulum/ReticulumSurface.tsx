@@ -40,7 +40,6 @@ function shortHash(hash: string): string {
 function AnnouncesList() {
   const [graph, setGraph] = useState<MeshGraph>(EMPTY_GRAPH);
   const [loaded, setLoaded] = useState(false);
-  const native = isTauri();
 
   const refresh = useCallback(async () => {
     try {
@@ -63,24 +62,9 @@ function AnnouncesList() {
     (n) => (n.nodeKind ?? "announce-peer") === "announce-peer",
   );
 
-  if (!native) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="max-w-md text-center space-y-2">
-          <span className="material-symbols-outlined text-4xl text-green-700">podcasts</span>
-          <p className="text-sm text-on-surface">
-            Announce ingestion runs in the native Concord app's embedded
-            Reticulum stack.
-          </p>
-          <p className="text-xs text-on-surface-variant">
-            This portal shows your mesh topology under Network; connect from
-            a native install to see live announces here.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
+  // Web: announces come live from this instance's pillar node
+  // (`/api/reticulum/mesh`, folded into the reticulum layer graph).
+  // Native: the embedded rnsd stack. Either way the rows are actionable.
   return (
     <div className="flex-1 overflow-y-auto p-4" data-testid="reticulum-announces">
       <h3 className="text-sm font-semibold text-on-surface mb-3">
@@ -89,7 +73,7 @@ function AnnouncesList() {
       {announcePeers.length === 0 ? (
         <p className="text-xs text-on-surface-variant">
           {loaded
-            ? "No announces heard yet. Announces propagate as peers speak on your configured interfaces."
+            ? "No announces heard yet. Announces propagate as peers speak on the pillar's configured interfaces."
             : "Listening…"}
         </p>
       ) : (
@@ -116,25 +100,25 @@ function AnnouncesList() {
                 </div>
               </div>
               {/* crosstalk-guided discovery→conversation: a discovered
-                  announce-peer is actionable — open its 1:1 conversation
-                  in the peer messenger (reticulum-keyed inbox). Native
-                  only: the send path rides the servitude link bridge. */}
-              {isTauri() && (
-                <button
-                  type="button"
-                  title="Message this peer"
-                  data-testid={`announce-message-${n.peerId}`}
-                  onClick={() => {
-                    useReticulumSurfaceStore.getState().close();
-                    usePeerMessengerSurfaceStore
-                      .getState()
-                      .openConversation(`reticulum:${n.peerId}`);
-                  }}
-                  className="btn-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
-                >
-                  <span className="material-symbols-outlined text-lg">forum</span>
-                </button>
-              )}
+                  announce-peer is actionable on BOTH builds — open its 1:1
+                  conversation in the peer messenger (reticulum-keyed inbox).
+                  Native: the send path rides the servitude link bridge.
+                  Web: the D1 store + the pillar transport
+                  (`/api/me/conversations/*`). */}
+              <button
+                type="button"
+                title="Message this peer"
+                data-testid={`announce-message-${n.peerId}`}
+                onClick={() => {
+                  useReticulumSurfaceStore.getState().close();
+                  usePeerMessengerSurfaceStore
+                    .getState()
+                    .openConversation(`reticulum:${n.peerId}`);
+                }}
+                className="btn-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+              >
+                <span className="material-symbols-outlined text-lg">forum</span>
+              </button>
               <span
                 className={`w-2 h-2 rounded-full flex-shrink-0 ${
                   n.connectionState === "offline"

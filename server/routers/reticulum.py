@@ -237,6 +237,7 @@ class SendTextRequest(BaseModel):
 async def reticulum_send(
     body: SendTextRequest,
     user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Send a RelayFrame v1 text frame to a persona destination.
 
@@ -245,6 +246,10 @@ async def reticulum_send(
     wire bytes a native peer would. ``from`` defaults to the caller's
     Matrix localpart — free-text display attribution, exactly like the
     native frame.
+
+    On success the message is also PERSISTED into the account's D1
+    conversation store (keyed ``reticulum:<dest>``), so the send shows up
+    in-thread on the web messenger and roams — not a one-shot fire.
     """
     if not _DEST_RE.match(body.destination_hash):
         raise HTTPException(400, "destination_hash must be 32 hex chars")
@@ -256,12 +261,13 @@ async def reticulum_send(
         raise HTTPException(503, "reticulum node is not running on this instance")
 
     from_name = body.from_name or user_id.split(":", 1)[0].lstrip("@") or "concord"
+    dest = body.destination_hash.lower()
     loop = asyncio.get_event_loop()
     try:
         await loop.run_in_executor(
             None,
             lambda: svc.runtime.send_text(
-                body.destination_hash.lower(),
+                dest,
                 body.persona_id,
                 from_name,
                 body.body,
@@ -269,4 +275,24 @@ async def reticulum_send(
         )
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
+
+    # Persist into the D1 conversation store (best-effort: a store failure
+    # must never mask a successful wire send).
+    try:
+        from routers.conversations import record_outbound_message
+
+        await record_outbound_message(
+            db,
+            user_id,
+            f"reticulum:{dest}",
+            body.body,
+            persona_id=body.persona_id,
+            from_name=from_name,
+            channel="reticulum",
+            state="sent",
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reticulum send recorded to store failed: %s", exc)
+        await db.rollback()
     return {"sent": True}

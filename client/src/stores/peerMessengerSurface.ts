@@ -20,10 +20,14 @@ interface PeerMessengerSurfaceState {
   tab: PeerMessengerTab;
   /** Peer id to open a conversation with when the Messages tab mounts. */
   initialPeerId: string | null;
+  /** Recipient persona for the opened conversation, when known (e.g. from
+   *  an announce). The web composer needs it to send over the mesh — a
+   *  reticulum destination hash alone is not addressable without it. */
+  initialPersonaId: string | null;
   open: (tab?: PeerMessengerTab) => void;
   close: () => void;
   setTab: (tab: PeerMessengerTab) => void;
-  openConversation: (peerId: string) => void;
+  openConversation: (peerId: string, opts?: { personaId?: string | null }) => void;
 }
 
 export const usePeerMessengerSurfaceStore = create<PeerMessengerSurfaceState>(
@@ -31,10 +35,16 @@ export const usePeerMessengerSurfaceStore = create<PeerMessengerSurfaceState>(
     isOpen: false,
     tab: "messages",
     initialPeerId: null,
+    initialPersonaId: null,
     open: (tab = "messages") => set({ isOpen: true, tab }),
-    close: () => set({ isOpen: false, initialPeerId: null }),
+    close: () => set({ isOpen: false, initialPeerId: null, initialPersonaId: null }),
     setTab: (tab) => set({ tab }),
-    openConversation: (peerId) =>
-      set({ isOpen: true, tab: "messages", initialPeerId: peerId }),
+    openConversation: (peerId, opts) =>
+      set({
+        isOpen: true,
+        tab: "messages",
+        initialPeerId: peerId,
+        initialPersonaId: opts?.personaId ?? null,
+      }),
   }),
 );

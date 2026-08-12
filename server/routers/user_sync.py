@@ -17,6 +17,21 @@ Security posture:
     the caller's rows; nothing here is visible to another account.
   - the server never interprets payloads; bounded sizes + per-user row
     caps keep one account from bloating the instance DB.
+
+Write-path split (X2/N5 roaming hardening). This surface is DEVICE→SERVER
+push only by design — the browser is a portal mirror and the p2p/superuser
+keys live on the device. The account MAY originate, from the browser, the
+following (NOT here — via other routers): mesh sends + the composer
+(``/api/reticulum/send``, ``/api/me/conversations/*``), mailbox deposits
+(``/api/relay/messages``), and contact label/trust edits + prefs
+(``/api/me/contacts``). It may NEVER originate superuser ops or
+cryptographic key/trust changes — those stay device-only.
+
+Conflict policy is LAST-WRITER-WINS PER (kind, key): each PUT upserts by
+that pair and stamps ``updated_at`` + the caller's ``device_id``, so the
+most recent push is authoritative even when two native devices push the
+same account. ``GET /api/me/sync/status`` surfaces the per-device row
+counts + last-write times that Settings→Devices renders.
 """
 from __future__ import annotations
 
@@ -107,13 +122,19 @@ async def list_sync_items(
 async def upsert_sync_items(
     kind: str,
     items: list[SyncItemIn],
+    device_id: str | None = Query(default=None, max_length=128),
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Bulk-upsert the caller's rows (device push). Upsert key = (kind, key)."""
+    """Bulk-upsert the caller's rows (device push). Upsert key = (kind, key).
+
+    ``device_id`` (X2/N5): the pushing install's stable id, stamped on each
+    written row for last-writer attribution. Optional + bounded.
+    """
     _check_kind(kind)
     if len(items) > MAX_ITEMS_PER_REQUEST:
         raise HTTPException(429, f"max {MAX_ITEMS_PER_REQUEST} items per request")
+    dev = (device_id or "").strip() or None
 
     count = (
         await db.execute(
@@ -146,7 +167,7 @@ async def upsert_sync_items(
                 raise HTTPException(429, "sync store limit reached for this kind")
             row = UserSyncItem(
                 user_id=user_id, kind=kind, key=item.key, data=payload,
-                deleted=item.deleted, updated_at=now,
+                deleted=item.deleted, updated_at=now, device_id=dev,
             )
             db.add(row)
             by_key[item.key] = row
@@ -155,10 +176,67 @@ async def upsert_sync_items(
             row.data = payload
             row.deleted = item.deleted
             row.updated_at = now
+            if dev is not None:
+                row.device_id = dev
         written += 1
 
     await db.commit()
     return {"ok": True, "written": written}
+
+
+@router.get("/status/devices")
+async def sync_status(
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """X2/N5 — roaming sync status for Settings→Devices: how many rows each
+    device last wrote, and when. Strictly the caller's own rows.
+
+    Placed under ``/status/devices`` (not ``/{kind}``) so it never shadows
+    a sync kind. Returns totals + a per-device breakdown.
+    """
+    rows = (
+        await db.execute(
+            select(
+                UserSyncItem.device_id,
+                UserSyncItem.kind,
+                func.count(),
+                func.max(UserSyncItem.updated_at),
+            )
+            .where(UserSyncItem.user_id == user_id)
+            .group_by(UserSyncItem.device_id, UserSyncItem.kind)
+        )
+    ).all()
+
+    devices: dict[str, dict] = {}
+    kinds: dict[str, int] = {}
+    total = 0
+    for device_id, kind, count, last in rows:
+        total += count
+        kinds[kind] = kinds.get(kind, 0) + count
+        dkey = device_id or "unknown"
+        d = devices.setdefault(
+            dkey, {"device_id": device_id, "rows": 0, "last_write": None, "kinds": {}}
+        )
+        d["rows"] += count
+        d["kinds"][kind] = count
+        last_iso = None
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            last_iso = last.isoformat()
+        if last_iso and (d["last_write"] is None or last_iso > d["last_write"]):
+            d["last_write"] = last_iso
+
+    return {
+        "total_rows": total,
+        "by_kind": kinds,
+        "devices": sorted(
+            devices.values(),
+            key=lambda x: x["last_write"] or "",
+            reverse=True,
+        ),
+    }
 
 
 @router.delete("/{kind}")

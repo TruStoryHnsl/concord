@@ -75,6 +75,10 @@ async def _lightweight_migrations():
         # (introduced 2026-08-11). NULL = pre-migration row, visible to
         # nobody; rows are TTL'd so the NULL population self-clears.
         ("mesh_presence", "owner_user_id", "TEXT"),
+        # X2/N5 (2026-08-12): device attribution on roaming sync rows so
+        # Settings→Devices can show which install last wrote each row.
+        # NULLable + backward-compatible; last-writer-wins per (kind,key).
+        ("user_sync_items", "device_id", "TEXT"),
     ]
     async with engine.begin() as conn:
         for table, column, sql_type in migrations:

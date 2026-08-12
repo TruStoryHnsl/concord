@@ -702,6 +702,129 @@ class PlaceLedgerHeader(Base):
 
 
 
+class UserConversation(Base):
+    """D1 — one row per (account, peer) conversation the PILLAR persists.
+
+    The docker instance is a portal: it persists what it sends/receives/
+    relays on an account's behalf so the web session is a first-class
+    messenger, not a one-shot sender. This is the conversation-list head
+    (last preview + timestamp); the message bodies live in
+    ``UserConversationMessage``.
+
+    ``peer_key`` is keyed exactly like the native inbox so the web and
+    device views fold into ONE inbox:
+      - ``reticulum:<dest_hash>``  a mesh peer (32-hex destination hash)
+      - ``persona:<persona_id>``   a persona-addressed peer
+      - ``rns:<identity_hash>``    an RNS identity with no known persona
+    Bounded per user (the router caps rows); strictly account-scoped.
+    """
+
+    __tablename__ = "user_conversations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "peer_key", name="uq_user_conversation"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    peer_key: Mapped[str] = mapped_column(String, nullable=False)
+    # Reticulum send needs BOTH the destination hash and the recipient
+    # persona aspect (they are cryptographically linked). We stash the
+    # persona so the web composer can re-send into an existing thread
+    # without the user re-typing it. NULL when unknown.
+    persona_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_preview: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class UserConversationMessage(Base):
+    """D1 — one message the pillar persisted for an account.
+
+    ``direction`` is ``out`` (the account sent, via the pillar transport)
+    or ``in`` (the pillar received/relayed it for the account).
+
+    ``state`` is the D5 delivery state, LXMF-style:
+      out: ``queued`` (recorded, transport down / persona unknown) →
+           ``sent`` (pillar handed it to an RNS link) → ``failed``.
+      in:  ``received``.
+    The pillar only advances a state as far as it actually knows.
+    ``body`` holds plaintext when the pillar knows it (web-originated
+    sends); ``payload_b64`` holds an opaque relayed payload otherwise.
+    """
+
+    __tablename__ = "user_conversation_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "peer_key", "wire_id", name="uq_user_conv_msg_wire"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: secrets.token_urlsafe(16)
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    peer_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(String, nullable=False)  # in | out
+    body: Mapped[str | None] = mapped_column(String, nullable=True)
+    payload_b64: Mapped[str | None] = mapped_column(String, nullable=True)
+    from_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    channel: Mapped[str] = mapped_column(String, nullable=False, default="reticulum")
+    state: Mapped[str] = mapped_column(String, nullable=False, default="sent")
+    # Sender-side dedupe id; the unique constraint above dedupes redelivery.
+    wire_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=lambda: secrets.token_urlsafe(12)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class UserContact(Base):
+    """D2 — a learned contact in an account's per-user known-peers registry.
+
+    Folds contacts the pillar learns (mesh sends the account made, relay
+    senders, announces tied to the account's conversations) plus contacts
+    the account edits from the browser (label/trust). Roamed contacts
+    (from ``user_sync``) are folded in on read, not duplicated here.
+
+    ``trust`` is a free-text account-local judgement (e.g. ``unverified``
+    / ``verified`` / ``blocked``); it NEVER touches superuser keys — it is
+    a portal-side label, not a cryptographic trust decision.
+    ``source`` records how the contact was learned:
+      ``manual`` | ``mesh_send`` | ``relay`` | ``announce`` | ``roamed``.
+    """
+
+    __tablename__ = "user_contacts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "peer_key", name="uq_user_contact"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    peer_key: Mapped[str] = mapped_column(String, nullable=False)
+    persona_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    trust: Mapped[str] = mapped_column(String, nullable=False, default="unverified")
+    source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class UserSyncItem(Base):
     """Superuser roaming sync — per-user state pushed by the NATIVE app.
 
@@ -732,6 +855,14 @@ class UserSyncItem(Base):
     key: Mapped[str] = mapped_column(String, nullable=False)
     data: Mapped[str] = mapped_column(String, nullable=False)  # JSON
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # X2/N5 roaming hardening: which device last wrote this row. A stable
+    # per-install id the native pusher stamps, so Settings→Devices can show
+    # "N devices syncing" and the last writer per row. NULL for rows written
+    # before the column existed or by a client that didn't send one.
+    # Conflict policy is LAST-WRITER-WINS PER (kind, key): the upsert stamps
+    # updated_at + device_id on every write, so the most recent push for a
+    # given row is authoritative regardless of which device sent it.
+    device_id: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )

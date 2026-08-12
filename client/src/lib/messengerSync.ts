@@ -25,6 +25,7 @@ import { useSettingsStore } from "../stores/settings";
 
 const PUSH_INTERVAL_MS = 60_000;
 const MAX_MESSAGES_PER_CONVERSATION = 200;
+const DEVICE_ID_KEY = "concord.device_id";
 
 let started = false;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -35,10 +36,34 @@ interface SyncItem {
   deleted?: boolean;
 }
 
+/**
+ * Stable per-install id for roaming attribution (X2/N5). Lets the portal
+ * show, in Settings→Devices, which install last wrote each synced row —
+ * and gives the last-writer-wins-per-kind conflict policy a name to
+ * attribute the winner to. Persisted in localStorage; regenerated only if
+ * cleared. Never a superuser key — purely an attribution tag.
+ */
+export function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return "unknown-device";
+  }
+}
+
 async function putSync(kind: string, items: SyncItem[]): Promise<void> {
   const token = useAuthStore.getState().accessToken;
   if (!token || items.length === 0) return;
-  await fetch(`${getApiBase()}/me/sync/${kind}`, {
+  const dev = encodeURIComponent(getDeviceId());
+  await fetch(`${getApiBase()}/me/sync/${kind}?device_id=${dev}`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",

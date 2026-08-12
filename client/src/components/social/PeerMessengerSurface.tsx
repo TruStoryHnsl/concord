@@ -28,6 +28,9 @@ export function PeerMessengerSurface() {
   const tab = usePeerMessengerSurfaceStore((s) => s.tab);
   const setTab = usePeerMessengerSurfaceStore((s) => s.setTab);
   const initialPeerId = usePeerMessengerSurfaceStore((s) => s.initialPeerId);
+  const initialPersonaId = usePeerMessengerSurfaceStore(
+    (s) => s.initialPersonaId,
+  );
   const openConversation = usePeerMessengerSurfaceStore(
     (s) => s.openConversation,
   );
@@ -66,7 +69,11 @@ export function PeerMessengerSurface() {
             <SocialPeersPanel onOpenConversation={openConversation} />
           )
         ) : (
-          <WebPeerHistory tab={tab} initialSelected={initialPeerId} />
+          <WebPeerHistory
+            tab={tab}
+            initialSelected={initialPeerId}
+            initialPersonaId={initialPersonaId}
+          />
         )}
       </div>
     </div>
