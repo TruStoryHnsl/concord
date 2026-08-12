@@ -23,7 +23,21 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: client/package-lock.json
-      - run: npm ci
+      # node-datachannel fetches a prebuilt native addon during install;
+      # that download to GitHub release assets occasionally hangs up the
+      # socket, and its source-build fallback is broken on Node 24
+      # (prebuild 13 → "N-API version undefined"). The prebuilt exists for
+      # linux-x64/node-24, so a retry clears the transient failure.
+      - name: Install dependencies (retry on transient native fetch)
+        run: |
+          for attempt in 1 2 3; do
+            echo "npm ci attempt $attempt"
+            if npm ci; then exit 0; fi
+            echo "npm ci failed; cleaning and retrying"
+            rm -rf node_modules
+            sleep 10
+          done
+          exit 1
       # Non-blocking: 171 pre-existing react-hooks v6 findings inherited
       # from the upstream client (same count there). Flip to blocking
       # once that debt is paid down.
