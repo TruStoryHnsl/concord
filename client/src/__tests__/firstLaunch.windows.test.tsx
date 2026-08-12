@@ -195,8 +195,22 @@ describe("first-launch (Windows native): __TAURI_INTERNALS__ + empty serverConfi
   beforeEach(() => {
     // Simulate a Tauri v2 webview environment. The KEY thing this
     // test guards is the v2-correct global, NOT the v1 `__TAURI__`.
+    // Minimal functional stub: components like NativeCallLayer fire
+    // async `listen()` calls once isTauri() is true; without these
+    // two members @tauri-apps/api rejects with a TypeError that
+    // surfaces as an unhandled rejection and fails the whole run.
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
-      value: {},
+      value: {
+        transformCallback: () => 0,
+        invoke: () => Promise.resolve(null),
+      },
+      writable: true,
+      configurable: true,
+    });
+    // The event plugin keeps its listener registry on a SEPARATE
+    // global — unlisten() dereferences it at unmount.
+    Object.defineProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__", {
+      value: { unregisterListener: () => {} },
       writable: true,
       configurable: true,
     });
@@ -207,8 +221,14 @@ describe("first-launch (Windows native): __TAURI_INTERNALS__ + empty serverConfi
 
   afterEach(() => {
     cleanup();
-    delete (window as unknown as { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__;
+    // Deliberately NOT deleting window.__TAURI_INTERNALS__ here: unmount
+    // cleanups fire async unlisten() chains (behind a dynamic import)
+    // that outlive any fixed flush delay, and rejecting against a
+    // deleted global surfaces as unhandled errors that fail the run.
+    // Every test in this file wants the stub present (beforeEach
+    // re-stubs it), vitest gives each test FILE its own jsdom
+    // environment, and this is the file's only describe block — so the
+    // global cannot leak anywhere it isn't wanted.
     window.localStorage.clear();
   });
 
