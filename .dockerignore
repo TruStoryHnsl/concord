@@ -15,8 +15,10 @@ server/.venv/
 # Tauri-generated Xcode/Android project files
 src-tauri/gen/
 
-# Tauri bundled native binaries (not needed for web/server Docker images)
-src-tauri/resources/
+# Tauri bundled resources: NEEDED since tauri.conf.json bundles
+# resources/tuwunel/**/* and resources/reticulum/**/* — tauri-build fails
+# the concord-servitude compile if the globs match nothing (~87M context
+# cost, paid only by images that build the servitude).
 
 # Build cache
 .build-cache/
