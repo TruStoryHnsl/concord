@@ -35,6 +35,7 @@ import { ReticulumInterfacesPanel } from "../settings/ReticulumInterfacesPanel";
 import { SocialInboxPanel } from "../social/inbox/SocialInboxPanel";
 import { SocialPeersPanel } from "../social/peers/SocialPeersPanel";
 import { inferSourceBrand, SourceBrandIcon } from "../sources/sourceBrand";
+import { AddSourceModal } from "../layout/ChatLayout";
 
 const SECTIONS: Array<{
   id: NativeShellSection;
@@ -170,6 +171,11 @@ export function NativeMeshShell() {
   const settingsOpen = useSettingsStore((s) => s.settingsOpen);
   const closeSettings = useSettingsStore((s) => s.closeSettings);
   const sources = useVisibleSources();
+  // Connect-an-instance flow (W2): the shell owns the add-source modal
+  // rather than routing through settings.requestAddSource — ChatLayout
+  // stays mounted beneath and consumes that request itself, so a shared
+  // store request would race two consumers.
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
 
   // Instances = the user's docker/matrix sources. NO local "home server"
   // — the local porch/home concept does not exist in the native shell.
@@ -280,6 +286,37 @@ export function NativeMeshShell() {
               })}
             </>
           )}
+
+          {/* Connect an instance — the missing flow (W2). Opens the full
+              add-source path (address/invite → detect → sign-in/register
+              → source appears above). */}
+          <button
+            type="button"
+            onClick={() => setAddSourceOpen(true)}
+            data-testid="shell-connect-instance"
+            className="btn-press flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface"
+          >
+            <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border border-dashed border-on-surface-variant/40">
+              <span className="material-symbols-outlined text-base">add</span>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">
+                Connect an instance
+              </span>
+              <span className="block truncate text-[11px] opacity-70">
+                Address or invite link
+              </span>
+            </span>
+          </button>
+          {instances.length === 0 && (
+            <p
+              className="px-3 pt-1 text-[11px] leading-snug text-on-surface-variant/70"
+              data-testid="shell-instances-empty"
+            >
+              No instances yet — connect to a Concord instance to join its
+              servers, or use the mesh above.
+            </p>
+          )}
         </div>
         <div className="border-t border-outline-variant/10 p-2">
           <button
@@ -358,6 +395,17 @@ export function NativeMeshShell() {
           </div>
         )}
       </main>
+
+      {/* Add-source modal (W2) — mounted inside the shell's z-[55]
+          stacking context so it renders above the nav and settings
+          overlay. Native users manage their own app, so the full
+          add-source flow is available (canManageSources default true). */}
+      {addSourceOpen && (
+        <AddSourceModal
+          onClose={() => setAddSourceOpen(false)}
+          onSourceAdded={() => setAddSourceOpen(false)}
+        />
+      )}
     </div>
   );
 }

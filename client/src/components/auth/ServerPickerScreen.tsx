@@ -239,28 +239,60 @@ export function ServerPickerScreen({ onConnected, onSkip, onGuestSession }: Prop
         state.phase === "input" ? state.origin : "join";
       setState({ phase: "connecting", origin });
 
-      // Matrix origin: skip the Concord well-known probe entirely.
-      // A vanilla Matrix homeserver doesn't serve `/.well-known/concord/client`,
-      // so `discoverHomeserver` would fail. Synthesize a minimal config from
-      // the typed hostname so the user can land on the hollow shell with the
-      // Matrix instance attached as a Source. Real `.well-known/matrix/client`
-      // delegation discovery is a follow-up — for now we assume the typed
-      // hostname IS the homeserver.
+      // Matrix origin (feat/federation-ui-w4): resolve + VERIFY before
+      // claiming success. `discoverHomeserver` tolerates vanilla Matrix
+      // hosts (the Concord well-known is optional) and honours
+      // `.well-known/matrix/client` delegation, so the resolved
+      // homeserver_url is the real one, not just `https://<typed-host>`.
+      // Then `probeMatrixHomeserver` hits `/_matrix/client/versions` so a
+      // typo'd or non-Matrix host produces a real error instead of a fake
+      // success screen.
       if (origin === "matrix") {
         const matrixHost = trimmed.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-        const config: HomeserverConfig = {
-          host: matrixHost,
-          homeserver_url: `https://${matrixHost}`,
-          api_base: `https://${matrixHost}`,
-          instance_name: matrixHost,
-          features: [],
-        };
-        setState({
-          phase: "success",
-          discovered: config,
-          apiBaseOverride: config.api_base,
-          origin,
-        });
+        try {
+          const { probeMatrixHomeserver } = await import("../../api/matrix");
+          let homeserverUrl = `https://${matrixHost}`;
+          try {
+            const discovered = await discoverHomeserver(matrixHost);
+            homeserverUrl = discovered.homeserver_url;
+          } catch {
+            // Well-known discovery failing is non-fatal for vanilla
+            // homeservers — the direct probe below is the arbiter.
+          }
+          try {
+            await probeMatrixHomeserver(homeserverUrl);
+          } catch (probeErr) {
+            // Delegation target unreachable but the typed host itself
+            // may still be the homeserver — retry the bare host once.
+            if (homeserverUrl !== `https://${matrixHost}`) {
+              homeserverUrl = `https://${matrixHost}`;
+              await probeMatrixHomeserver(homeserverUrl);
+            } else {
+              throw probeErr;
+            }
+          }
+          const config: HomeserverConfig = {
+            host: matrixHost,
+            homeserver_url: homeserverUrl,
+            api_base: `https://${matrixHost}`,
+            instance_name: matrixHost,
+            features: [],
+          };
+          setState({
+            phase: "success",
+            discovered: config,
+            apiBaseOverride: config.api_base,
+            origin,
+          });
+        } catch (err) {
+          const { formatMatrixAuthError } = await import("../../api/matrix");
+          setState({
+            phase: "error",
+            message: formatMatrixAuthError(err, "Couldn't reach that homeserver."),
+            recoverable: true,
+            origin,
+          });
+        }
         return;
       }
 

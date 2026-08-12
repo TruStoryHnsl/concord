@@ -48,6 +48,17 @@ _PERSONA_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _DEST_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 
+class OutboundInterfaceModel(BaseModel):
+    """One admin-configured outbound TCPClientInterface link."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=64)
+    target_host: str = Field(min_length=1, max_length=253)
+    target_port: int = Field(ge=1, le=65535)
+    enabled: bool = True
+
+
 class ReticulumAdminConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -56,6 +67,11 @@ class ReticulumAdminConfig(BaseModel):
     listen_port: int | None = Field(default=None, ge=1, le=65535)
     announce_interval_secs: int | None = Field(default=None, ge=30, le=86400)
     display_name: str | None = Field(default=None, max_length=64)
+    # Full-list semantics: when present, REPLACES the outbound link set.
+    outbound_interfaces: list[OutboundInterfaceModel] | None = Field(
+        default=None, max_length=32
+    )
+    lxmf_propagation_enabled: bool | None = None
 
 
 class EntrypointDescriptor(BaseModel):
@@ -90,11 +106,14 @@ async def get_admin_reticulum(user_id: str = Depends(get_user_id)) -> dict:
             "listen_port": cfg.listen_port,
             "announce_interval_secs": cfg.announce_interval_secs,
             "display_name": cfg.display_name,
+            "outbound_interfaces": cfg.outbound_interfaces,
+            "lxmf_propagation_enabled": cfg.lxmf_propagation_enabled,
         },
         "status": svc.runtime.status(),
         "limits": {
             "modes": list(svc.MODES),
             "announce_interval_secs": {"min": 30, "max": 86400},
+            "outbound_interfaces_max": svc.MAX_OUTBOUND_INTERFACES,
         },
     }
 
@@ -121,6 +140,15 @@ async def put_admin_reticulum(
         cfg.announce_interval_secs = body.announce_interval_secs
     if body.display_name is not None:
         cfg.display_name = body.display_name.strip() or "Concord Pillar"
+    if body.outbound_interfaces is not None:
+        entries, iface_errors = svc.normalize_outbound_interfaces(
+            [m.model_dump() for m in body.outbound_interfaces]
+        )
+        if iface_errors:
+            raise HTTPException(400, "; ".join(iface_errors))
+        cfg.outbound_interfaces = entries
+    if body.lxmf_propagation_enabled is not None:
+        cfg.lxmf_propagation_enabled = body.lxmf_propagation_enabled
 
     errors = cfg.validate()
     if errors:
@@ -163,6 +191,7 @@ async def reticulum_status(user_id: str = Depends(get_user_id)) -> dict:
         "available": status["available"],
         "running": status["running"],
         "mailbox_destination": status["mailbox_destination"],
+        "lxmf": status["lxmf"],
     }
 
 

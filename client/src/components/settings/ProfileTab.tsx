@@ -3,10 +3,19 @@ import { useAuthStore } from "../../stores/auth";
 import { useToastStore } from "../../stores/toast";
 import { changePassword, getTOTPStatus, setupTOTP, verifyTOTP, disableTOTP, getRecoveryEmailStatus, setRecoveryEmail, type TOTPSetupResult } from "../../api/concord";
 import { Avatar } from "../ui/Avatar";
-import { IdentityTrustSection } from "./IdentityTrustSection";
-import { SuperuserBackupSection } from "./SuperuserBackupSection";
-import { AccountServicesSection } from "./AccountServicesSection";
 
+/**
+ * Account basics — avatar, display name, password, recovery email,
+ * TOTP, logout.
+ *
+ * Unified-identity merge: this component is no longer a standalone
+ * settings tab. It renders as the "Account" section at the top of the
+ * unified Identity tab (`IdentityTab.tsx`). The superuser sections that
+ * used to live here (IdentityTrustSection, SuperuserBackupSection,
+ * AccountServicesSection) moved into IdentityTab's "Your superuser"
+ * section. The export keeps its historical name so existing tests and
+ * imports stay stable.
+ */
 export function ProfileTab() {
   const client = useAuthStore((s) => s.client);
   const userId = useAuthStore((s) => s.userId);
@@ -71,7 +80,7 @@ export function ProfileTab() {
 
   return (
     <div className="space-y-6">
-      <h3 className="text-xl font-semibold text-on-surface">Profile</h3>
+      <h3 className="text-xl font-semibold text-on-surface">Account</h3>
 
       {/* Avatar preview + upload */}
       <div className="flex items-center gap-4">
@@ -131,16 +140,6 @@ export function ProfileTab() {
 
       {/* Two-factor authentication */}
       <TOTPSection />
-
-      {/* F-A — Concord-native user-definition protocol: trust edges */}
-      <IdentityTrustSection />
-
-      {/* F5 — Hub credential backup: claim/restore the superuser keychain */}
-      <SuperuserBackupSection />
-
-      {/* WS-5 — optional docker account-services center: designate / upload /
-          sign-in via the account-relay libp2p protocol */}
-      <AccountServicesSection />
 
       <div className="border-t border-outline-variant/15 pt-6 flex flex-wrap gap-3">
         <button

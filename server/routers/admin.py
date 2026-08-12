@@ -974,6 +974,45 @@ async def admin_update_federation_allowlist(
     }
 
 
+class FederationEnabledUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/api/admin/federation/enabled")
+async def admin_set_federation_enabled(
+    body: FederationEnabledUpdate,
+    user_id: str = Depends(get_user_id),
+):
+    """Toggle ``allow_federation`` in tuwunel.toml (pending — not applied yet).
+
+    Closes the loop the allowlist editor already has: the UI previously
+    told the admin to hand-edit ``config/tuwunel.toml`` to enable
+    federation. Like the allowlist, the change is written to the TOML
+    file and only takes effect after ``POST /api/admin/federation/apply``
+    restarts the conduwuit container.
+    """
+    require_admin(user_id)
+
+    loop = asyncio.get_event_loop()
+    current = await loop.run_in_executor(None, read_federation)
+    current.allow_federation = body.enabled
+    await loop.run_in_executor(None, write_federation, current)
+
+    logger.info(
+        "Federation %s by %s (apply pending — restart required)",
+        "enabled" if body.enabled else "disabled", user_id,
+    )
+
+    return {
+        "enabled": body.enabled,
+        "pending_apply": True,
+        "message": (
+            f"Federation {'enabled' if body.enabled else 'disabled'} in config. "
+            "Click 'Apply changes' to restart the Matrix server and activate it."
+        ),
+    }
+
+
 @router.post("/api/admin/federation/apply")
 async def admin_apply_federation(
     user_id: str = Depends(get_user_id),

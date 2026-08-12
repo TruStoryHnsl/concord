@@ -32,13 +32,24 @@ import {
 import type { ConcordSource } from "../stores/sources";
 import { useSourcesStore } from "../stores/sources";
 
-interface PortalBinding {
+export interface PortalBinding {
   apiBase: string;
   accessToken: string;
   userId: string;
 }
 
 let portal: PortalBinding | null = null;
+
+/**
+ * The current portal binding (the core docker instance's apiBase + session
+ * token), or `null` when no portal is bound (logged out / native-only).
+ * Read-only peek for consumers that want to ask the portal for its wider
+ * view — e.g. the mesh map overlaying the pillar's Reticulum announces onto
+ * the native layer. Never mutate the returned object.
+ */
+export function getPortalBinding(): PortalBinding | null {
+  return portal;
+}
 
 /** True while a pull-merge is applying remote rows — suppresses the
  *  store's add→push echo. */

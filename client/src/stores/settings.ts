@@ -7,6 +7,52 @@ import {
   INPUT_NOISE_GATE_DB_MIN,
 } from "../voice/noiseGate";
 
+/**
+ * Union of every settings leaf the panel can show.
+ *
+ * "identity" is the unified Profile+Identity surface (account basics,
+ * superuser, personae). The legacy keys "profile" and "users" are kept
+ * in the union so existing deep links (`openSettings("profile")`,
+ * `openSettings("users")`) stay compilable — the store setters resolve
+ * them to "identity" via {@link resolveSettingsTab}.
+ */
+export type SettingsTab =
+  | "audio"
+  | "voice"
+  | "notifications"
+  | "identity"
+  | "profile"
+  | "users"
+  | "connections"
+  | "peers"
+  | "messages"
+  | "devices"
+  | "appearance"
+  | "node"
+  | "hosting"
+  | "connectors"
+  | "about"
+  | "admin"
+  | "server-general"
+  | "server-members"
+  | "server-invite"
+  | "server-bans"
+  | "server-whitelist"
+  | "server-webhooks"
+  | "server-moderation"
+  | "server-federation";
+
+/** Legacy tab keys folded into the unified Identity surface. */
+const LEGACY_TAB_ALIASES: Partial<Record<SettingsTab, SettingsTab>> = {
+  profile: "identity",
+  users: "identity",
+};
+
+/** Resolve a (possibly legacy) tab key to the tab the panel renders. */
+export function resolveSettingsTab(tab: SettingsTab): SettingsTab {
+  return LEGACY_TAB_ALIASES[tab] ?? tab;
+}
+
 interface SettingsState {
   // Output
   masterOutputVolume: number;
@@ -75,7 +121,7 @@ interface SettingsState {
 
   // UI (not persisted)
   settingsOpen: boolean;
-  settingsTab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "devices" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation";
+  settingsTab: SettingsTab;
   serverSettingsId: string | null;
 
   // Actions
@@ -121,9 +167,9 @@ interface SettingsState {
   setLogoColorPrimary: (hex: string) => void;
   setLogoColorSecondary: (hex: string) => void;
   resetLogoColors: () => void;
-  openSettings: (tab?: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "devices" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
+  openSettings: (tab?: SettingsTab) => void;
   closeSettings: () => void;
-  setSettingsTab: (tab: "audio" | "voice" | "notifications" | "profile" | "users" | "connections" | "peers" | "messages" | "devices" | "appearance" | "node" | "hosting" | "connectors" | "about" | "admin" | "server-general" | "server-members" | "server-invite" | "server-bans" | "server-whitelist" | "server-webhooks" | "server-moderation" | "server-federation") => void;
+  setSettingsTab: (tab: SettingsTab) => void;
   /**
    * Cross-component hand-off for the "Add Source" modal. Set the screen
    * to pre-open (e.g. "matrix", "concord"), and ChatLayout's effect hook
@@ -292,9 +338,13 @@ export const useSettingsStore = create<SettingsState>()(
           logoColorSecondary: LOGO_COLOR_SECONDARY_DEFAULT,
         }),
       openSettings: (tab) =>
-        set({ settingsOpen: true, serverSettingsId: null, settingsTab: tab ?? "audio" }),
+        set({
+          settingsOpen: true,
+          serverSettingsId: null,
+          settingsTab: resolveSettingsTab(tab ?? "audio"),
+        }),
       closeSettings: () => set({ settingsOpen: false, serverSettingsId: null }),
-      setSettingsTab: (tab) => set({ settingsTab: tab }),
+      setSettingsTab: (tab) => set({ settingsTab: resolveSettingsTab(tab) }),
       requestAddSource: (screen) => set({
         settingsOpen: false,
         serverSettingsId: null,

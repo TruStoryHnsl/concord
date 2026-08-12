@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -76,8 +77,16 @@ MAX_MAILBOX_ENVELOPE_BYTES = 8192
 
 CONFIG_FILENAME = "reticulum.json"
 PILLAR_IDENTITY_FILENAME = "pillar_identity"
+LXMF_ROUTER_DIRNAME = "lxmf_router"
 
 MODES = ("off", "private", "public")
+
+MAX_OUTBOUND_INTERFACES = 32
+
+_HOSTNAME_RE_STR = (
+    r"^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*"
+    r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +120,68 @@ def persona_destination_hash(
 # Config
 # ---------------------------------------------------------------------------
 
+_hostname_re = re.compile(_HOSTNAME_RE_STR)
+
+# rnsd config section names live between [[ ]] — keep them to a safe
+# charset so an interface name can never break out of its block.
+_iface_name_re = re.compile(r"^[A-Za-z0-9 ._-]{1,64}$")
+
+
+def normalize_outbound_interfaces(raw: Any) -> tuple[list[dict], list[str]]:
+    """Coerce an arbitrary JSON value into a clean outbound-interface
+    list. Returns (entries, errors). Each entry:
+    {"name": str, "target_host": str, "target_port": int, "enabled": bool}.
+    """
+    errors: list[str] = []
+    entries: list[dict] = []
+    if raw is None:
+        return entries, errors
+    if not isinstance(raw, list):
+        return entries, ["outbound_interfaces must be a list"]
+    if len(raw) > MAX_OUTBOUND_INTERFACES:
+        return entries, [f"at most {MAX_OUTBOUND_INTERFACES} outbound interfaces"]
+    seen_names: set[str] = set()
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            errors.append(f"outbound_interfaces[{i}] must be an object")
+            continue
+        name = str(item.get("name") or "").strip()
+        host = str(item.get("target_host") or "").strip().lower()
+        try:
+            port = int(item.get("target_port") or 0)
+        except (TypeError, ValueError):
+            port = 0
+        enabled = bool(item.get("enabled", True))
+        if not _iface_name_re.match(name):
+            errors.append(
+                f"outbound_interfaces[{i}].name must be 1-64 chars "
+                "of letters, digits, spaces, dots, dashes, underscores"
+            )
+            continue
+        if name.lower() in seen_names:
+            errors.append(f"duplicate outbound interface name: {name}")
+            continue
+        if not host or not _hostname_re.match(host):
+            errors.append(
+                f"outbound_interfaces[{i}].target_host must be a valid "
+                "hostname or IP"
+            )
+            continue
+        if not (1 <= port <= 65535):
+            errors.append(f"outbound_interfaces[{i}].target_port must be 1-65535")
+            continue
+        seen_names.add(name.lower())
+        entries.append(
+            {
+                "name": name,
+                "target_host": host,
+                "target_port": port,
+                "enabled": enabled,
+            }
+        )
+    return entries, errors
+
+
 @dataclass
 class ReticulumNodeConfig:
     mode: str = "off"                      # off | private | public
@@ -123,6 +194,17 @@ class ReticulumNodeConfig:
     entry_domain: str | None = None
     announce_interval_secs: int = 300
     display_name: str = "Concord Pillar"
+    # Outbound TCPClientInterface links — how this pillar dials OTHER
+    # transport nodes (peer pillars, public testnet hubs, …) so the
+    # instance's mesh view extends beyond whoever dials in. Rendered as
+    # TCPClientInterface blocks by build_rns_config(); interface set
+    # changes need a process restart (RNS reads interfaces at init).
+    outbound_interfaces: list[dict] = field(default_factory=list)
+    # LXMF propagation node — when on (and mode != off) the pillar runs a
+    # standard ``lxmf.propagation`` destination on the same RNS instance,
+    # so ordinary LXMF clients (MeshChat, Sideband, …) can use this
+    # instance as a store-and-forward propagation relay.
+    lxmf_propagation_enabled: bool = True
 
     def validate(self) -> list[str]:
         errors: list[str] = []
@@ -134,6 +216,8 @@ class ReticulumNodeConfig:
             errors.append("announce_interval_secs must be >= 30")
         if self.mode == "public" and not (self.entry_domain or "").strip():
             errors.append("public mode requires entry_domain")
+        _, iface_errors = normalize_outbound_interfaces(self.outbound_interfaces)
+        errors.extend(iface_errors)
         return errors
 
 
@@ -166,6 +250,11 @@ def load_config() -> ReticulumNodeConfig:
     for key in asdict(cfg):
         if key in data:
             setattr(cfg, key, data[key])
+    # Never trust the on-disk list shape — drop malformed entries.
+    cfg.outbound_interfaces, _ = normalize_outbound_interfaces(
+        cfg.outbound_interfaces
+    )
+    cfg.lxmf_propagation_enabled = bool(cfg.lxmf_propagation_enabled)
     return cfg
 
 
@@ -187,8 +276,10 @@ def build_rns_config(cfg: ReticulumNodeConfig) -> str:
     Divergence from the engine's client config is deliberate and exactly
     two lines: ``enable_transport = True`` (this node routes for the
     mesh) and a wide-bound ``TCPServerInterface`` (the entrypoint).
+    Admin-configured outbound links render as additional
+    ``TCPClientInterface`` blocks.
     """
-    return f"""# Generated by Concord (server/services/reticulum_node.py).
+    base = f"""# Generated by Concord (server/services/reticulum_node.py).
 # PILLAR posture: transport node + TCP entrypoint. Managed file — edits
 # are overwritten when the admin config is applied.
 
@@ -211,6 +302,19 @@ loglevel = 3
     listen_ip = {cfg.listen_host}
     listen_port = {cfg.listen_port}
 """
+    entries, _ = normalize_outbound_interfaces(cfg.outbound_interfaces)
+    blocks: list[str] = []
+    for entry in entries:
+        blocks.append(
+            f"""
+  [[Outbound - {entry["name"]}]]
+    type = TCPClientInterface
+    enabled = {"True" if entry["enabled"] else "False"}
+    target_host = {entry["target_host"]}
+    target_port = {entry["target_port"]}
+"""
+        )
+    return base + "".join(blocks)
 
 
 def write_rns_config(cfg: ReticulumNodeConfig) -> Path:
@@ -273,6 +377,10 @@ class ReticulumNodeRuntime:
         self._announce_thread: threading.Thread | None = None
         self._announce_stop = threading.Event()
         self._links: dict[str, Any] = {}
+        # LXMF propagation node (optional; rides the same RNS instance).
+        self._lxmf_router: Any = None
+        self._lxmf_running = False
+        self._lxmf_error: str | None = None
         # Announce table — every announce this transport node hears, for
         # the mesh introspection endpoint (/api/reticulum/mesh). Bounded;
         # keyed by destination hash hex.
@@ -288,6 +396,15 @@ class ReticulumNodeRuntime:
     def rns_available() -> bool:
         try:
             import RNS  # noqa: F401
+
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def lxmf_available() -> bool:
+        try:
+            import LXMF  # noqa: F401
 
             return True
         except Exception:
@@ -340,6 +457,12 @@ class ReticulumNodeRuntime:
                 except Exception:  # noqa: BLE001
                     logger.debug("announce handler registration failed", exc_info=True)
 
+                # LXMF propagation node — same RNS instance, pillar
+                # identity. Optional; a failure here never blocks the
+                # pillar itself.
+                if cfg.lxmf_propagation_enabled:
+                    self._start_lxmf_locked()
+
                 self._announce_stop.clear()
                 self._announce_thread = threading.Thread(
                     target=self._announce_loop, name="reticulum-announce", daemon=True
@@ -362,6 +485,43 @@ class ReticulumNodeRuntime:
                 logger.warning("reticulum pillar failed to start: %s", self._start_error)
                 return False
 
+    def _start_lxmf_locked(self) -> None:
+        """Bring the LXMF propagation node up on the running RNS
+        instance. Caller holds ``self._lock`` (or is inside start()).
+        Never raises."""
+        try:
+            import LXMF
+
+            if self._lxmf_router is None:
+                storage = _config_dir() / LXMF_ROUTER_DIRNAME
+                storage.mkdir(parents=True, exist_ok=True)
+                self._lxmf_router = LXMF.LXMRouter(
+                    identity=self._identity, storagepath=str(storage)
+                )
+            self._lxmf_router.enable_propagation()
+            self._lxmf_running = True
+            self._lxmf_error = None
+            logger.info(
+                "lxmf propagation node up: dest=%s",
+                self.lxmf_propagation_destination_hash(),
+            )
+        except Exception as exc:  # noqa: BLE001 — optional subsystem
+            self._lxmf_error = f"{type(exc).__name__}: {exc}"
+            self._lxmf_running = False
+            logger.warning("lxmf propagation node failed: %s", self._lxmf_error)
+
+    def _stop_lxmf_locked(self) -> None:
+        """Disable propagation (router object survives; LXMF cannot be
+        fully torn down in-process, same constraint as RNS)."""
+        if self._lxmf_router is None:
+            self._lxmf_running = False
+            return
+        try:
+            self._lxmf_router.disable_propagation()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("lxmf disable_propagation failed: %s", exc)
+        self._lxmf_running = False
+
     def soft_stop(self) -> None:
         """Stop announcing + ignore inbound. RNS itself cannot be torn
         down in-process; a full stop needs a process restart."""
@@ -374,16 +534,24 @@ class ReticulumNodeRuntime:
 
         Returns {"running": bool, "restart_required": bool}.
         """
+        def _outbound_norm(c: ReticulumNodeConfig) -> list[dict]:
+            entries, _ = normalize_outbound_interfaces(c.outbound_interfaces)
+            return entries
+
         with self._lock:
             prev = self.config
             transport_changed = (
                 prev.listen_host != cfg.listen_host
                 or prev.listen_port != cfg.listen_port
+                # RNS reads its interface set once at init — outbound
+                # link changes only take effect after a restart.
+                or _outbound_norm(prev) != _outbound_norm(cfg)
             )
         write_rns_config(cfg)
         if cfg.mode == "off":
             self.soft_stop()
             with self._lock:
+                self._stop_lxmf_locked()
                 self.config = cfg
             return {"running": False, "restart_required": self._started}
         if not self._started:
@@ -392,6 +560,11 @@ class ReticulumNodeRuntime:
         with self._lock:
             self.config = cfg
             self._soft_off = False
+            # LXMF propagation hot-applies both ways on a live RNS stack.
+            if cfg.lxmf_propagation_enabled and not self._lxmf_running:
+                self._start_lxmf_locked()
+            elif not cfg.lxmf_propagation_enabled and self._lxmf_running:
+                self._stop_lxmf_locked()
             self._announce_stop.set()  # wake loop to pick up new interval
             self._announce_stop.clear()
         return {"running": True, "restart_required": transport_changed}
@@ -474,6 +647,7 @@ class ReticulumNodeRuntime:
             "listen_port": self.config.listen_port,
             "interfaces": interfaces,
             "announces": announces,
+            "lxmf": self.lxmf_status(),
         }
 
     def identity_hash(self) -> str | None:
@@ -486,6 +660,25 @@ class ReticulumNodeRuntime:
             return None
         return bytes(self._mailbox_dest.hash).hex()
 
+    def lxmf_propagation_destination_hash(self) -> str | None:
+        if self._lxmf_router is None:
+            return None
+        try:
+            return bytes(self._lxmf_router.propagation_destination.hash).hex()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def lxmf_status(self) -> dict:
+        return {
+            "available": self.lxmf_available(),
+            "enabled": bool(
+                self.config.lxmf_propagation_enabled and self.config.mode != "off"
+            ),
+            "running": self._lxmf_running and self._started and not self._soft_off,
+            "propagation_destination": self.lxmf_propagation_destination_hash(),
+            "error": self._lxmf_error,
+        }
+
     def status(self) -> dict:
         return {
             "available": self.rns_available(),
@@ -497,6 +690,7 @@ class ReticulumNodeRuntime:
             "listen_port": self.config.listen_port,
             "announce_interval_secs": self.config.announce_interval_secs,
             "start_error": self._start_error,
+            "lxmf": self.lxmf_status(),
         }
 
     # -- announce loop ------------------------------------------------------
@@ -513,6 +707,13 @@ class ReticulumNodeRuntime:
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("reticulum announce failed: %s", exc)
+            try:
+                # Keep the propagation node discoverable on the same
+                # cadence (LXMRouter's announce is itself async/delayed).
+                if self._lxmf_running and not self._soft_off:
+                    self._lxmf_router.announce_propagation_node()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("lxmf propagation announce failed: %s", exc)
             self._announce_stop.wait(max(30, self.config.announce_interval_secs))
 
     # -- mailbox intake -----------------------------------------------------

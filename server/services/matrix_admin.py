@@ -283,6 +283,42 @@ async def _register_dm_in_account_data(
         pass
 
 
+async def set_room_directory_visibility(
+    access_token: str, room_id: str, visibility: str
+) -> None:
+    """Publish or unpublish a room in the homeserver's public room directory.
+
+    ``visibility`` is ``"public"`` (listed — discoverable by local users AND
+    by remote homeservers browsing the directory over federation) or
+    ``"private"`` (unlisted). This is the runtime-safe per-room federation
+    exposure lever: unlike ``m.federate``, directory visibility can be
+    changed at any time after room creation.
+
+    Requires a token with sufficient power in the room — the room creator
+    (Concord server owner) always qualifies. Raises on failure so callers
+    can report per-room errors.
+    """
+    if visibility not in ("public", "private"):
+        raise ValueError(f"invalid directory visibility: {visibility!r}")
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(
+            f"{MATRIX_HOMESERVER_URL}/_matrix/client/v3/directory/list/room/"
+            f"{quote(room_id, safe='')}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"visibility": visibility},
+        )
+        if resp.status_code == 200:
+            return
+        try:
+            err = resp.json().get("error", "") or ""
+        except Exception:
+            err = ""
+        raise Exception(
+            f"Cannot set directory visibility for {room_id}: "
+            f"{err or f'HTTP {resp.status_code}'}"
+        )
+
+
 async def create_matrix_room(access_token: str, name: str) -> str:
     """Create a Matrix room and return the room ID.
 

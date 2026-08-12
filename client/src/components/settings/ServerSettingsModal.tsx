@@ -34,8 +34,11 @@ import {
   updateChannelCreationSetting,
   uploadServerIcon,
   deleteServerIcon,
+  getServerFederation,
+  updateServerFederation,
   type BanSettings,
   type Invite,
+  type ServerFederationSettings,
 } from "../../api/concord";
 import type { ServerMember, ServerBan, ServerWhitelistEntry, Webhook, UserSearchResult } from "../../api/concord";
 
@@ -130,9 +133,12 @@ export function ServerSettingsContent({
 
   return (
     <>
-      {activeTab === "federation" && (
-        <FederatedServerTab serverId={serverId} />
-      )}
+      {activeTab === "federation" &&
+        (server.federated ? (
+          <FederatedServerTab serverId={serverId} />
+        ) : (
+          <LocalFederationTab serverId={serverId} accessToken={accessToken} />
+        ))}
       {activeTab === "general" && (
         <GeneralTab serverId={serverId} accessToken={accessToken} />
       )}
@@ -188,6 +194,187 @@ function FederatedServerTab({ serverId }: { serverId: string }) {
           <li>There is no local delete or membership management surface for federated wrappers.</li>
         </ul>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Federation controls for a LOCAL Concord server (feat/federation-ui-w4).
+ * Owner/admin only (the leaf is admin-gated in SettingsPanel and the
+ * endpoints re-check server-side).
+ *
+ *  - "Visible to federation": publishes/unpublishes every channel room in
+ *    the Matrix public room directory — the surface remote homeservers
+ *    browse. Applied at runtime; no homeserver restart.
+ *  - "Invite policy": whether direct invites may target Matrix IDs on
+ *    other homeservers.
+ *
+ * Both are inert while the instance-level federation (admin-owned,
+ * Settings → Administration → Federation) is disabled; the tab says so
+ * instead of silently pretending the switches do something.
+ */
+function LocalFederationTab({
+  serverId,
+  accessToken,
+}: {
+  serverId: string;
+  accessToken: string;
+}) {
+  const addToast = useToastStore((s) => s.addToast);
+  const updateServer = useServerStore((s) => s.updateServer);
+  const [settings, setSettings] = useState<ServerFederationSettings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSettings(null);
+    setLoadError(null);
+    getServerFederation(serverId, accessToken)
+      .then((s) => {
+        if (!cancelled) setSettings(s);
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setLoadError(
+            err instanceof Error ? err.message : "Failed to load federation settings",
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [serverId, accessToken]);
+
+  const save = async (patch: {
+    federation_visible?: boolean;
+    federation_invite_policy?: "local_only" | "federated";
+  }) => {
+    if (!settings || saving) return;
+    setSaving(true);
+    try {
+      const result = await updateServerFederation(serverId, patch, accessToken);
+      setSettings(result);
+      setWarnings(result.directory_warnings ?? []);
+      // Mirror into the server store so ServerOut consumers stay fresh.
+      updateServer(serverId, {
+        federation_visible: result.federation_visible,
+        federation_invite_policy: result.federation_invite_policy,
+      });
+      if ((result.directory_warnings ?? []).length === 0) {
+        addToast("Federation settings saved", "success");
+      } else {
+        addToast(
+          "Saved — some rooms could not update directory visibility",
+          "info",
+        );
+      }
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loadError)
+    return <p className="text-error text-sm">{loadError}</p>;
+  if (!settings)
+    return (
+      <p className="text-on-surface-variant text-sm">Loading federation settings...</p>
+    );
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-xl font-semibold text-on-surface">Federation</h3>
+        <p className="text-sm text-on-surface-variant mt-1">
+          Control how this server is exposed to other Matrix homeservers
+          federating with this instance.
+        </p>
+      </div>
+
+      {!settings.instance_federation_enabled && (
+        <div className="rounded-lg bg-surface-container border border-outline-variant/15 p-3">
+          <p className="text-sm text-on-surface-variant">
+            Instance federation is currently <strong className="text-on-surface">disabled</strong> by
+            the instance admin (Settings → Administration → Federation).
+            These settings are saved but have no effect until federation is
+            enabled.
+          </p>
+        </div>
+      )}
+
+      {/* Visible to federation */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-on-surface">Visible to federation</p>
+          <p className="text-xs text-on-surface-variant mt-0.5 leading-relaxed">
+            Publish this server's channels in the Matrix public room
+            directory, where allowed remote homeservers can discover and
+            join them. Applied immediately — no restart.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={settings.federation_visible}
+          disabled={saving}
+          data-testid="server-federation-visible-toggle"
+          onClick={() => void save({ federation_visible: !settings.federation_visible })}
+          className={`shrink-0 w-11 h-6 rounded-full transition-colors relative disabled:opacity-40 ${
+            settings.federation_visible ? "bg-primary" : "bg-surface-container-highest"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 w-5 h-5 rounded-full bg-on-primary transition-transform ${
+              settings.federation_visible ? "translate-x-5" : "translate-x-0.5"
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* Invite policy */}
+      <div>
+        <p className="text-sm font-medium text-on-surface">Invite policy</p>
+        <p className="text-xs text-on-surface-variant mt-0.5 mb-2 leading-relaxed">
+          Who direct invites may be addressed to.
+        </p>
+        <select
+          value={settings.federation_invite_policy}
+          disabled={saving}
+          data-testid="server-federation-invite-policy"
+          onChange={(e) =>
+            void save({
+              federation_invite_policy: e.target.value as "local_only" | "federated",
+            })
+          }
+          className="w-full sm:w-auto px-3 py-2 bg-surface border border-outline-variant rounded text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/30 disabled:opacity-40"
+        >
+          <option value="local_only">Local users only</option>
+          <option value="federated">Local and federated users</option>
+        </select>
+      </div>
+
+      {warnings.length > 0 && (
+        <div className="rounded-lg bg-tertiary/10 border border-tertiary/40 p-3 space-y-1">
+          <p className="text-sm text-on-surface font-medium">
+            Some rooms could not update directory visibility
+          </p>
+          {warnings.map((w) => (
+            <p key={w} className="text-xs text-on-surface-variant font-mono break-all">
+              {w}
+            </p>
+          ))}
+          <p className="text-xs text-on-surface-variant">
+            The setting is saved; the server owner can re-save this tab to retry.
+          </p>
+        </div>
+      )}
+
+      <p className="text-xs text-on-surface-variant/70 leading-relaxed">
+        Which remote homeservers may federate at all is controlled by the
+        instance allowlist (instance admins: Settings → Administration →
+        Federation).
+      </p>
     </div>
   );
 }

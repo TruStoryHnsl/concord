@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,9 +10,14 @@ from sqlalchemy.orm import selectinload
 
 from database import get_db
 from dependencies import require_server_admin
-from models import DirectInvite, ServerMember, Channel, ServerBan
+from models import DirectInvite, Server, ServerMember, Channel, ServerBan
 from dependencies import get_user_id, get_access_token
 from services.matrix_admin import join_room
+
+
+def _mxid_domain(mxid: str) -> str:
+    """Server-name part of a Matrix user ID (empty when unparsable)."""
+    return mxid.split(":", 1)[1].strip().lower() if ":" in mxid else ""
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +94,23 @@ async def send_direct_invite(
 ):
     """Send a direct server invite to a user. Requires admin/owner role."""
     await require_server_admin(body.server_id, user_id, db)
+
+    # Per-server federation invite policy (feat/federation-ui-w4): a place
+    # whose policy is "local_only" (the default) rejects invites addressed
+    # to Matrix IDs on OTHER homeservers. The gate is skipped when the
+    # local server name is unknown (env unset — e.g. bare test harness).
+    local_server = os.getenv("CONDUWUIT_SERVER_NAME", "").strip().lower()
+    invitee_domain = _mxid_domain(body.invitee_id)
+    if local_server and invitee_domain and invitee_domain != local_server:
+        server = await db.get(Server, body.server_id)
+        policy = server.federation_invite_policy if server else "local_only"
+        if policy != "federated":
+            raise HTTPException(
+                403,
+                "This server only allows invites to local users. "
+                "Enable federated invites in Server Settings → Federation "
+                "to invite users from other homeservers.",
+            )
 
     # Check invitee is not already a member
     existing_member = (

@@ -168,17 +168,147 @@ interface ConnectorLayerWire {
 }
 
 /**
+ * Announce-liveness window (seconds). A destination whose announce was last
+ * heard longer ago than this renders offline. Mirrors the Rust
+ * `RETICULUM_ONLINE_WINDOW_SECS` so native and pillar-derived nodes age out
+ * identically.
+ */
+const RETICULUM_ONLINE_WINDOW_SECS = 30 * 60;
+
+/** Raw wire shape of a pillar's `GET /api/reticulum/mesh` snapshot (see
+ *  `server/services/reticulum_node.py::mesh_snapshot`). */
+interface PillarMeshWire {
+  running: boolean;
+  dest: string | null;
+  display_name?: string | null;
+  interfaces: Array<{ name: string; online: boolean }>;
+  announces: Array<{
+    dest: string;
+    hops: number | null;
+    name: string | null;
+    last_heard: number;
+  }>;
+}
+
+/**
+ * Fetch a pillar's live reticulum-mesh snapshot. Returns `null` on any
+ * failure (or when the pillar's node isn't running) — the caller degrades
+ * gracefully.
+ */
+async function fetchPillarMesh(
+  apiBase: string,
+  token: string,
+): Promise<PillarMeshWire | null> {
+  const base = apiBase.replace(/\/+$/, "");
+  const res = await fetch(`${base}/reticulum/mesh`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const mesh = (await res.json()) as PillarMeshWire;
+  if (!mesh.running || !mesh.dest) return null;
+  return mesh;
+}
+
+/**
+ * Overlay a BOUND PORTAL's reticulum view onto the native layer graph.
+ *
+ * The docker pillar the native app is bound to (see
+ * `client/src/lib/sourceSync.ts::bindPortal`) is itself a transport node
+ * that hears announces the device may not. When a portal is bound, its
+ * `GET /api/reticulum/mesh` snapshot is merged into the native graph:
+ *
+ *  - the pillar becomes an `infrastructure` node hung off the native self
+ *    node (or the root, if the native graph is empty), marked
+ *    `via: "pillar"`;
+ *  - every pillar-heard announce not already known natively is added as an
+ *    `announce-peer` (deduped by destination hash — the native view wins),
+ *    also marked `via: "pillar"`, with the pillar's hop count and
+ *    last-heard-derived online state.
+ *
+ * Best-effort: any failure returns the native graph untouched.
+ */
+async function overlayPillarMesh(graph: MeshGraph): Promise<MeshGraph> {
+  try {
+    const { getPortalBinding } = await import("../lib/sourceSync");
+    const portal = getPortalBinding();
+    if (!portal) return graph;
+    const mesh = await fetchPillarMesh(portal.apiBase, portal.accessToken);
+    if (!mesh || !mesh.dest) return graph;
+
+    const now = Date.now() / 1000;
+    const nodes = [...graph.nodes];
+    const edges = [...graph.edges];
+    const have = new Set(nodes.map((n) => n.peerId));
+    const edgeKeys = new Set(
+      edges.map((e) => (e.a <= e.b ? `${e.a}|${e.b}` : `${e.b}|${e.a}`)),
+    );
+    const addEdge = (a: string, b: string) => {
+      if (a === b) return;
+      const key = a <= b ? `${a}|${b}` : `${b}|${a}`;
+      if (edgeKeys.has(key)) return;
+      edgeKeys.add(key);
+      edges.push({ a, b });
+    };
+
+    const selfNode = nodes.find((n) => n.nodeKind === "self");
+    // The pillar hangs one hop off the native self node; with no native
+    // graph it becomes the root, exactly like the web build's rendering.
+    const pillarHop = selfNode ? 1 : 0;
+    if (!have.has(mesh.dest)) {
+      have.add(mesh.dest);
+      nodes.push({
+        peerId: mesh.dest,
+        hopDistance: pillarHop,
+        via: "pillar",
+        nodeKind: selfNode ? "infrastructure" : "self",
+        connectionState: "online",
+        hopCount: pillarHop,
+        interfaceType:
+          mesh.interfaces.find((i) => i.online)?.name ?? undefined,
+        transport: true,
+      });
+    }
+    if (selfNode) addEdge(selfNode.peerId, mesh.dest);
+
+    for (const a of mesh.announces) {
+      // Dedupe by destination hash — the native (direct) view wins.
+      if (!a.dest || have.has(a.dest)) continue;
+      have.add(a.dest);
+      nodes.push({
+        peerId: a.dest,
+        hopDistance: a.hops != null ? pillarHop + a.hops : null,
+        via: "pillar",
+        nodeKind: "announce-peer",
+        connectionState:
+          now - a.last_heard < RETICULUM_ONLINE_WINDOW_SECS
+            ? "online"
+            : "offline",
+        hopCount: a.hops ?? undefined,
+        interfaceType: a.name ?? undefined,
+        transport: false,
+      });
+      addEdge(mesh.dest, a.dest);
+    }
+    return { ...graph, nodes, edges };
+  } catch (err) {
+    console.warn("[connectors] pillar mesh overlay failed:", err);
+    return graph;
+  }
+}
+
+/**
  * Fetch a single external-mesh layer's graph (nodes/edges) for the map. The
  * graph uses the same {@link MeshGraph} shape the Concord layer emits, so the
  * `MeshCanvas` renders every layer through one code path. Node ids are
  * namespaced (e.g. `meshtastic:<num>`) so they never collide with Concord
  * base58 peer ids.
  *
- * Native: the engine's connector graph via Tauri IPC. Web/docker:
- * the RETICULUM layer is served by the instance's own pillar node
- * (`GET /api/reticulum/mesh` — identity, live interfaces, announce
- * table), which is what makes the docker instance a real mesh
- * entrypoint; other layers resolve empty on web.
+ * Native: the engine's connector graph via Tauri IPC, plus — when a docker
+ * portal is bound — the pillar's own mesh view overlaid on top (see
+ * {@link overlayPillarMesh}). Web/docker: the RETICULUM layer is served by
+ * the instance's own pillar node (`GET /api/reticulum/mesh` — identity,
+ * live interfaces, announce table), which is what makes the docker instance
+ * a real mesh entrypoint; other layers resolve empty on web.
  */
 export async function fetchConnectorLayerGraph(
   layerId: MeshLayerId,
@@ -190,23 +320,8 @@ export async function fetchConnectorLayerGraph(
       const { useAuthStore } = await import("../stores/auth");
       const token = useAuthStore.getState().accessToken;
       if (!token) return EMPTY_MESH_GRAPH;
-      const res = await fetch(`${getApiBase()}/reticulum/mesh`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return EMPTY_MESH_GRAPH;
-      const mesh = (await res.json()) as {
-        running: boolean;
-        dest: string | null;
-        display_name?: string | null;
-        interfaces: Array<{ name: string; online: boolean }>;
-        announces: Array<{
-          dest: string;
-          hops: number | null;
-          name: string | null;
-          last_heard: number;
-        }>;
-      };
-      if (!mesh.running || !mesh.dest) return EMPTY_MESH_GRAPH;
+      const mesh = await fetchPillarMesh(getApiBase(), token);
+      if (!mesh || !mesh.dest) return EMPTY_MESH_GRAPH;
       const now = Date.now() / 1000;
       const nodes = [
         {
@@ -224,7 +339,7 @@ export async function fetchConnectorLayerGraph(
           hopDistance: a.hops,
           nodeKind: "announce-peer" as const,
           connectionState:
-            now - a.last_heard < 30 * 60
+            now - a.last_heard < RETICULUM_ONLINE_WINDOW_SECS
               ? ("online" as const)
               : ("offline" as const),
           hopCount: a.hops ?? undefined,
@@ -244,7 +359,7 @@ export async function fetchConnectorLayerGraph(
     const wire = await invoke<ConnectorLayerWire>("connectors_layer_graph", {
       id: layerId,
     });
-    return {
+    const graph: MeshGraph = {
       nodes: wire.nodes.map((n) => ({
         peerId: n.peer_id,
         hopDistance: n.hop_distance,
@@ -257,6 +372,9 @@ export async function fetchConnectorLayerGraph(
       })),
       edges: wire.edges.map((e) => ({ a: e.a, b: e.b })),
     };
+    // Merge the bound portal's wider mesh view into the native layer.
+    if (layerId === "reticulum") return overlayPillarMesh(graph);
+    return graph;
   } catch (err) {
     console.warn("[connectors] layer graph fetch failed:", err);
     return EMPTY_MESH_GRAPH;

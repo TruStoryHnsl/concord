@@ -2752,7 +2752,8 @@ export function AddSourceModal({
       setMatrixPassword("");
       setScreen("matrix-auth");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't reach that homeserver");
+      const { formatMatrixAuthError } = await import("../../api/matrix");
+      setError(formatMatrixAuthError(err, "Couldn't reach that homeserver"));
       setScreen("error");
     }
   };
@@ -2774,7 +2775,8 @@ export function AddSourceModal({
       setMatrixPassword("");
       setScreen("matrix-auth");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't reach that homeserver");
+      const { formatMatrixAuthError } = await import("../../api/matrix");
+      setError(formatMatrixAuthError(err, "Couldn't reach that homeserver"));
       setScreen("error");
     }
   };
@@ -2816,8 +2818,8 @@ export function AddSourceModal({
       });
       onSourceAdded();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Source login failed";
-      setError(message);
+      const { formatMatrixAuthError } = await import("../../api/matrix");
+      setError(formatMatrixAuthError(err, "Source login failed"));
       setScreen("error");
     }
   };

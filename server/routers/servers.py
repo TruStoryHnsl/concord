@@ -31,6 +31,7 @@ from services.matrix_admin import (
     create_matrix_room,
     invite_to_room,
     join_room,
+    set_room_directory_visibility,
     set_room_name,
 )
 
@@ -131,6 +132,8 @@ class ServerOut(BaseModel):
     media_uploads_enabled: bool = True
     rules_text: str | None = None
     allow_user_channel_creation: bool = False
+    federation_visible: bool = False
+    federation_invite_policy: str = "local_only"
     channels: list[ChannelOut]
 
     model_config = {"from_attributes": True}
@@ -1150,6 +1153,118 @@ async def update_server_settings(
         "media_uploads_enabled": server.media_uploads_enabled,
         "rules_text": server.rules_text,
     }
+
+
+# --- Per-server federation settings (feat/federation-ui-w4) ---
+#
+# Instance-level federation (whether ANY remote homeserver may talk to this
+# one, and which) is admin-owned transport config: /api/admin/federation +
+# tuwunel.toml. THESE endpoints are the per-place layer on top: a server
+# owner/admin decides whether their place is discoverable over federation
+# (Matrix room-directory publication — runtime-safe, no homeserver restart)
+# and whether direct invites may target remote MXIDs (enforced in
+# routers/direct_invites.py). If instance federation is disabled entirely,
+# these switches are inert but still persisted.
+
+class ServerFederationUpdate(BaseModel):
+    federation_visible: bool | None = None
+    federation_invite_policy: Literal["local_only", "federated"] | None = None
+
+
+async def _read_instance_federation() -> tuple[bool, str]:
+    """(instance federation enabled, local server name) — file I/O offloaded."""
+    import os as _os
+
+    from services.tuwunel_config import read_federation
+
+    loop = asyncio.get_event_loop()
+    settings = await loop.run_in_executor(None, read_federation)
+    return settings.allow_federation, _os.getenv("CONDUWUIT_SERVER_NAME", "")
+
+
+def _federation_payload(
+    server: Server, instance_enabled: bool, server_name: str
+) -> dict:
+    return {
+        "server_id": server.id,
+        "federation_visible": server.federation_visible,
+        "federation_invite_policy": server.federation_invite_policy,
+        # Context for the UI: per-place switches are inert while the
+        # instance-level allow_federation is off (admin-owned).
+        "instance_federation_enabled": instance_enabled,
+        "instance_server_name": server_name,
+    }
+
+
+@router.get("/{server_id}/federation")
+async def get_server_federation(
+    server_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-server federation settings. Admin or owner only."""
+    await require_server_admin(server_id, user_id, db)
+    server = await db.get(Server, server_id)
+    if not server:
+        raise HTTPException(404, "Server not found")
+    instance_enabled, server_name = await _read_instance_federation()
+    return _federation_payload(server, instance_enabled, server_name)
+
+
+@router.patch("/{server_id}/federation")
+async def update_server_federation(
+    server_id: str,
+    body: ServerFederationUpdate,
+    user_id: str = Depends(get_user_id),
+    access_token: str = Depends(get_access_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update per-server federation settings. Admin or owner only.
+
+    Changing ``federation_visible`` also flips the Matrix room-directory
+    visibility of every channel room (best-effort, using the caller's
+    token — the room creator always has the power; a non-owner admin may
+    not, in which case the failures are reported in ``directory_warnings``
+    and the DB flag still persists as the desired state). No homeserver
+    restart is required for any of this.
+    """
+    await require_server_admin(server_id, user_id, db)
+    server = await db.get(Server, server_id)
+    if not server:
+        raise HTTPException(404, "Server not found")
+
+    directory_warnings: list[str] = []
+
+    if body.federation_invite_policy is not None:
+        server.federation_invite_policy = body.federation_invite_policy
+
+    if (
+        body.federation_visible is not None
+        and body.federation_visible != server.federation_visible
+    ):
+        server.federation_visible = body.federation_visible
+        visibility = "public" if body.federation_visible else "private"
+        channels = (
+            await db.execute(select(Channel).where(Channel.server_id == server_id))
+        ).scalars().all()
+        for channel in channels:
+            try:
+                await set_room_directory_visibility(
+                    access_token, channel.matrix_room_id, visibility
+                )
+            except Exception as exc:  # best-effort per room
+                directory_warnings.append(f"{channel.name}: {exc}")
+        logger.info(
+            "Server %s federation_visible -> %s by %s (%d room(s), %d warning(s))",
+            server_id, body.federation_visible, user_id,
+            len(channels), len(directory_warnings),
+        )
+
+    await db.commit()
+    instance_enabled, server_name = await _read_instance_federation()
+    payload = _federation_payload(server, instance_enabled, server_name)
+    payload["directory_warnings"] = directory_warnings
+    return payload
 
 
 def _delete_server_icon_file(server_id: str) -> None:

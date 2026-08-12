@@ -56,6 +56,87 @@ export async function fetchLoginFlows(
   return [...supported];
 }
 
+/** Thrown by {@link probeMatrixHomeserver} when the host answers but is not a Matrix homeserver. */
+export class NotMatrixServerError extends Error {
+  constructor(homeserverUrl: string, detail: string) {
+    super(`${homeserverUrl} doesn't look like a Matrix homeserver (${detail})`);
+    this.name = "NotMatrixServerError";
+  }
+}
+
+/**
+ * Verify that `homeserverUrl` actually speaks the Matrix client-server
+ * API by fetching `/_matrix/client/versions` (unauthenticated and
+ * CORS-open on spec-compliant homeservers). Returns the supported spec
+ * versions on success.
+ *
+ * Used by the add-source / server-picker Matrix flows so "success" is
+ * only shown for hosts that are really reachable Matrix homeservers —
+ * previously the picker synthesised a config without probing and let the
+ * user "connect" to anything.
+ *
+ * @throws Error network-level failure (DNS, refused, CORS-blocked).
+ * @throws NotMatrixServerError host responded but not with a Matrix versions document.
+ */
+export async function probeMatrixHomeserver(
+  homeserverUrl: string,
+): Promise<string[]> {
+  const base = homeserverUrl.replace(/\/+$/, "");
+  const url = `${base}/_matrix/client/versions`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error(
+      `Couldn't reach ${base}. Check the address and your internet connection.`,
+    );
+  }
+  if (!res.ok) {
+    throw new NotMatrixServerError(base, `HTTP ${res.status} from /_matrix/client/versions`);
+  }
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new NotMatrixServerError(base, "non-JSON response from /_matrix/client/versions");
+  }
+  const versions = (data as { versions?: unknown })?.versions;
+  if (!Array.isArray(versions) || versions.length === 0) {
+    throw new NotMatrixServerError(base, "no spec versions advertised");
+  }
+  return versions as string[];
+}
+
+/**
+ * Map a matrix-js-sdk / fetch error from a login or discovery attempt to
+ * a message a person can act on. The SDK's raw messages ("MatrixError:
+ * [403] Invalid password", "fetch failed") leak protocol details without
+ * telling the user what to do.
+ */
+export function formatMatrixAuthError(err: unknown, fallback: string): string {
+  const e = err as {
+    errcode?: string;
+    httpStatus?: number;
+    message?: string;
+    name?: string;
+  } | null;
+  switch (e?.errcode) {
+    case "M_FORBIDDEN":
+      return "Sign-in failed — the homeserver rejected that username or password.";
+    case "M_USER_DEACTIVATED":
+      return "That account has been deactivated on the homeserver.";
+    case "M_LIMIT_EXCEEDED":
+      return "The homeserver is rate-limiting sign-in attempts. Wait a minute and try again.";
+    case "M_UNKNOWN_TOKEN":
+      return "The homeserver rejected the session token. Start the sign-in again.";
+  }
+  if (e?.name === "NotMatrixServerError") return e.message ?? fallback;
+  if (e?.name === "ConnectionError" || /fetch|network|load failed/i.test(e?.message ?? "")) {
+    return "Couldn't reach the homeserver — check the address and your connection.";
+  }
+  return e?.message || fallback;
+}
+
 export function buildSsoRedirectUrl(
   homeserverUrl: string,
   redirectUrl: string,

@@ -7,7 +7,6 @@ import { SourceBrandIcon } from "../sources/sourceBrand";
 import { PeerConnectionsSection } from "./connections/PeerConnectionsSection";
 import { LanAutoPairSection } from "./connections/LanAutoPairSection";
 import { TunnelHardeningSection } from "./connections/TunnelHardeningSection";
-import { MeshPersonaeSection } from "./connections/MeshPersonaeSection";
 
 /**
  * Per-user Connections tab.
@@ -110,10 +109,41 @@ export function UserConnectionsTab() {
       />
 
       <ConnectedAccountsList />
-      <MeshPersonaeSection />
+      <PersonaePointer />
       <PeerConnectionsSection />
       <LanAutoPairSection />
       <TunnelHardeningSection />
+    </div>
+  );
+}
+
+/**
+ * Pointer to the unified Identity tab. The mesh-personae claim/release
+ * surface (formerly `connections/MeshPersonaeSection`) moved there —
+ * personae are identity, not connectivity; this card keeps the old
+ * mental model ("Connections is where personae lived") from dead-ending.
+ */
+function PersonaePointer() {
+  const setSettingsTab = useSettingsStore((s) => s.setSettingsTab);
+  return (
+    <div
+      className="flex items-center gap-3 px-4 py-3 rounded-lg border border-outline-variant/20 bg-surface-container-low/40"
+      data-testid="personae-moved-pointer"
+    >
+      <span className="material-symbols-outlined text-on-surface-variant">
+        fingerprint
+      </span>
+      <p className="flex-1 min-w-0 text-xs text-on-surface-variant">
+        Looking for mesh personae? Establishing personae on your
+        connections now lives in the Identity tab.
+      </p>
+      <button
+        type="button"
+        onClick={() => setSettingsTab("identity")}
+        className="px-3 py-1.5 bg-primary/10 hover:bg-primary/15 text-primary text-xs rounded-md transition-colors min-h-[32px] flex-shrink-0"
+      >
+        Open Identity
+      </button>
     </div>
   );
 }

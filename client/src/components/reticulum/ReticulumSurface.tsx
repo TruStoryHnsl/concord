@@ -28,6 +28,7 @@ import { useSourcesStore } from "../../stores/sources";
 import { identiconDataUri } from "../mesh/identicon";
 import { MeshMap } from "../mesh/MeshMap";
 import { ReticulumInterfacesPanel } from "../settings/ReticulumInterfacesPanel";
+import { ReticulumInstanceInterfaces } from "./ReticulumInstanceInterfaces";
 import { ReticulumMessages } from "./ReticulumMessages";
 
 const EMPTY_GRAPH: MeshGraph = { nodes: [], edges: [] };
@@ -184,15 +185,7 @@ export function ReticulumSurface() {
           {isTauri() ? (
             <ReticulumInterfacesPanel />
           ) : (
-            <div className="max-w-md space-y-2">
-              <h3 className="text-sm font-semibold text-on-surface">Interfaces</h3>
-              <p className="text-xs text-on-surface-variant">
-                Interface configuration (TCP, UDP, I2P, RNode, serial) lives in
-                the native Concord app, where the Reticulum stack runs. This
-                portal relays your mesh presence — configure interfaces from a
-                native install.
-              </p>
-            </div>
+            <ReticulumInstanceInterfaces />
           )}
         </div>
       )}

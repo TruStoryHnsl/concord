@@ -27,6 +27,15 @@ export interface Server {
   rules_text?: string | null;
   /** INS-053: When true, any server member can create channels. */
   allow_user_channel_creation?: boolean;
+  /**
+   * Per-server federation exposure: when true the server's channel rooms
+   * are published to the Matrix public room directory (discoverable over
+   * federation, subject to the instance allowlist). Server-set; defaults
+   * false.
+   */
+  federation_visible?: boolean;
+  /** "local_only" (default) or "federated" — governs remote-MXID invites. */
+  federation_invite_policy?: "local_only" | "federated";
   channels: Channel[];
   /**
    * Client-only marker: true when this server is a synthetic wrapper
@@ -1729,6 +1738,60 @@ export async function applyFederationChanges(
   return apiFetch(
     "/admin/federation/apply",
     { method: "POST", body: "{}" },
+    accessToken,
+  );
+}
+
+/**
+ * Toggle `allow_federation` in tuwunel.toml. Pending like allowlist
+ * edits — call {@link applyFederationChanges} afterwards to restart the
+ * homeserver and activate it.
+ */
+export async function setFederationEnabled(
+  enabled: boolean,
+  accessToken: string,
+): Promise<{ enabled: boolean; pending_apply: boolean; message: string }> {
+  return apiFetch(
+    "/admin/federation/enabled",
+    { method: "PUT", body: JSON.stringify({ enabled }) },
+    accessToken,
+  );
+}
+
+// --- Per-server federation settings (feat/federation-ui-w4) ---
+
+export interface ServerFederationSettings {
+  server_id: string;
+  federation_visible: boolean;
+  federation_invite_policy: "local_only" | "federated";
+  /** Instance-level allow_federation (admin-owned) — per-place switches are inert while false. */
+  instance_federation_enabled: boolean;
+  instance_server_name: string;
+}
+
+export interface ServerFederationUpdateResult extends ServerFederationSettings {
+  /** Per-room directory-visibility failures (best-effort application). */
+  directory_warnings: string[];
+}
+
+export async function getServerFederation(
+  serverId: string,
+  accessToken: string,
+): Promise<ServerFederationSettings> {
+  return apiFetch(`/servers/${serverId}/federation`, {}, accessToken);
+}
+
+export async function updateServerFederation(
+  serverId: string,
+  patch: {
+    federation_visible?: boolean;
+    federation_invite_policy?: "local_only" | "federated";
+  },
+  accessToken: string,
+): Promise<ServerFederationUpdateResult> {
+  return apiFetch(
+    `/servers/${serverId}/federation`,
+    { method: "PATCH", body: JSON.stringify(patch) },
     accessToken,
   );
 }

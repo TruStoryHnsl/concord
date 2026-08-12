@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { useSettingsStore } from "../../stores/settings";
+import { useSettingsStore, resolveSettingsTab } from "../../stores/settings";
 import { useAuthStore } from "../../stores/auth";
 import { useServerStore } from "../../stores/server";
 import { checkAdmin } from "../../api/concord";
@@ -7,8 +7,7 @@ import { usePlatform } from "../../hooks/usePlatform";
 import { AudioTab } from "./AudioTab";
 import { VoiceTab } from "./VoiceTab";
 import { NotificationsTab } from "./NotificationsTab";
-import { ProfileTab } from "./ProfileTab";
-import { UsersTab } from "./UsersTab";
+import { IdentityTab } from "./IdentityTab";
 import { AppearanceTab } from "./AppearanceTab";
 import { NodeHostingTab } from "./NodeHostingTab";
 import { UserConnectionsTab } from "./UserConnectionsTab";
@@ -53,8 +52,7 @@ type LeafKey =
   | "audio"
   | "voice"
   | "notifications"
-  | "profile"
-  | "users"
+  | "identity"
   | "connections"
   | "peers"
   | "messages"
@@ -115,11 +113,19 @@ function buildServerLeaves(
   if (server.visibility === "private") leaves.push({ key: "server-whitelist", label: "Whitelist", icon: "verified_user" });
   leaves.push({ key: "server-webhooks", label: "Webhooks", icon: "webhook" });
   if (isAdmin) leaves.push({ key: "server-moderation", label: "Moderation", icon: "gavel" });
+  // Federation controls for LOCAL servers (feat/federation-ui-w4):
+  // owners/admins manage directory visibility over federation + the
+  // remote-invite policy. Federated wrapper servers get their read-only
+  // Federation tab via the early return above.
+  if (isAdmin) leaves.push({ key: "server-federation", label: "Federation", icon: "language" });
   return leaves;
 }
 
 export function SettingsPanel() {
-  const activeTab = useSettingsStore((s) => s.settingsTab);
+  const rawActiveTab = useSettingsStore((s) => s.settingsTab);
+  // Legacy "profile"/"users" keys (deep links, persisted state written
+  // by direct setState) render the unified Identity surface.
+  const activeTab = resolveSettingsTab(rawActiveTab);
   const setTab = useSettingsStore((s) => s.setSettingsTab);
   const close = useSettingsStore((s) => s.closeSettings);
   const serverSettingsId = useSettingsStore((s) => s.serverSettingsId);
@@ -208,8 +214,10 @@ export function SettingsPanel() {
         label: "Account",
         icon: "account_circle",
         items: [
-          { key: "profile", label: "Profile", icon: "person", hint: "Name, avatar, security" },
-          { key: "users", label: "Identity", icon: "manage_accounts", hint: "Logins & trust" },
+          // Unified identity surface — merges the former Profile
+          // ("profile") and Identity ("users") tabs; legacy keys alias
+          // here via resolveSettingsTab in stores/settings.ts.
+          { key: "identity", label: "Identity", icon: "manage_accounts", hint: "Profile, superuser & personae" },
           { key: "connections", label: "Connections", icon: "link", hint: "Linked instances & peers" },
           // p2p-social: the known-peers registry + 1:1 inbox. Native-only —
           // both ride the embedded servitude swarm (Tauri commands), so they
@@ -540,8 +548,7 @@ export function SettingsPanel() {
       {activeTab === "audio" && <AudioTab />}
       {activeTab === "voice" && <VoiceTab />}
       {activeTab === "notifications" && <NotificationsTab />}
-      {activeTab === "profile" && <ProfileTab />}
-      {activeTab === "users" && <UsersTab />}
+      {activeTab === "identity" && <IdentityTab />}
       {activeTab === "connections" && <UserConnectionsTab />}
       {activeTab === "peers" && <SocialPeersPanel />}
       {activeTab === "devices" && <DevicesTab />}

@@ -13,6 +13,7 @@ import {
   getFederationStatus,
   updateFederationAllowlist,
   applyFederationChanges,
+  setFederationEnabled,
   getServiceNodeConfig,
   updateServiceNodeConfig,
   getAdminBans,
@@ -679,6 +680,25 @@ function FederationSection({ token }: { token: string | null }) {
     }
   };
 
+  const handleToggleEnabled = async () => {
+    if (!token || !status || saving || applying) return;
+    setSaving(true);
+    try {
+      const result = await setFederationEnabled(!status.enabled, token);
+      setStatus((s) =>
+        s ? { ...s, enabled: result.enabled, pending_apply: true } : s,
+      );
+      addToast(
+        `Federation ${result.enabled ? "enabled" : "disabled"} — click Apply to activate`,
+        "success",
+      );
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to update");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleApply = async () => {
     if (!token) return;
     setConfirmOpen(false);
@@ -704,10 +724,14 @@ function FederationSection({ token }: { token: string | null }) {
 
   return (
     <div className="space-y-6">
-      {/* Status */}
+      {/* Status + enable/disable toggle. The toggle writes
+          allow_federation to tuwunel.toml via the admin API — like
+          allowlist edits, it stays pending until Apply restarts the
+          homeserver. (Previously this card told the admin to hand-edit
+          the file; the toggle closes that loop.) */}
       <div className="flex items-center gap-3">
         <div className={`w-3 h-3 rounded-full ${status.enabled ? "bg-secondary" : "bg-on-surface-variant/50"}`} />
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-sm text-on-surface font-medium">
             Federation {status.enabled ? "Enabled" : "Disabled"}
           </p>
@@ -715,12 +739,28 @@ function FederationSection({ token }: { token: string | null }) {
             This instance: <span className="font-mono text-on-surface">{status.server_name}</span>
           </p>
         </div>
+        <button
+          onClick={() => void handleToggleEnabled()}
+          disabled={saving || applying}
+          data-testid="federation-enabled-toggle"
+          className="shrink-0 px-4 py-1.5 rounded text-sm transition-colors disabled:opacity-40 bg-surface-container-high hover:bg-surface-container-highest text-on-surface"
+        >
+          {saving
+            ? "..."
+            : status.enabled
+              ? "Disable Federation"
+              : "Enable Federation"}
+        </button>
       </div>
 
       {!status.enabled && (
         <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/15">
           <p className="text-sm text-on-surface-variant">
-            Federation is disabled. Set <code className="text-on-surface bg-surface-container-highest px-1 rounded text-xs">allow_federation = true</code> in <code className="text-on-surface bg-surface-container-highest px-1 rounded text-xs">config/tuwunel.toml</code> and apply changes to enable.
+            Federation is disabled — this instance does not exchange messages
+            with any remote server. Enabling writes{" "}
+            <code className="text-on-surface bg-surface-container-highest px-1 rounded text-xs">allow_federation = true</code>{" "}
+            to the homeserver config; the change activates after you Apply
+            (brief Matrix server restart).
           </p>
         </div>
       )}
@@ -794,10 +834,15 @@ function FederationSection({ token }: { token: string | null }) {
             )}
           </div>
 
-          {/* Apply-changes card: replaces the old "restart required" notice.
-              Appears dimmed when no changes are pending, glows when they are,
-              and shows a spinner while a restart is in progress. */}
-          <div
+        </>
+      )}
+
+      {/* Apply-changes card: replaces the old "restart required" notice.
+          Appears dimmed when no changes are pending, glows when they are,
+          and shows a spinner while a restart is in progress. Rendered
+          regardless of the enabled flag so toggling federation OFF (or ON)
+          can also be applied. */}
+      <div
             className={`rounded-lg p-3 border transition-colors ${
               status.pending_apply
                 ? "bg-tertiary/10 border-tertiary/40"
@@ -824,8 +869,8 @@ function FederationSection({ token }: { token: string | null }) {
                   {applying
                     ? "Please wait — the Matrix server is restarting. Users may see a brief disconnect."
                     : status.pending_apply
-                      ? "Your allowlist edits are saved but not yet active. Clicking Apply will briefly restart the Matrix server (~10–15s)."
-                      : "The running server matches your saved allowlist."}
+                      ? "Your federation edits are saved but not yet active. Clicking Apply will briefly restart the Matrix server (~10–15s)."
+                      : "The running server matches your saved federation config."}
                 </p>
               </div>
               <button
@@ -837,8 +882,6 @@ function FederationSection({ token }: { token: string | null }) {
               </button>
             </div>
           </div>
-        </>
-      )}
 
       {/* Confirmation modal — enforces the "admin confirms before downtime"
           rule. Matches the bg-black/60 + bg-surface-container pattern used

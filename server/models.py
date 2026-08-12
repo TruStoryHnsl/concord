@@ -41,6 +41,20 @@ class Server(Base):
     # INS-053: When True, non-admin members can create channels in this server.
     # Default False — only admins/owners can create channels.
     allow_user_channel_creation: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-place federation controls (2026-08-11).
+    # ``federation_visible``: when True, this place's channel rooms are
+    # published to the Matrix public room directory — discoverable by local
+    # users and by remote homeservers browsing the directory over federation
+    # (subject to the instance allowlist in tuwunel.toml). Default False:
+    # rooms stay unlisted; remote users need a room id out-of-band.
+    federation_visible: Mapped[bool] = mapped_column(Boolean, default=False)
+    # ``federation_invite_policy``: "local_only" (default) rejects direct
+    # invites addressed to Matrix IDs on other homeservers; "federated"
+    # allows admins to invite remote MXIDs. Enforced in
+    # routers/direct_invites.py.
+    federation_invite_policy: Mapped[str] = mapped_column(
+        String, default="local_only"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     channels: Mapped[list["Channel"]] = relationship(back_populates="server", cascade="all, delete-orphan")

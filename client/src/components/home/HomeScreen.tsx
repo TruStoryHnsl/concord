@@ -318,19 +318,18 @@ export function HomeScreen() {
   // front door aside so ChatLayout's settings panel shows underneath. Routes
   // through the settings store (which drives BOTH the desktop overlay and the
   // mobile settings view) rather than duplicating any account-management UI.
-  const openSettingsAt = (tab?: "users" | "profile") => {
+  const openSettingsAt = (tab?: "identity") => {
     setMenuOpen(false);
     setOverflowOpen(false);
     useSettingsStore.getState().openSettings(tab);
     useHomeFeedStore.getState().showHandoff();
   };
 
-  // Reachable persona switcher → the existing Identity tab (UsersTab), which
-  // owns persona create/select/designate-default + the SuperuserPanel.
-  const openPersona = () => openSettingsAt("users");
-  // Reachable superuser keychain + account backup/restore → the Profile tab
-  // (ProfileTab: SuperuserBackupSection + AccountServicesSection).
-  const openBackup = () => openSettingsAt("profile");
+  // Reachable persona switcher AND superuser keychain/backup → the unified
+  // Identity tab (IdentityTab: account basics, SuperuserPanel +
+  // SuperuserBackupSection + AccountServicesSection, PersonaeSection).
+  const openPersona = () => openSettingsAt("identity");
+  const openBackup = () => openSettingsAt("identity");
 
   // Reachable mesh map: flag it open, then reveal ChatLayout (which renders
   // <MeshMap/> for the active local source). Mirrors openPairPeer's pattern.
