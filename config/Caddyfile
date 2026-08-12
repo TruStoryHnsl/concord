@@ -1,6 +1,18 @@
 {
     http_port 8080
     https_port 8443
+    # Slowloris / stalled-connection mitigation (2026-08-12 protections
+    # pass): bound how long a client may dribble headers/body and how
+    # long idle keep-alives are held. Long-lived proxied streams
+    # (/_matrix sync, /livekit websockets) are unaffected — these are
+    # HTTP server read/idle timeouts, not proxy-upstream timeouts.
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 60s
+            idle 120s
+        }
+    }
     # pki block for the internal_longlived TLS_MODE snippet. Harmless
     # for the public-ACME modes — Caddy only consults `pki` when an
     # `issuer internal` directive is active on a site.
@@ -16,11 +28,14 @@
 # ── TLS_MODE snippets ──────────────────────────────────────────────────
 # Imported at the top of the {$SITE_ADDRESS} block based on the
 # TLS_MODE env var. See .env.example for the operator-facing description
-# of each mode.
+# of each mode. Kept in lockstep with config/Caddyfile.dev so both
+# surfaces share an identical mode matrix.
 
 # Caddy's internal CA with a long-lived leaf cert (~9 years).
 # Tailscale-only / LAN-only deployment. Operators add Caddy's root
 # CA to their trust store (or accept the cert exception) once.
+# See the matching snippet comment in Caddyfile.dev for the full
+# rationale on why the lifetime override is load-bearing.
 (tls_mode_internal_longlived) {
     tls {
         issuer internal {

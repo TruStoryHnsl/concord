@@ -2,11 +2,11 @@
  * User Management Phase 1 — API wrapper.
  *
  * Thin wrappers around the eight `user_profile_*` Tauri commands exposed
- * by the native IPC backend. All commands are native-only — the web
+ * by `src-tauri/src/lib.rs`. All commands are native-only — the web
  * build doesn't host a porch, so the wrappers return a `not_supported`
  * sentinel (an empty list / a typed error) instead of dispatching.
  *
- * Wire shapes mirror the Rust types in the native user backend:
+ * Wire shapes mirror the Rust types in `src-tauri/src/porch/users.rs`:
  *   - `UserProfile`
  *   - `Provenance` (`local` | `relay_restored`)
  *   - `KeychainEntry`
@@ -40,8 +40,28 @@ export interface UserProfile {
   is_primary: boolean;
   /** Where this profile came from. */
   provenance: Provenance;
+  /** WS-1 — Personae Closet: exactly one NON-primary profile carries `true`
+   *  at a time — the DEFAULT PERSONA whose Ed25519 key may appear on public
+   *  mesh lines. The superuser (primary) never carries this. When a default
+   *  is set, the node announces on the mesh; when none is set, it stays dark. */
+  is_default_persona: boolean;
   /** Unix milliseconds — when the profile was created on this install. */
   created_at: number;
+}
+
+/** WS-1 — a persona's PUBLIC mesh identity. Carries NO private-key material:
+ *  the persona signing key is HKDF-derived from the superuser seed on demand
+ *  and never persisted or surfaced. Mirrors the Rust `PersonaIdentity`. */
+export interface PersonaIdentity {
+  /** ULID of the owning profile (the persona) — the salt that derived the key. */
+  persona_id: string;
+  /** User-visible display name of the persona. */
+  display_name: string;
+  /** 32-byte Ed25519 public key of the persona signing key (byte array). */
+  public_key: number[];
+  /** Deterministic short fingerprint of `public_key`. This is what a peer
+   *  sees for this node on its mesh map. */
+  fingerprint: string;
 }
 
 /** One keychain entry's metadata. Ciphertext + nonce NEVER leave the
@@ -157,4 +177,46 @@ export async function userProfileKeychainRemove(entryId: string): Promise<void> 
     throw new Error("user_profile_keychain_remove is native-only");
   }
   await invoke<void>("user_profile_keychain_remove", { entryId });
+}
+
+// ---------------------------------------------------------------------------
+// WS-1 — Persona activation (mesh unlock).
+//
+// Designating a DEFAULT persona is what flips this node from silent /
+// receive-only to ANNOUNCING on the public mesh. A persona is a non-primary
+// profile; the superuser (primary) can never be a persona.
+// ---------------------------------------------------------------------------
+
+/** Designate a non-primary profile as the DEFAULT persona — the identity this
+ *  node announces on the public mesh. Clears any previous default. Once set,
+ *  a second instance can observe this node on its mesh map. Native only. */
+export async function personaSetDefault(personaId: string): Promise<UserProfile> {
+  if (!isTauri()) {
+    throw new Error("persona_set_default is native-only");
+  }
+  return await invoke<UserProfile>("persona_set_default", { personaId });
+}
+
+/** Clear the default persona — the node goes dark on the public mesh again.
+ *  Native only. */
+export async function personaClearDefault(): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("persona_clear_default is native-only");
+  }
+  await invoke<void>("persona_clear_default");
+}
+
+/** Read the current default persona's profile, or `null` if none is set (node
+ *  is dark on the mesh). Web returns `null`. */
+export async function personaDefaultGet(): Promise<UserProfile | null> {
+  if (!isTauri()) return null;
+  return await invoke<UserProfile | null>("persona_default_get");
+}
+
+/** Read the PUBLIC identity (public key + fingerprint) this node announces on
+ *  the mesh — the default persona's public bytes — or `null` when none is set.
+ *  Never returns private-key material or the superuser. Web returns `null`. */
+export async function personaPublicIdentity(): Promise<PersonaIdentity | null> {
+  if (!isTauri()) return null;
+  return await invoke<PersonaIdentity | null>("persona_public_identity");
 }

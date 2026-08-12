@@ -190,8 +190,11 @@
       })();
     </script>
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -226,14 +229,17 @@
         <video
           id="boot-splash-anim"
           class="boot-splash-anim"
-          src="/boot-splash.mp4"
           autoplay
           muted
           loop
           playsinline
           preload="auto"
           aria-hidden="true"
-        ></video>
+        >
+          <!-- VP9-alpha WebM first (transparent), mp4 fallback for WebKit. -->
+          <source src="/boot-splash.webm" type="video/webm" />
+          <source src="/boot-splash.mp4" type="video/mp4" />
+        </video>
       </div>
       <div id="boot-splash-brand">Concord</div>
     </div>

@@ -67,13 +67,13 @@ interface ServerEntry {
 const SERVERS: ServerEntry[] = [
   {
     id: VISIBILITY_SERVER_ID_PORCH,
-    label: "Porch (always-fresh guest entrance)",
+    label: "Guests (always-fresh guest entrance)",
     defaultHint:
       "Defaults to 1 hop — only your directly-paired peers can see it.",
   },
   {
     id: VISIBILITY_SERVER_ID_HOME,
-    label: "Home (your persistent server)",
+    label: "My space (your persistent space)",
     defaultHint:
       "Defaults to 0 hops — owner-only until you opt in. Raise this to let paired peers (or wider) see it in their explore menu.",
   },
@@ -91,8 +91,8 @@ export function VisibilitySection() {
             Server visibility
           </h4>
           <p className="text-xs text-on-surface-variant mt-1">
-            Available on the native build only. The browser tab doesn't host
-            servers, so there's nothing to advertise into the mesh.
+            Sets how many mesh hops out each server you host is advertised.
+            Available in the desktop app, which hosts the servers.
           </p>
         </div>
       </div>

@@ -1,12 +1,28 @@
 /**
- * Peer identity API wrapper (Phase 2 — Ed25519 device identity).
+ * Peer identity API wrapper.
  *
  * Thin wrapper around the `peer_identity` Tauri command exposed by
- * the native IPC backend. The Rust side keeps the Ed25519 private key inside
+ * `src-tauri/src/lib.rs`. The Rust side keeps the Ed25519 private key inside
  * a Stronghold snapshot and only ever returns the public surface:
- * `{ public_key_hex, fingerprint }`. This module mirrors that contract on
- * the TypeScript side and converts snake_case → camelCase for the consumer
- * API.
+ * `{ public_key_hex, owner_fingerprint, device_fingerprint }`. This module
+ * mirrors that contract on the TypeScript side and converts snake_case →
+ * camelCase for the consumer API.
+ *
+ * NUI-F29 — this install holds TWO keys and therefore two fingerprints, and
+ * neither may be rendered as "the fingerprint":
+ *
+ *   - `ownerFingerprint` names the PERSON. It comes from the seed the 24-word
+ *     recovery phrase carries, so every install restored from that phrase
+ *     reports the identical string. A peer can never check it — no wire
+ *     carries an owner key.
+ *   - `deviceFingerprint` names THIS MACHINE. It comes from the per-device
+ *     transport key that the libp2p PeerId inlines, so a peer holding our
+ *     peer id derives the identical string and the handshake proves we hold
+ *     the matching private key. This is the pairing / read-aloud value.
+ *
+ * They are identical on an install that has never been restored, which is
+ * exactly why the old single `fingerprint` field could sit under a
+ * device-flavoured label for so long without looking wrong.
  *
  * Defence-in-depth: the conversion below copies fields **explicitly** rather
  * than spreading the backend payload. If a future bug ever leaked a
@@ -22,7 +38,10 @@
  */
 export interface PeerIdentityPublic {
   publicKeyHex: string;
-  fingerprint: string;
+  /** The OWNER's — the person. Same on all of one person's devices. */
+  ownerFingerprint: string;
+  /** THIS DEVICE's — the machine, and the only one a peer can verify. */
+  deviceFingerprint: string;
 }
 
 /**
@@ -32,7 +51,8 @@ export interface PeerIdentityPublic {
  */
 interface RawPeerIdentityPublic {
   public_key_hex: string;
-  fingerprint: string;
+  owner_fingerprint: string;
+  device_fingerprint: string;
 }
 
 /**
@@ -54,6 +74,7 @@ export async function fetchPeerIdentity(): Promise<PeerIdentityPublic> {
   // rather than leaked into TS-land.
   return {
     publicKeyHex: raw.public_key_hex,
-    fingerprint: raw.fingerprint,
+    ownerFingerprint: raw.owner_fingerprint,
+    deviceFingerprint: raw.device_fingerprint,
   };
 }

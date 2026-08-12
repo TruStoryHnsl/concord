@@ -79,14 +79,14 @@ const SIZES: Record<BringingUpSplashSize, SizeSpec> = {
       "h-full w-full flex flex-col items-center justify-center gap-6",
   },
   compact: {
-    containerSize: 72,
-    videoSize: 64,
+    containerSize: 132,
+    videoSize: 120,
     brandSize: "0.9375rem",
-    statusSize: "0.75rem",
-    dropShadow: "drop-shadow(0 8px 18px rgba(0, 0, 0, 0.25))",
+    statusSize: "0.8125rem",
+    dropShadow: "drop-shadow(0 14px 30px rgba(0, 0, 0, 0.4))",
     showBrand: false,
     showStatus: true,
-    outerLayout: "flex flex-col items-center justify-center gap-3 py-4",
+    outerLayout: "flex flex-col items-center justify-center gap-4 py-4",
   },
   inline: {
     containerSize: 20,
@@ -194,7 +194,6 @@ export function BringingUpSplash({
       >
         <video
           ref={videoRef}
-          src="/boot-splash.mp4"
           autoPlay
           muted
           loop
@@ -209,7 +208,18 @@ export function BringingUpSplash({
             transform: "translateZ(0)",
             backfaceVisibility: "hidden",
           }}
-        />
+        >
+          {/*
+            VP9-alpha WebM first — it carries a real alpha channel so the
+            mark renders with TRANSPARENCY (no opaque square) on Chromium
+            and Firefox. The H.264 mp4 (which composites onto #0c0e11 and
+            therefore shows a square box) stays as the fallback only for
+            engines without VP9-alpha support (e.g. Safari/WebKit). The
+            source order matters: the browser picks the first it can play.
+          */}
+          <source src="/boot-splash.webm" type="video/webm" />
+          <source src="/boot-splash.mp4" type="video/mp4" />
+        </video>
       </span>
       {spec.showBrand || spec.showStatus ? (
         <span className="flex flex-col items-center gap-1">

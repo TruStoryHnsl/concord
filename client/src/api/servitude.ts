@@ -1,7 +1,7 @@
 /**
  * Embedded servitude control surface.
  *
- * Thin wrapper around the three Tauri commands exposed by the native IPC backend:
+ * Thin wrapper around the three Tauri commands exposed by `src-tauri/src/lib.rs`:
  *   - servitude_start: loads config from the store, constructs/reuses the
  *     `ServitudeHandle`, drives the lifecycle to Running.
  *   - servitude_stop: drives the lifecycle from Running back to Stopped.
@@ -12,8 +12,8 @@
  * import is dynamic so the file is safe to import from components rendered
  * in both environments.
  *
- * The Rust side is specified in the native service backend — see also
- * the native IPC backend for the command registrations.
+ * The Rust side is specified in `src-tauri/src/servitude/mod.rs` — see also
+ * `src-tauri/src/lib.rs` for the command registrations.
  */
 
 /**
@@ -31,7 +31,7 @@ export function isTauri(): boolean {
 
 /**
  * Servitude lifecycle states, mirrored from `LifecycleState` in
- * `native backend`. The Rust enum is
+ * `src-tauri/src/servitude/lifecycle.rs`. The Rust enum is
  * `#[serde(rename_all = "snake_case")]`, so the wire form is the
  * lowercase string.
  */

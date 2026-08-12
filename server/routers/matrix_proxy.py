@@ -13,7 +13,7 @@ so the same per-IP rate-limit machinery used by `/api/register` covers
 it. Everything else under `/_matrix/*` continues to go straight to
 tuwunel — only the login endpoint is intercepted.
 
-Caddy is updated (config/Caddyfile) so the more
+Caddy is updated (config/Caddyfile + config/Caddyfile.dev) so the more
 specific `handle /_matrix/client/*/login` block matches before the
 generic `/_matrix/*` catch-all.
 
@@ -22,20 +22,27 @@ Filed under F1 of the 2026-05-18 password-leak pentest report.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict, deque
 
 import httpx
 from fastapi import APIRouter, Request, Response
+
+from services.ratelimit import client_ip as shared_client_ip
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["matrix-proxy"])
 
-# Upstream homeserver. Hard-coded service name on the docker network;
-# concord-api always runs alongside tuwunel.
-CONDUWUIT_URL = "http://conduwuit:6167"
+# Upstream homeserver. Prefer the explicit MATRIX_HOMESERVER_URL env, which is
+# set by both the docker-compose stack (http://conduwuit:6167) and the
+# single-image build (http://127.0.0.1:6167). The bare compose service name
+# only resolves on a docker bridge network — in the single image everything is
+# loopback, so the old hard-coded "conduwuit" host failed DNS and 502'd every
+# login. Fall back to the compose name for legacy deployments that don't set it.
+CONDUWUIT_URL = os.getenv("MATRIX_HOMESERVER_URL", "http://conduwuit:6167")
 
 # Per-IP login rate limit. 30 attempts per 5-minute sliding window
 # tolerates legitimate password typos + form re-submits while making
@@ -88,17 +95,12 @@ def _check_login_rate_limit(ip: str) -> bool:
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Trusts X-Forwarded-For (Caddy sets it for
-    us; the request never reaches concord-api from outside the docker
-    network, so a request without XFF is from a local source we already
-    trust)."""
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        # First entry is the original client; later entries are proxies.
-        return xff.split(",")[0].strip()
-    if request.client is not None:
-        return request.client.host
-    return "unknown"
+    """Client IP for rate-limit keying — delegates to the shared
+    trusted-proxy-aware resolver (services.ratelimit.client_ip), so
+    forwarded headers are honored only when the direct peer is a
+    trusted proxy. A remote caller can no longer choose its own
+    bucket key by sending X-Forwarded-For."""
+    return shared_client_ip(request)
 
 
 # Hop-by-hop headers per RFC 7230 §6.1 — these must not be forwarded

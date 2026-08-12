@@ -152,7 +152,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
           {(phase.kind === "idle" || phase.kind === "error") && (
             <>
               <p className="text-sm text-on-surface-variant">
-                Package your home server&apos;s data and deliver it to a
+                Package your private space&apos;s data and deliver it to a
                 paired peer for longer-term storage and analysis. The
                 bundle is encrypted with a passphrase only you know.
               </p>
@@ -333,9 +333,9 @@ export function DataExportSection() {
           Data
         </h3>
         <p className="text-xs text-on-surface-variant">
-          Encrypted home-server exports are a native-only feature. Open
-          Concord on the device hosting your home server to package its
-          data for a trusted outside instance.
+          Packages this instance&apos;s data into an encrypted bundle
+          and delivers it to a paired peer. Available in the desktop app,
+          which hosts this instance and holds its data.
         </p>
       </section>
     );
@@ -350,8 +350,8 @@ export function DataExportSection() {
         Data
       </h3>
       <p className="text-xs text-on-surface-variant">
-        Send an encrypted copy of this instance&apos;s home server (the
-        persistent space — porch state is never exported) to a paired
+        Send an encrypted copy of this instance&apos;s data (the
+        persistent space — guest-space state is never exported) to a paired
         peer for longer-term storage and more advanced analysis.
       </p>
       <div>

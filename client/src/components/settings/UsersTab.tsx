@@ -34,9 +34,18 @@ import {
   userProfileRename,
   userProfileSetPrimary,
   userProfileDelete,
+  personaSetDefault,
+  personaClearDefault,
+  personaPublicIdentity,
   type UserProfile,
   type Provenance,
+  type PersonaIdentity,
 } from "../../api/userProfile";
+import { useAuthStore } from "../../stores/auth";
+import { isTauri } from "../../api/servitude";
+import { useSettingsStore } from "../../stores/settings";
+import { SUPERUSER_BACKUP_ANCHOR_ID } from "./SuperuserBackupSection";
+import { SuperuserPanel } from "../social/superuser/SuperuserPanel";
 
 /** Map provenance variant to a (label, Tailwind class tuple). */
 const PROVENANCE_META: Record<
@@ -59,7 +68,7 @@ const PROVENANCE_META: Record<
 };
 
 /** Maximum display-name length the backend accepts. Mirrors
- *  `MAX_DISPLAY_NAME_LEN` in the native user backend. Surfaced
+ *  `MAX_DISPLAY_NAME_LEN` in `src-tauri/src/porch/users.rs`. Surfaced
  *  client-side as an HTML `maxLength` so users don't get a confusing
  *  IPC error mid-typing. */
 const MAX_DISPLAY_NAME_LEN = 64;
@@ -68,6 +77,13 @@ export function UsersTab() {
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // The account you're signed in with. This IS your identity on this
+  // instance — it's shown as a known user, not something you have to
+  // "create". The localpart (before the homeserver) is the handle.
+  const userId = useAuthStore((s) => s.userId);
+  const loginHandle = userId ? userId.split(":")[0].replace("@", "") : null;
+  const native = isTauri();
 
   /** Inline rename state. `null` means no row is being renamed. */
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -81,11 +97,41 @@ export function UsersTab() {
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState("");
 
+  /** WS-1 — the PUBLIC identity this node announces on the mesh (the default
+   *  persona's public key + fingerprint), or null when no default persona is
+   *  designated (node is dark / receive-only). This is the observed proof of
+   *  the mesh-unlock state. */
+  const [meshIdentity, setMeshIdentity] = useState<PersonaIdentity | null>(null);
+
+  const setSettingsTab = useSettingsStore((s) => s.setSettingsTab);
+
+  /** Native: jump to the Profile tab's keychain-backup section. */
+  const handleClaimSuperuser = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.location.hash = `#${SUPERUSER_BACKUP_ANCHOR_ID}`;
+    }
+    setSettingsTab("profile");
+  }, [setSettingsTab]);
+
   const refresh = useCallback(async () => {
     setError(null);
+    // The porch profile store is native-only. On web there are no local
+    // profiles to manage — the identity banner above is the whole surface.
+    if (!isTauri()) {
+      setProfiles([]);
+      setLoading(false);
+      return;
+    }
     try {
       const list = await userProfileList();
       setProfiles(list);
+      // WS-1: refresh the mesh-announce identity alongside the profile list so
+      // the "announcing / dark" banner always reflects the current default.
+      try {
+        setMeshIdentity(await personaPublicIdentity());
+      } catch {
+        setMeshIdentity(null);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -154,6 +200,29 @@ export function UsersTab() {
     [refresh],
   );
 
+  /** WS-1 — designate a non-primary profile as the default persona (starts
+   *  mesh announce), or clear it (goes dark). */
+  const handleSetDefaultPersona = useCallback(
+    async (id: string) => {
+      try {
+        await personaSetDefault(id);
+        await refresh();
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refresh],
+  );
+
+  const handleClearDefaultPersona = useCallback(async () => {
+    try {
+      await personaClearDefault();
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refresh]);
+
   const onlyOneProfile = useMemo(() => profiles.length <= 1, [profiles.length]);
 
   if (loading) {
@@ -166,14 +235,102 @@ export function UsersTab() {
     <div className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
         <h2 className="text-xl font-display font-semibold text-on-surface">
-          Users
+          Identity
         </h2>
         <p className="text-sm text-on-surface-variant max-w-prose">
-          Profiles let you keep your Concord credentials separated. One
-          profile can be marked <strong>Primary</strong> — its keychain
-          is what relays to other devices.
+          Your superuser is your root identity on this instance — it owns the
+          keychain that syncs to your other devices. Additional identities let
+          you keep separate sets of credentials.
         </p>
       </header>
+
+      {loginHandle && (
+        <div className="rounded-lg bg-surface-container-high border border-primary/30 px-3 py-3 flex items-center gap-3">
+          <span className="material-symbols-outlined text-primary text-2xl">
+            shield_person
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-on-surface">
+              Signed in as {loginHandle}
+            </div>
+            <div className="text-xs text-on-surface-variant">
+              {native
+                ? "Claim this login as your superuser to make it your root identity across your devices."
+                : "This is the account you're connected with on this instance."}
+            </div>
+          </div>
+          {native && (
+            <button
+              type="button"
+              onClick={handleClaimSuperuser}
+              className="flex-shrink-0 px-3 py-1.5 text-sm rounded-lg bg-primary text-on-primary hover:opacity-90"
+              data-testid="users-tab-claim-superuser"
+            >
+              Claim as superuser
+            </button>
+          )}
+        </div>
+      )}
+
+      {native && (
+        <div
+          data-testid="users-tab-mesh-status"
+          data-announcing={meshIdentity ? "true" : "false"}
+          className={`rounded-lg px-3 py-3 flex items-center gap-3 border ${
+            meshIdentity
+              ? "bg-primary/10 border-primary/40"
+              : "bg-surface-container-high border-outline-variant/30"
+          }`}
+        >
+          <span
+            className={`material-symbols-outlined text-2xl ${
+              meshIdentity ? "text-primary" : "text-on-surface-variant"
+            }`}
+          >
+            {meshIdentity ? "cell_tower" : "cloud_off"}
+          </span>
+          <div className="min-w-0 flex-1">
+            {meshIdentity ? (
+              <>
+                <div className="text-sm font-medium text-on-surface">
+                  Announcing on the mesh as {meshIdentity.display_name}
+                </div>
+                {/* NUI-F29 — named. This is the PERSONA's fingerprint,
+                    HKDF-derived from the owner seed under the persona id: a
+                    third key, neither your identity fingerprint nor this
+                    device's. Rendered bare it was indistinguishable from
+                    either. */}
+                <div
+                  className="text-xs text-on-surface-variant font-mono truncate"
+                  data-testid="users-tab-mesh-fingerprint"
+                >
+                  Persona fingerprint: {meshIdentity.fingerprint}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-medium text-on-surface">
+                  Dark on the mesh
+                </div>
+                <div className="text-xs text-on-surface-variant">
+                  No default persona set. Designate one below to become visible
+                  to other instances on the mesh.
+                </div>
+              </>
+            )}
+          </div>
+          {meshIdentity && (
+            <button
+              type="button"
+              onClick={() => void handleClearDefaultPersona()}
+              data-testid="users-tab-clear-default-persona"
+              className="flex-shrink-0 px-3 py-1.5 text-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high"
+            >
+              Go dark
+            </button>
+          )}
+        </div>
+      )}
 
       {error && (
         <div
@@ -267,6 +424,19 @@ export function UsersTab() {
                 >
                   {meta.label}
                 </span>
+
+                {profile.is_default_persona && (
+                  <span
+                    data-testid="users-tab-default-persona-badge"
+                    title="Announced on the mesh"
+                    className="text-xs px-2 py-0.5 rounded-full border font-label bg-primary/15 text-primary border-primary/40 inline-flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-sm">
+                      cell_tower
+                    </span>
+                    Mesh persona
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -316,6 +486,19 @@ export function UsersTab() {
                   </>
                 ) : (
                   <>
+                    {!profile.is_primary && !profile.is_default_persona && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleSetDefaultPersona(profile.id)
+                        }
+                        data-testid="users-tab-set-default-persona"
+                        title="Announce this identity on the mesh"
+                        className="px-2 py-1 text-sm rounded text-on-surface-variant hover:bg-surface-container-high"
+                      >
+                        Set as mesh persona
+                      </button>
+                    )}
                     {!profile.is_primary && (
                       <button
                         type="button"
@@ -360,60 +543,71 @@ export function UsersTab() {
         })}
       </ul>
 
-      <div className="pt-2 border-t border-outline-variant/20">
-        {creating ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={createDraft}
-              maxLength={MAX_DISPLAY_NAME_LEN}
-              autoFocus
-              onChange={(e) => setCreateDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void handleCreate();
-                } else if (e.key === "Escape") {
+      {native && (
+        <div className="pt-2 border-t border-outline-variant/20">
+          {creating ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={createDraft}
+                maxLength={MAX_DISPLAY_NAME_LEN}
+                autoFocus
+                onChange={(e) => setCreateDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void handleCreate();
+                  } else if (e.key === "Escape") {
+                    setCreating(false);
+                    setCreateDraft("");
+                  }
+                }}
+                placeholder="Identity name"
+                aria-label="Identity name"
+                data-testid="users-tab-create-input"
+                className="bg-surface-container text-on-surface rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button
+                type="button"
+                onClick={() => void handleCreate()}
+                data-testid="users-tab-create-save"
+                disabled={createDraft.trim().length === 0}
+                className="px-3 py-1 text-sm rounded bg-primary text-on-primary hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   setCreating(false);
                   setCreateDraft("");
-                }
-              }}
-              placeholder="New profile name"
-              aria-label="New profile name"
-              data-testid="users-tab-create-input"
-              className="bg-surface-container text-on-surface rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
-            />
+                }}
+                className="px-3 py-1 text-sm rounded text-on-surface-variant hover:bg-surface-container-high"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
             <button
               type="button"
-              onClick={() => void handleCreate()}
-              data-testid="users-tab-create-save"
-              disabled={createDraft.trim().length === 0}
-              className="px-3 py-1 text-sm rounded bg-primary text-on-primary hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => setCreating(true)}
+              data-testid="users-tab-create-start"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high text-on-surface hover:opacity-90"
             >
-              Create
+              <span className="material-symbols-outlined text-base">add</span>
+              Add identity
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setCreating(false);
-                setCreateDraft("");
-              }}
-              className="px-3 py-1 text-sm rounded text-on-surface-variant hover:bg-surface-container-high"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            data-testid="users-tab-create-start"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high text-on-surface hover:opacity-90"
-          >
-            <span className="material-symbols-outlined text-base">add</span>
-            Create profile
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      )}
+
+      {/* WS-2 — reachable superuser (owner-identity) panel: first-run claim
+          or owner controls, reconciled with the primary profile above. */}
+      <section
+        className="pt-4 border-t border-outline-variant/20"
+        data-testid="users-tab-superuser-panel"
+      >
+        <SuperuserPanel />
+      </section>
     </div>
   );
 }

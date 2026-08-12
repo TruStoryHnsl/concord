@@ -34,24 +34,34 @@ import {
 import {
   sourceMatchesMatrixDomain,
   useSourcesStore,
+  useVisibleSources,
   type ConcordSource,
 } from "../../stores/sources";
+import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
+import { ReticulumSurface } from "../reticulum/ReticulumSurface";
+import { ReticulumSidebar } from "../reticulum/ReticulumSidebar";
 import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
 import { useDisplayName } from "../../hooks/useDisplayName";
 import { useExtension } from "../../hooks/useExtension";
 import { useExtensionRoomBridge } from "../../hooks/useExtensionBridge";
 import { useExtensionStore } from "../../stores/extension";
+import { keychainAdd } from "../../api/keychain";
 import ExtensionEmbed from "../extension/ExtensionEmbed";
 import ExtensionMenu from "../extension/ExtensionMenu";
 import { ExtensionCatalogModal } from "../extension/ExtensionCatalogModal";
 import { LocalHostingControl } from "../sources/LocalHostingControl";
 import { PeerCardScanner } from "../peers/PeerCardScanner";
 import { ServerSidebar } from "./ServerSidebar";
+import { GroupedRail } from "./GroupedRail";
 import { ChannelSidebar, UserBar } from "./ChannelSidebar";
 import { LocalServerSidebar } from "../local/LocalServerSidebar";
 import { LocalChannelSidebar } from "../local/LocalChannelSidebar";
 import { LocalChatPane } from "../local/LocalChatPane";
+import { LanDiscoveryMap } from "../local/LanDiscoveryMap";
+import { MeshMap } from "../mesh/MeshMap";
+import { PeersPanel } from "../local/PeersPanel";
+import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
 import { usePorchStore } from "../../stores/porchStore";
 import { useInstanceNameStore } from "../../stores/instanceName";
 import { useHomeServerNameStore } from "../../stores/homeServerName";
@@ -68,11 +78,6 @@ import { BugReportModal } from "../BugReportModal";
 import { StatsModal } from "../StatsModal";
 import { SourceBrandIcon, inferSourceBrand } from "../sources/sourceBrand";
 import {
-  getRoomDiagnostics,
-  getServerRules,
-  type RoomDiagnostics,
-} from "../../api/concord";
-import {
   buildMatrixSourceDraft,
   clearPendingSourceSso,
   clearPendingSourceSsoQueryParams,
@@ -82,41 +87,29 @@ import {
   writePendingSourceSso,
   type MatrixSourceDraft,
 } from "../sources/matrixSourceAuth";
+import { switchToSource } from "../../lib/switchToSource";
+import { isTauri } from "../../api/servitude";
+import { useHomeFeedStore } from "../../stores/homeFeed";
 import { useFormatStore } from "../../stores/format";
 import { useBootReadyStore } from "../../stores/bootReady";
+import { useInstanceAdmin } from "./chatLayout/useInstanceAdmin";
+import { useSidebarResize } from "./chatLayout/useSidebarResize";
+import { useRoomDiagnostics } from "./chatLayout/useRoomDiagnostics";
+import { rulesAcceptedKey, useServerRulesGate } from "./chatLayout/useServerRulesGate";
+import { useHistoryNav } from "./chatLayout/useHistoryNav";
+import { useNavRestore } from "./chatLayout/useNavRestore";
+import { useNavBridge, type MobileView } from "./chatLayout/useNavBridge";
+import { shouldUseTabletLayout } from "./chatLayout/layoutMode";
 
-/** localStorage key for tracking rules acceptance per server per user. */
-function rulesAcceptedKey(userId: string, serverId: string) {
-  return `concord_rules_accepted:${userId}:${serverId}`;
-}
-
-type MobileView = "sources" | "servers" | "channels" | "chat" | "dms" | "settings";
-
-/** A parallel browse tab — each tab has its own independent navigation state. */
-interface BrowseTab {
-  id: string;
-  pageView: "sources" | "servers" | "channels" | "chat";
-  /** Saved server/channel selection for this tab (persisted while tab is inactive). */
-  serverId: string | null;
-  channelId: string | null;
-  dmActive: boolean;
-  dmRoomId: string | null;
-}
-
-/** Generate a short unique tab ID. */
-function newTabId(): string {
-  return Math.random().toString(36).slice(2, 8);
-}
+// The legacy `BrowseTab` interface + `newTabId()` helper were removed with
+// the multi-tab page-depth model. The navStack store (and its `LegacyBrowseTab`
+// type + `browseTabToStack` mapper) is the single navigation model now.
 
 /** True when running inside a Tauri native shell (iOS, Android, desktop).
  *  `__TAURI_INTERNALS__` is the canonical Tauri v2 global — see the
  *  comment in `client/src/api/serverUrl.ts` for the full history. */
 // const isNativeApp =
 //   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-function lastChannelStorageKey(userId: string | null): string {
-  return userId ? `concord_last_channel:${userId}` : "concord_last_channel";
-}
 
 /**
  * ChatLayout — the top-level shell.
@@ -144,6 +137,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const activeChannelId = useServerStore((s) => s.activeChannelId);
   const servers = useServerStore((s) => s.servers);
   const activeServerId = useServerStore((s) => s.activeServerId);
+  const switchingSession = useServerStore((s) => s.switchingSession);
   const deleteChannelStore = useServerStore((s) => s.deleteChannel);
   const setActiveChannelId = (roomId: string) =>
     useServerStore.setState({ activeChannelId: roomId });
@@ -175,22 +169,52 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const typingUsers = useTypingUsers(activeRoomId);
   const { onKeystroke, onStopTyping } = useSendTyping(activeRoomId);
   useNotifications();
-  const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnostics | null>(null);
-  const [roomDiagnosticsLoading, setRoomDiagnosticsLoading] = useState(false);
-  const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
+  const {
+    roomDiagnostics,
+    roomDiagnosticsLoading,
+    diagnosticsPopupOpen,
+    setDiagnosticsPopupOpen,
+  } = useRoomDiagnostics(accessToken, activeRoomId, messages.length, userId);
 
-  // INS-020 iPad layout — when running on an iPad (native Tauri iOS
-  // build or web browser with iPad-class touch screen), force the
+  // INS-020 iPad layout — when running on a WIDE iPad (native Tauri iOS
+  // build or web browser with iPad-class touch screen), render the
   // three-pane desktop layout regardless of the CSS `md:` breakpoint.
-  // The existing Tailwind `hidden md:block` / `md:hidden` split already
-  // handles web browsers correctly because iPad portrait is >=768px,
-  // but native Tauri iOS reports a webview viewport that can drift
-  // below the `md:` threshold during split view / slide over, which
-  // would otherwise flip the shell to the phone layout mid-session.
-  // Explicit `isIPad` + a prefersTabletLayout signal keeps the layout
-  // stable regardless of transient viewport width changes.
+  //
+  // ── iPad back-button fix (fix/ipad-nav-back-button) ──────────────────
+  // This was previously `prefersTabletLayout = platform.isIPad` —
+  // device-based and unconditional. The three-pane layout has NO back
+  // affordance (every parent pane is always on screen, so "up" is just to
+  // the left). That is fine when the iPad webview is wide, but the app
+  // permits iPadOS Split View / Slide Over (`UIRequiresFullScreen: false`),
+  // so the webview can be NARROW on an iPad — and in a narrow three-pane
+  // shell the user was stranded with no way back up the stack.
+  //
+  // The fix drives the choice off ACTUAL AVAILABLE WIDTH, not the device
+  // type (see `shouldUseTabletLayout`). A wide iPad keeps the three-pane
+  // layout; a narrow iPad falls through to the responsive shell whose
+  // `md:hidden` stacked layout carries the framework-level back control
+  // (canGoBack / handleStackBack) — so the back affordance is consistent
+  // across iPhone and a narrowed iPad. The 768px threshold matches the
+  // Tailwind `md` breakpoint the non-iPad clients already switch on, so a
+  // narrow iPad webview behaves identically to a narrow browser window.
   const platform = usePlatform();
-  const prefersTabletLayout = platform.isIPad;
+  // Track the live webview width so split-view / slide-over resizes flip
+  // the layout (usePlatform re-renders on resize but does not expose width).
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== "undefined" ? window.innerWidth : 0,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => setViewportWidth(window.innerWidth);
+    handler();
+    window.addEventListener("resize", handler);
+    window.addEventListener("orientationchange", handler);
+    return () => {
+      window.removeEventListener("resize", handler);
+      window.removeEventListener("orientationchange", handler);
+    };
+  }, []);
+  const prefersTabletLayout = shouldUseTabletLayout(platform.isIPad, viewportWidth);
   const isTV = platform.isTV;
 
   // TV DPAD navigation — top-level handler for back/escape and
@@ -204,74 +228,43 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const [showHelp, setShowHelp] = useState(false);
   const [placeBannerDismissed, setPlaceBannerDismissed] = useState(false);
   // INS-070 — admin gate + Extension Library modal visibility.
-  const [isInstanceAdmin, setIsInstanceAdmin] = useState(false);
+  const isInstanceAdmin = useInstanceAdmin(accessToken);
+  // The source catalogue is USER-scoped (each account curates its own
+  // connections; the core instance is the only shared default), so every
+  // signed-in non-guest user may add sources — the instance-admin gate
+  // only ever guarded what was, back then, instance-global state. Guests
+  // are ephemeral and keep the peer-porch pairing path only.
+  const isGuest = useAuthStore((s) => s.isGuest);
+  const canManageSources = (!!userId && !isGuest) || isTauri();
   const [extensionCatalogOpen, setExtensionCatalogOpen] = useState(false);
-  useEffect(() => {
-    if (!accessToken) {
-      setIsInstanceAdmin(false);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { checkAdmin } = await import("../../api/concord");
-        const result = await checkAdmin(accessToken);
-        if (!cancelled) setIsInstanceAdmin(result.is_admin);
-      } catch {
-        if (!cancelled) setIsInstanceAdmin(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken]);
 
-  // INS-044: Multi-tab browse. Each BrowseTab has its own page-depth
-  // position (sources → servers → channels → chat). Overlay views
-  // (dms, settings, actions) are NOT per-tab — they are shared overlays
-  // that render on top of the active tab.
-  const [tabState, setTabState] = useState<{ tabs: BrowseTab[]; activeId: string }>(() => {
-    const firstId = newTabId();
-    return {
-      tabs: [{ id: firstId, pageView: "sources", serverId: null, channelId: null, dmActive: false, dmRoomId: null }],
-      activeId: firstId,
-    };
-  });
-
-  // Shared overlay state — not per-tab.
-  // Overlay views (dms, settings) cover the whole screen on top of
-  // whichever browse tab is active. Switching to a page-depth view clears
-  // the overlay, restoring the active tab's content.
-  const [overlayView, setOverlayView] = useState<"dms" | "settings" | null>(null);
-
-  // Convenience accessors
-  const tabs = tabState.tabs;
-  const activeTabIdVal = tabState.activeId;
-  const activeTab = tabs.find((t) => t.id === activeTabIdVal) ?? tabs[0];
-
-  // The "mobileView" seen by the rest of ChatLayout:
-  //   - If an overlay is active, that overlay is the view.
-  //   - Otherwise, the active tab's pageView is the view.
-  const mobileView: MobileView = overlayView ?? activeTab.pageView;
-
-  // setMobileView — compatibility shim so all the existing code keeps working.
-  // Page-depth views update the active tab's position; overlay views update
-  // the shared overlay. Switching to a page-depth view clears any overlay.
-  const setMobileView = useCallback((view: MobileView) => {
-    if (view === "dms" || view === "settings") {
-      setOverlayView(view);
-    } else {
-      setOverlayView(null);
-      setTabState((prev) => ({
-        ...prev,
-        tabs: prev.tabs.map((t) =>
-          t.id === prev.activeId
-            ? { ...t, pageView: view as BrowseTab["pageView"] }
-            : t,
-        ),
-      }));
-    }
-  }, []);
+  // ── Navigation stack (replaces the flat scroll-snap page-depth enum) ──
+  //
+  // The navStack store is now the single source of truth for the mobile
+  // view. The legacy multi-tab `BrowseTab` model (one flat `pageView` enum
+  // per tab) is superseded — its old→new mapper (`browseTabToStack`) lives
+  // in the navStack module and is unit-tested for the eventual multi-tab
+  // wiring, but no tab-switch UI exists today, so a single active stack is
+  // the live model. The desktop multi-column layout reads selection from the
+  // server/source/DM stores directly and is byte-identical to before — it
+  // never consumed the per-tab `pageView` or the overlay state.
+  //
+  // The navStack ↔ stores bridge (mobileView / setMobileView /
+  // drill-in push helpers) lives in `useNavBridge`. `setMobileView` is a
+  // compatibility shim: overlay views (dms/settings) set the navStack
+  // overlay; page-depth views clear it and collapse/extend the stack via
+  // `resetToLevel`, which preserves branch context so a
+  // server→channels→chat path popped back to "channels" lands on the SAME
+  // server's channel list rather than resetting to leftmost — the
+  // headline nav bug fix.
+  const {
+    navStack,
+    navPop,
+    mobileView,
+    setMobileView,
+    handleMobileChannelSelect,
+    handleMobileDMSelect,
+  } = useNavBridge(activeServerId);
 
   // Mobile account sheet (T003)
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
@@ -327,9 +320,18 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Source browser — opened when the user clicks a source tile.
   const [sourceBrowserSourceId, setSourceBrowserSourceId] = useState<string | null>(null);
-  const sources = useSourcesStore((s) => s.sources);
+  // USER-scoped view of the persisted source set: rows owned by other
+  // accounts on this browser stay persisted but never render.
+  const sources = useVisibleSources();
   const openSourceBrowser = useCallback(
     (sourceId: string) => {
+      // Reticulum sources have no Matrix-shaped server directory — route
+      // to the dedicated Reticulum surface instead of the browser modal.
+      const src = useSourcesStore.getState().sources.find((s) => s.id === sourceId);
+      if (src?.platform === "reticulum") {
+        useReticulumSurfaceStore.getState().open(sourceId);
+        return;
+      }
       setSourceBrowserSourceId(sourceId);
     },
     [],
@@ -346,11 +348,29 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   //   - client/src/components/local/LocalChannelSidebar.tsx
   //   - client/src/components/local/LocalChatPane.tsx
   const [localActive, setLocalActive] = useState(false);
+  // Reticulum source surface — a non-Discord, framework-shaped surface
+  // (network/announces/interfaces). Mutually exclusive with the
+  // server/DM/local surfaces; see the clearing effects below.
+  const reticulumSourceId = useReticulumSurfaceStore((s) => s.sourceId);
+  const reticulumOpen = reticulumSourceId !== null;
+  // W0.3 / F1 — when the local source's `lan_map` pseudo-channel is the
+  // active view, the chat pane renders LanDiscoveryMap instead of a porch
+  // channel. Tracked in the localServerSelection store so the sidebar row
+  // and the pane agree on which special surface is open.
+  const lanMapOpen = useLocalServerSelectionStore((s) => s.lanMapOpen);
+  // W1.1 / F2 — mesh-topology map special surface (sibling of the LAN
+  // map; mutually exclusive with it via the store).
+  const meshMapOpen = useLocalServerSelectionStore((s) => s.meshMapOpen);
+  // Peer-pairing special surface (sibling of the mesh / LAN maps; mutually
+  // exclusive via the store). The reachable entry point for tap-to-pair.
+  const peersOpen = useLocalServerSelectionStore((s) => s.peersOpen);
   const porchSelectedChannel = usePorchStore((s) =>
     s.channels.find((c) => c.id === s.selectedChannelId) ?? null,
   );
   const porchVanityName = useInstanceNameStore((s) => s.name);
-  const porchLabel = porchVanityName.trim() || "porch";
+  // Rendered header fallback for the local source — the user's own space.
+  // `porchVanityName` / internal keys are unchanged; only the visible label.
+  const porchLabel = porchVanityName.trim() || "My space";
   const loadPorchChannels = usePorchStore((s) => s.loadChannels);
   // F1b-IMPL — hydrate the persistent home-server name on first
   // ChatLayout mount so the home tile in LocalServerSidebar renders
@@ -367,6 +387,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     // tapped — see the Matrix-tile click handlers in ServerSidebar /
     // SourcesPanel, which clear `localActive` via the effects below.
     setLocalActive(true);
+    useReticulumSurfaceStore.getState().close();
     useDMStore.getState().setDMActive(false);
     useServerStore.setState({ activeServerId: null, activeChannelId: null });
     // Kick a channel-list load so the channel column populates as soon
@@ -374,14 +395,33 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     void loadPorchChannels();
   }, [loadPorchChannels]);
 
+  // Unified-rail local-server selection: pick porch/home AND activate the
+  // local surface so the channel column shows it (with its LAN/mesh maps).
+  const handleLocalServerSelect = useCallback(
+    (key: "porch" | "home") => {
+      useLocalServerSelectionStore.getState().setActive(key);
+      openLocal();
+    },
+    [openLocal],
+  );
+
   // Clear localActive whenever a Matrix source / DM / server becomes
   // active — keeps the porch tile and Matrix tiles mutually exclusive
   // in the active-source semantics.
   useEffect(() => {
     if (activeServerId || activeChannelId || dmActive) {
       setLocalActive(false);
+      useReticulumSurfaceStore.getState().close();
     }
   }, [activeServerId, activeChannelId, dmActive]);
+
+  // Opening the Reticulum surface displaces the local/porch surface —
+  // the two share the main pane. (Server/DM selection is cleared at the
+  // click site; localActive is ChatLayout-local state, so it's cleared
+  // here.)
+  useEffect(() => {
+    if (reticulumOpen) setLocalActive(false);
+  }, [reticulumOpen]);
 
   // Auto-activate the porch on first ChatLayout mount when nothing
   // else is selected — the porch IS the device's default surface, so
@@ -400,67 +440,65 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     openLocal();
   }, [activeServerId, activeChannelId, dmActive, openLocal]);
 
-  // Resizable channel sidebar (desktop only)
-  const SIDEBAR_MIN = 160;
-  const SIDEBAR_MAX = 400;
-  const SIDEBAR_DEFAULT = 224;
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const saved = localStorage.getItem("concord_sidebar_width");
-      if (saved) return Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(saved)));
-    } catch {}
-    return SIDEBAR_DEFAULT;
-  });
-  const isDragging = useRef(false);
-
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    const startX = e.clientX;
-    const startWidth = sidebarWidth;
-
-    const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - startX;
-      const newWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startWidth + delta));
-      setSidebarWidth(newWidth);
-    };
-
-    const onUp = () => {
-      isDragging.current = false;
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [sidebarWidth]);
-
+  // Native front door (Personal-Messaging UI): the Home conversation list
+  // raises a one-shot "open this conversation" intent on the homeFeed store;
+  // ChatLayout — which owns every navigation primitive — consumes it here and
+  // routes into the EXISTING navStack drill-down / DM / porch surfaces. This
+  // is purely additive: with no pending intent (web, or native steady-state)
+  // the effect is inert, so no existing behavior changes. The homeFeed store's
+  // `surface` flip (set by `requestOpen`) is what reveals this layout from
+  // under the front door — see `NativeFrontDoor`.
+  const homePendingOpen = useHomeFeedStore((s) => s.pendingOpen);
   useEffect(() => {
-    try { localStorage.setItem("concord_sidebar_width", String(sidebarWidth)); } catch {}
-  }, [sidebarWidth]);
+    if (!homePendingOpen) return;
+    const target = useHomeFeedStore.getState().consumePendingOpen();
+    if (!target) return;
+    switch (target.kind) {
+      case "docker": {
+        // Hand off into the existing source/server/channel drill-down.
+        switchToSource(target.sourceId);
+        setMobileView("channels");
+        break;
+      }
+      case "local": {
+        // The device's own porch — same path the home/porch rail tile uses.
+        handleLocalServerSelect("home");
+        setMobileView("channels");
+        break;
+      }
+      case "dm": {
+        // Cycle 2 (WS-C): DMs now open on the native messenger chat surface
+        // (`NativeChatSurface`), so `openConversation` no longer raises a DM
+        // intent here. This case remains as a defensive fallback for any
+        // caller that still raises a raw DM intent — route into the existing
+        // DM/chat view so nothing is broken.
+        if (target.sourceId) switchToSource(target.sourceId);
+        handleMobileDMSelect(target.roomId);
+        break;
+      }
+      case "peer": {
+        // Wave 2 (live conversations): peer rows now open on the NATIVE
+        // p2p-inbox chat surface (`NativeChatSurface` → `PeerChatSurface`
+        // backed by `usePeerInbox`), so `openConversation` no longer raises
+        // a peer intent here — the Cycle 3 "bare peer" seam is closed. This
+        // case remains as a defensive fallback for any caller still raising
+        // a raw peer intent: route it onto the same native surface.
+        useHomeFeedStore.getState().openPeerChat(target.peerId);
+        break;
+      }
+    }
+  }, [
+    homePendingOpen,
+    handleLocalServerSelect,
+    handleMobileDMSelect,
+    setMobileView,
+  ]);
+
+  // Resizable channel sidebar (desktop only)
+  const { sidebarWidth, handleResizeStart, SIDEBAR_MIN, SIDEBAR_MAX } =
+    useSidebarResize();
 
   useEffect(() => { setEditingMessage(null); setFormatPanelOpen(false); }, [activeRoomId, setFormatPanelOpen]);
-
-  // TASK 26: Track the most recently-active channel so the "Reconnect to
-  // last channel" quick action can restore it after the user has navigated
-  // away (DMs, settings, another server). Persisted in localStorage so it
-  // survives reloads. Only server channels are tracked — DMs reconnect via
-  // their own store already.
-  useEffect(() => {
-    if (!dmActive && activeServerId && activeChannelId) {
-      try {
-        localStorage.setItem(
-          lastChannelStorageKey(userId),
-          JSON.stringify({ serverId: activeServerId, roomId: activeChannelId }),
-        );
-      } catch {}
-    }
-  }, [dmActive, activeServerId, activeChannelId, userId]);
 
   const activeServer = useMemo(
     () => servers.find((s) => s.id === activeServerId),
@@ -478,36 +516,14 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // Rules gate state — tracks rules_text for the active server and whether
   // the current user has accepted it. Acceptance is persisted in localStorage
   // keyed by (userId, serverId) so it survives page reloads.
-  const [activeServerRulesText, setActiveServerRulesText] = useState<string | null>(null);
-  const [rulesAccepted, setRulesAccepted] = useState<boolean>(true);
-
-  useEffect(() => {
-    if (!activeServerId || !userId || !accessToken || dmActive) {
-      setActiveServerRulesText(null);
-      setRulesAccepted(true);
-      return;
-    }
-    // Use rules_text already in the store if present; otherwise fetch.
-    const storedRules = activeServer?.rules_text ?? undefined;
-    const resolve = (rulesText: string | null | undefined) => {
-      if (!rulesText) {
-        setActiveServerRulesText(null);
-        setRulesAccepted(true);
-        return;
-      }
-      setActiveServerRulesText(rulesText);
-      const accepted = localStorage.getItem(rulesAcceptedKey(userId, activeServerId)) === "1";
-      setRulesAccepted(accepted);
-    };
-    if (storedRules !== undefined) {
-      resolve(storedRules);
-    } else {
-      getServerRules(activeServerId, accessToken)
-        .then((data) => resolve(data.rules_text))
-        .catch(() => resolve(null));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeServerId, userId, accessToken, dmActive]);
+  const { activeServerRulesText, rulesAccepted, setRulesAccepted } =
+    useServerRulesGate(
+      activeServerId,
+      userId,
+      accessToken,
+      dmActive,
+      activeServer?.rules_text ?? undefined,
+    );
   // Friendly empty-channel placeholder. The verbose diagnostics block
   // used to render here directly, which made every empty room look
   // like an error report. Now the channel just invites the user to
@@ -657,13 +673,13 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   const loadMembers = useServerStore((s) => s.loadMembers);
   const [serversLoaded, setServersLoaded] = useState(false);
 
-  // Tell the launch splash that the logged-in shell is ready to be
-  // shown to the user. Fires AFTER the initial server/conversation/
-  // catalog data has resolved, so the splash doesn't dismiss into
-  // a half-loaded ChatLayout where channel tiles and messages are
-  // still popping in. requestAnimationFrame defers the flag to
-  // after-paint so the next frame the user sees is the real UI,
-  // not an empty shell.
+  // Tell the launch splash that the logged-in shell is ready to be shown.
+  // Fires as soon as the initial REST data (servers/conversations/catalog)
+  // has resolved — which is fast. We deliberately do NOT wait for the Matrix
+  // initial sync here: that can take a long time, and holding the launch
+  // curtain for it makes boot feel frozen. Instead the user drops into the
+  // shell quickly and any still-loading surface plays the loading animation
+  // IN PLACE (content pane / channel list), so nothing blocks.
   const markAppReady = useBootReadyStore((s) => s.markAppReady);
   useEffect(() => {
     if (!serversLoaded) return;
@@ -672,12 +688,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   }, [serversLoaded, markAppReady]);
 
 
-  const startupRestoreHandled = useRef<string | null>(null);
-  const origSetActiveChannel = useServerStore((s) => s.setActiveChannel);
-  const setActiveServer = useServerStore((s) => s.setActiveServer);
-  const setActiveDM = useDMStore((s) => s.setActiveDM);
   const addToast = useToastStore((s) => s.addToast);
-  const setDMActive = useDMStore((s) => s.setDMActive);
 
   const loadCatalog = useExtensionStore((s) => s.loadCatalog);
 
@@ -688,6 +699,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       loadServers(accessToken),
       loadConversations(accessToken),
       loadCatalog(accessToken),
+      // Aggregate the OTHER connected instances' servers into the rail
+      // (multi-instance hot-swap). Independent of the active instance's
+      // own server load; a failure here never blocks app-ready.
+      useServerStore.getState().loadForeignServers(),
     ]).finally(() => {
       if (!cancelled) setServersLoaded(true);
     });
@@ -696,80 +711,16 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     };
   }, [accessToken, serversLoaded, loadServers, loadConversations, loadCatalog]);
 
-  useEffect(() => {
-    if (!accessToken || !activeRoomId || messages.length > 0) {
-      setRoomDiagnostics(null);
-      setRoomDiagnosticsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setRoomDiagnosticsLoading(true);
-    getRoomDiagnostics(activeRoomId, accessToken)
-      .then((diag) => {
-        if (!cancelled) setRoomDiagnostics(diag);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setRoomDiagnostics({
-            room_id: activeRoomId,
-            user_id: userId ?? "",
-            binding: { kind: "unknown" },
-            inference: "diagnostic_request_failed",
-            summary: err instanceof Error ? err.message : "Room diagnostics failed",
-            steps: [],
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setRoomDiagnosticsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken, activeRoomId, messages.length, userId]);
-
-  useEffect(() => {
-    if (!serversLoaded || !userId) return;
-    if (startupRestoreHandled.current === userId) return;
-
-    try {
-      const raw = localStorage.getItem(lastChannelStorageKey(userId));
-      if (!raw) {
-        startupRestoreHandled.current = userId;
-        return;
-      }
-      const parsed = JSON.parse(raw) as { serverId?: string; roomId?: string };
-      const server = servers.find((s) => s.id === parsed.serverId);
-      const channel = server?.channels.find((c) => c.matrix_room_id === parsed.roomId);
-      if (!server || !channel) return;
-      startupRestoreHandled.current = userId;
-      setDMActive(false);
-      setActiveServer(server.id);
-      origSetActiveChannel(channel.matrix_room_id);
-    } catch {
-      startupRestoreHandled.current = userId;
-    }
-  }, [serversLoaded, userId, servers, setDMActive, setActiveServer, origSetActiveChannel]);
+  // Boot-restore the last channel + rebuild the navStack on refresh, and
+  // persist the active channel for next launch. (TASK 26 / deep-link
+  // rehydrate — see useNavRestore.)
+  useNavRestore(serversLoaded, userId, servers, dmActive, activeServerId, activeChannelId);
 
   useEffect(() => {
     if (accessToken && activeServerId) {
       loadMembers(activeServerId, accessToken);
     }
   }, [accessToken, activeServerId, loadMembers]);
-
-  // When selecting a channel on mobile, auto-switch to chat view
-  const handleMobileChannelSelect = useCallback((roomId: string) => {
-    origSetActiveChannel(roomId);
-    setMobileView("chat");
-  }, [origSetActiveChannel]);
-
-  // When selecting a DM on mobile, switch to chat view
-  const handleMobileDMSelect = useCallback((roomId: string) => {
-    setActiveDM(roomId);
-    setMobileView("chat");
-  }, [setActiveDM]);
 
   /* ── TASK 26: Mobile dashboard quick actions ── */
 
@@ -843,25 +794,32 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           <div className="flex h-full min-h-0 flex-shrink-0 bg-surface">
             <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
               <div className="flex min-h-0 flex-1">
-                <div className="w-[41px] mr-[2px] flex-shrink-0">
-                  <SectionBoundary>
-                    <SourcesPanel
-                      onAddSource={openAddSource}
-                      onSourceOpen={openSourceBrowser}
-                      onLocalOpen={openLocal}
-                      onExplore={openExplore}
-                    />
-                  </SectionBoundary>
-                </div>
-
+                {/* Unified stacked rail: DM (top) + local mesh group
+                    (porch/home) + each source centered on its server group,
+                    dividers between. Replaces the separate Sources column +
+                    Server sidebar; the channel column below still switches
+                    between the local (porch/home + maps), DM, and Matrix
+                    channel surfaces. */}
                 <SectionBoundary>
-                  {localActive ? <LocalServerSidebar /> : <ServerSidebar />}
+                  <GroupedRail
+                    canManageSources={canManageSources}
+                    onAddSource={openAddSource}
+                    onExplore={openExplore}
+                    onReticulumSelect={(sourceId) => {
+                      useReticulumSurfaceStore.getState().open(sourceId);
+                      useServerStore.setState({ activeServerId: null, activeChannelId: null });
+                    }}
+                    onLocalServerSelect={handleLocalServerSelect}
+                    localActive={localActive}
+                  />
                 </SectionBoundary>
 
                 {/* Channel / DM sidebar */}
                 <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
                   <SectionBoundary>
-                    {localActive ? (
+                    {reticulumOpen ? (
+                      <ReticulumSidebar />
+                    ) : localActive ? (
                       <LocalChannelSidebar />
                     ) : dmActive ? (
                       <DMSidebar />
@@ -932,87 +890,63 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   //     ├── MobilePillRow       flex-shrink-0  (INS-016 pills)
   //     └── MobileDashboardSheet  absolute-positioned overlay
   //
-  // ── Scroll-snap page navigation (INS-020) ──
-  // All three page-depth views are rendered as side-by-side panels in a
-  // horizontal scroll-snap container. The browser handles swipe physics,
-  // momentum, and snap-to-nearest. We sync `mobileView` state from the
-  // scroll position so the top bar and pills reflect the visible panel.
-  const scrollStripRef = useRef<HTMLDivElement>(null);
-  const tabIndicatorRef = useRef<HTMLDivElement>(null);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Programmatic-scroll guard. When `scrollToPanel` runs (state change,
-  // initial sync, page-tab tap), we must NOT let the resulting scroll
-  // events feed back into `setMobileView` via handleScrollSnap. Without
-  // this, joining a voice room would set mobileView=chat → scrollToPanel
-  // smooth → voice connect reflows ChatLayout (VoiceConnectionBar
-  // appears below it) → mid-scroll snap-type re-snaps to nearest →
-  // handleScrollSnap reads scrollLeft≈0 → setMobileView("sources").
-  // Holds the guard for 500ms after every programmatic scroll, which is
-  // long enough for the smooth animation + any reflow snap to settle.
-  const programmaticScrollUntilRef = useRef(0);
-  // INS-047: restore the page-depth view when closing settings/DMs
+  // ── Hierarchical navigation stack (replaces the scroll-snap strip) ──
+  // The old CSS scroll-snap horizontal strip (sources/servers/channels/chat
+  // side-by-side, scroll position = active panel) has been removed. Its
+  // `scrollLeft`-driven `mobileView` sync was the root cause of the
+  // connect-to-room "reset to leftmost" bug: a voice/room connect reflow
+  // re-snapped mid-scroll, read `scrollLeft ≈ 0`, and slammed mobileView to
+  // "sources". With a real stack, only the top-of-stack frame is rendered
+  // and connecting is a pure no-op — the chat frame stays on top by
+  // construction, so there is nothing to "reset".
+  //
+  // INS-047: restore the page-depth view when closing settings/DMs.
   const prevPageDepthRef = useRef<MobileView>("chat");
-  // INS-045: left-edge tap zone overlay
-  const [leftEdgeOverlay, setLeftEdgeOverlay] = useState<"servers" | "sources" | null>(null);
-  // INS-046: right-edge tap zone overlay
-  const [rightEdgeOverlay, setRightEdgeOverlay] = useState(false);
 
-  const scrollToPanel = useCallback((panelIndex: number, behavior: ScrollBehavior = "instant") => {
-    const strip = scrollStripRef.current;
-    if (!strip) return;
-    const panelWidth = strip.clientWidth;
-    programmaticScrollUntilRef.current = Date.now() + 500;
-    strip.scrollTo({ left: panelIndex * panelWidth, behavior });
-  }, []);
-
-  const handleScrollLive = useCallback(() => {
-    const strip = scrollStripRef.current;
-    const indicator = tabIndicatorRef.current;
-    if (!strip || !indicator) return;
-    const panelWidth = strip.clientWidth;
-    if (!panelWidth) return;
-    const pos = strip.scrollLeft / panelWidth;
-    indicator.style.transform = `translateX(${pos * 100}%)`;
-  }, []);
-
-  // Debounced scroll handler — updates mobileView when the user finishes
-  // scrolling. Uses a 100ms debounce so we don't spam state updates during
-  // the momentum phase. Skips the write entirely when the scroll was
-  // programmatic (state-driven), which is what happens on tab taps,
-  // channel selection, voice join, settings open/close, and so on.
-  const handleScrollSnap = useCallback(() => {
-    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-    scrollTimerRef.current = setTimeout(() => {
-      if (Date.now() < programmaticScrollUntilRef.current) return;
-      const strip = scrollStripRef.current;
-      if (!strip) return;
-      const panelWidth = strip.clientWidth;
-      if (panelWidth === 0) return;
-      const panelIndex = Math.round(strip.scrollLeft / panelWidth);
-      const clamped = Math.max(0, Math.min(panelIndex, PAGE_DEPTH.length - 1));
-      const target = PAGE_DEPTH[clamped];
-      if (target && target !== mobileView) {
-        setMobileView(target);
-        useDMStore.getState().setDMActive(false);
-      }
-    }, 100);
-  }, [mobileView]);
-
-  // Sync scroll position when mobileView changes from outside (e.g. page tab tap,
-  // channel select, settings open/close). Always uses `instant` so external
-  // state changes can't be hijacked by a half-finished smooth scroll being
-  // re-snapped during a layout reflow.
-  useEffect(() => {
-    const depthIdx = PAGE_DEPTH.indexOf(mobileView);
-    if (depthIdx >= 0) scrollToPanel(depthIdx);
-  }, [mobileView, scrollToPanel]);
+  // navStack ↔ History API mirroring (browser/Android hardware-back) +
+  // the drill-in / back slide-direction derivation. See useHistoryNav.
+  const { navDepth, navDirection } = useHistoryNav(navStack);
 
   // The chain MUST NOT be broken by any new ancestor introducing overflow:
   // visible or removing min-h-0 — that would let MessageInput's auto-grow
   // textarea push the MessageList out of view instead of reflowing it.
   // MessageInput's internal useLayoutEffect caps the textarea at
   // min(viewport*0.4, 8*22px) and switches to internal scroll above that.
-  const renderMobileLayout = () => (
+  // ── Framework-level back affordance ──────────────────────────────────────
+  // A SINGLE back control for the whole mobile stack, shown whenever there is
+  // somewhere up to go. Replaces the old per-level hand-coded back buttons,
+  // which existed on some levels (chat, channels) but NOT others (servers, the
+  // local-source chat views) — stranding the user with no way up. The handler
+  // walks the same hierarchy the body router renders:
+  //   settings / DMs overlay → close, return to the prior page-depth view
+  //   a DM conversation       → return to the DMs list
+  //   any non-root page frame → pop one level (chat→channels→servers→sources)
+  const isDmConversation = mobileView === "chat" && dmActive;
+  const canGoBack =
+    mobileView === "settings" ||
+    mobileView === "dms" ||
+    isDmConversation ||
+    navStack.length > 1;
+  const handleStackBack = () => {
+    if (mobileView === "settings") {
+      closeSettings();
+      closeServerSettings();
+      setMobileView(prevPageDepthRef.current);
+      return;
+    }
+    if (mobileView === "dms") {
+      useDMStore.getState().setDMActive(false);
+      setMobileView(prevPageDepthRef.current);
+      return;
+    }
+    if (isDmConversation) {
+      setMobileView("dms");
+      return;
+    }
+    navPop();
+  };
+
+  const renderStackLayout = () => (
     <div className="h-full w-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-surface text-on-surface">
       {/* Top bar — safe-top lives on the OUTER wrapper so the safe-area
           inset adds transparent padding ABOVE the 48px content bar instead
@@ -1021,25 +955,52 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       <div className="bg-surface-container-low safe-top flex-shrink-0">
       <div className="h-12 flex items-center px-3 gap-2">
         <div className="flex-1 min-w-0 flex items-center">
+        {/* Single framework-level back control (see canGoBack/handleStackBack).
+            Present on EVERY level that has somewhere up to go, so the user is
+            never stranded — the per-level back buttons are gone. */}
+        {canGoBack && (
+          <button
+            onClick={handleStackBack}
+            aria-label="Back"
+            className="text-on-surface-variant hover:text-on-surface transition-colors mr-1 flex-shrink-0"
+          >
+            <span className="material-symbols-outlined text-xl">arrow_back</span>
+          </button>
+        )}
+        <div className="flex-1 min-w-0 flex items-center gap-2">
         {mobileView === "chat" && dmActive && dmConversation ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => setMobileView("dms")}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
+          <>
             <span className="material-symbols-outlined text-on-surface-variant text-base">chat_bubble</span>
             <DMHeaderName userId={dmConversation.other_user_id} />
-          </div>
+          </>
+        ) : mobileView === "chat" && localActive ? (
+          // Local source chat-frame views (porch chat, LAN map, mesh map) have
+          // no Matrix `activeChannel`; title them explicitly.
+          <h2 className="font-headline font-semibold truncate text-on-surface">
+            {lanMapOpen ? (
+              <>
+                <span className="material-symbols-outlined text-base align-middle mr-1">wifi_tethering</span>
+                LAN map
+              </>
+            ) : meshMapOpen ? (
+              <>
+                <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                Mesh map
+              </>
+            ) : peersOpen ? (
+              <>
+                <span className="material-symbols-outlined text-base align-middle mr-1">group</span>
+                Peers
+              </>
+            ) : (
+              <>
+                <span className="text-on-surface-variant mr-1">#</span>
+                {porchSelectedChannel?.name ?? porchLabel}
+              </>
+            )}
+          </h2>
         ) : mobileView === "chat" && activeChannel ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => setMobileView("channels")}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
+          <>
             <h2 className="font-headline font-semibold truncate text-on-surface">
               {isVoiceChannel ? (
                 <span className="material-symbols-outlined text-base align-middle mr-1">volume_up</span>
@@ -1064,34 +1025,23 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 {memberCount}
               </span>
             )}
-          </div>
+          </>
         ) : mobileView === "dms" ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <h2 className="font-headline font-bold text-lg text-primary">Messages</h2>
-          </div>
-        ) : mobileView === "channels" && activeServer ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => setMobileView("servers")}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
-            <h2 className="font-headline font-semibold truncate">{activeServer.name}</h2>
-          </div>
+          <h2 className="font-headline font-bold text-lg text-primary">Messages</h2>
+        ) : mobileView === "channels" ? (
+          <h2 className="font-headline font-semibold truncate">
+            {activeServer?.name ?? (localActive ? porchLabel : "Channels")}
+          </h2>
+        ) : mobileView === "servers" ? (
+          <h2 className="font-headline font-semibold truncate">
+            {localActive ? porchLabel : "Servers"}
+          </h2>
         ) : mobileView === "settings" ? (
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button
-              onClick={() => { closeSettings(); closeServerSettings(); setMobileView(prevPageDepthRef.current); }}
-              className="text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">arrow_back</span>
-            </button>
-            <h2 className="font-headline font-semibold">Settings</h2>
-          </div>
+          <h2 className="font-headline font-semibold">Settings</h2>
         ) : (
           <h2 className="font-headline font-bold text-lg text-primary">Concord</h2>
         )}
+        </div>
         </div>
         {/* INS-048: Hardware state indicator — shown when voice is active */}
         {voiceConnected && (micActive || cameraActive) && (
@@ -1180,66 +1130,39 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       </div>
       </div>
 
-      {/* Panel navigation tabs — mouse/keyboard nav between page-depth panels */}
-      {PAGE_DEPTH.includes(mobileView as MobileView) && (
-        <div className="relative flex items-stretch bg-surface-container-low flex-shrink-0 border-b border-outline-variant/10">
-          {PAGE_DEPTH.map((view) => {
-            const meta = PAGE_PILL_META[view];
-            const isActive = mobileView === view;
-            return (
-              <button
-                key={view}
-                onClick={() => {
-                  setMobileView(view as MobileView);
-                }}
-                className={`flex-1 flex items-center justify-center gap-1 py-1 text-xs font-label transition-colors ${
-                  isActive ? "text-on-surface font-medium" : "text-on-surface-variant hover:text-on-surface"
-                }`}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>{meta.icon}</span>
-                {meta.label}
-              </button>
-            );
-          })}
-          {/* Live sliding underline — moves continuously with scroll position */}
-          <div
-            ref={tabIndicatorRef}
-            className="absolute bottom-0 h-0.5 bg-primary rounded-t-full pointer-events-none"
-            style={{ width: `${100 / PAGE_DEPTH.length}%`, willChange: "transform", transform: `translateX(${PAGE_DEPTH.indexOf(mobileView) * 100}%)` }}
-          />
-        </div>
-      )}
-
-      {/* Main content area — scroll strip is ALWAYS mounted; settings/DMs are absolute overlays */}
+      {/* Main content area — renders ONLY the top-of-stack frame. The old
+          scroll-snap strip (all four panels mounted side-by-side) is gone;
+          drilling in pushes a frame, back pops it. settings/DMs are
+          absolute overlays on top of the current frame. */}
       <div className="flex-1 min-h-0 overflow-hidden relative">
-        {/* Page-depth scroll strip — always mounted so scroll position is preserved across settings/DMs */}
+        {/* Top stack frame. Keyed on depth+level so a push/pop remounts the
+            pane and re-triggers the slide animation. The direction class
+            (forward / back) gives drill-in vs. back the correct slide. */}
         <div
-          ref={scrollStripRef}
-          className="h-full flex overflow-x-auto overflow-y-hidden overscroll-x-auto"
-          style={{
-            scrollSnapType: "x mandatory",
-            scrollBehavior: "smooth",
-            WebkitOverflowScrolling: "touch",
-          }}
-          onScroll={() => { handleScrollLive(); handleScrollSnap(); }}
+          key={`navframe-${navDepth}-${mobileView}`}
+          className={`h-full w-full min-h-0 ${
+            navDirection === "forward" ? "nav-frame-forward" : "nav-frame-back"
+          }`}
         >
-          {/* Panel: Sources */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          {mobileView === "sources" && (
             <SourcesPanel
               mobile
+              canManageSources={canManageSources}
               onAddSource={openAddSource}
-              onSourceSelect={() => scrollToPanel(1)}
+              onSourceSelect={() => {
+                setLocalActive(false);
+                setMobileView("servers");
+              }}
               onExplore={openExplore}
               onSourceOpen={openSourceBrowser}
+              onReticulumOpen={() => setMobileView("chat")}
               onLocalOpen={() => {
                 openLocal();
-                scrollToPanel(1);
+                setMobileView("servers");
               }}
             />
-
-          </div>
-          {/* Panel: Servers */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          )}
+          {mobileView === "servers" && (
             <SectionBoundary>
               {localActive ? (
                 <LocalServerSidebar
@@ -1250,22 +1173,22 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 <ServerSidebar mobile onServerSelect={() => setMobileView("channels")} />
               )}
             </SectionBoundary>
-          </div>
-          {/* Panel: Channels */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          )}
+          {mobileView === "channels" && (
             <SectionBoundary>
-              {localActive ? (
+              {reticulumOpen ? (
+                <ReticulumSidebar onNavigate={() => setMobileView("chat")} />
+              ) : localActive ? (
                 <LocalChannelSidebar
                   mobile
                   onChannelSelect={() => setMobileView("chat")}
                 />
               ) : (
-                <ChannelSidebar mobile onChannelSelect={(chId) => { handleMobileChannelSelect(chId); setMobileView("chat"); }} />
+                <ChannelSidebar mobile onChannelSelect={(chId) => handleMobileChannelSelect(chId)} />
               )}
             </SectionBoundary>
-          </div>
-          {/* Panel: Chat */}
-          <div className="w-full h-full flex-shrink-0" style={{ scrollSnapAlign: "start" }}>
+          )}
+          {mobileView === "chat" && (
             <div className="h-full flex flex-col min-h-0">
               {showPlaceBanner && (
                 <PlaceVoiceBanner
@@ -1279,10 +1202,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               )}
               {renderChatContent()}
             </div>
-          </div>
+          )}
         </div>
 
-        {/* DMs overlay — absolute so the strip keeps its scroll position */}
+        {/* DMs overlay — absolute, sits on top of the current stack frame. */}
         {mobileView === "dms" && (
           <div className="absolute inset-0 z-10 bg-surface">
             <SectionBoundary>
@@ -1291,99 +1214,18 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           </div>
         )}
 
-        {/* Settings overlay — absolute so the strip keeps its scroll position */}
+        {/* Settings overlay — absolute, sits on top of the current frame. */}
         {mobileView === "settings" && (
           <div className="absolute inset-0 z-10 bg-surface flex flex-col min-h-0">
             <SettingsPanel />
           </div>
         )}
-
-        {/* INS-045: Left-edge tap zone — shows previous panel as tile overlay */}
-        {!(mobileView === "dms" || mobileView === "settings") && mobileView !== "sources" && mobileView !== "servers" && (
-          <div
-            className="absolute left-0 top-0 w-6 h-full z-10"
-            onPointerDown={() => {
-              const prevIdx = PAGE_DEPTH.indexOf(mobileView) - 1;
-              if (prevIdx >= 0) {
-                const prev = PAGE_DEPTH[prevIdx];
-                setLeftEdgeOverlay(prev === "sources" ? "sources" : "servers");
-              }
-            }}
-          />
-        )}
-        {leftEdgeOverlay && (
-          <div
-            className="absolute inset-0 z-20 flex items-center"
-            onPointerDown={() => setLeftEdgeOverlay(null)}
-          >
-            <div className="ml-2 rounded-2xl bg-surface-container shadow-xl border border-outline-variant/20 p-4 animate-[fadeSlideUp_0.15s_ease-out]">
-              <button
-                className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
-                onPointerDown={(e) => { e.stopPropagation(); setLeftEdgeOverlay(null); setMobileView(leftEdgeOverlay); }}
-              >
-                <span className="material-symbols-outlined text-lg">{leftEdgeOverlay === "sources" ? "hub" : "dns"}</span>
-                {leftEdgeOverlay === "sources" ? "Sources" : "Servers"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* INS-046: Right-edge tap zone — contextual shortcut tiles */}
-        {!(mobileView === "dms" || mobileView === "settings") && mobileView !== "chat" && (
-          <div
-            className="absolute right-0 top-0 w-6 h-full z-10"
-            onPointerDown={() => setRightEdgeOverlay(true)}
-          />
-        )}
-        {rightEdgeOverlay && (
-          <div
-            className="absolute inset-0 z-20 flex items-center justify-end"
-            onPointerDown={() => setRightEdgeOverlay(false)}
-          >
-            <div className="mr-2 rounded-2xl bg-surface-container shadow-xl border border-outline-variant/20 p-4 animate-[fadeSlideUp_0.15s_ease-out] flex flex-col gap-2">
-              {mobileView === "servers" && (
-                <button
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
-                  onPointerDown={(e) => { e.stopPropagation(); setRightEdgeOverlay(false); setMobileView("channels"); }}
-                >
-                  <span className="material-symbols-outlined text-lg">tag</span>
-                  Channels
-                </button>
-              )}
-              {mobileView === "channels" && (
-                <button
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-container-high transition-colors text-sm text-on-surface"
-                  onPointerDown={(e) => { e.stopPropagation(); setRightEdgeOverlay(false); setMobileView("chat"); }}
-                >
-                  <span className="material-symbols-outlined text-lg">forum</span>
-                  Chat
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Pill collapse toggle removed — swipe up from the bottom edge raises
-          the nav, swipe down anywhere hides it. The dedicated arrow tile
-          was a vestigial second affordance that just clipped to the
-          bottom-right of the page. */}
-
-      {/* MobilePillRow removed. It implemented tabs via imperative state-
-         swapping on useServerStore / useDMStore — each pill click called
-         setState() to restore a saved snapshot. That's not "parallel
-         displays"; it's a state-mutating nav that loses React-internal
-         state (scroll positions, expanded folders, chat compose drafts)
-         on every switch. Real per-tab persistence would require
-         mounting one subtree per tab (each with store-scoping), which
-         is a separate architectural project. Per the user's call, the
-         illusion goes away rather than stay in. The horizontal scroll
-         strip above (sources/servers/channels/chat) remains because
-         IT really is parallel — all four panels are mounted
-         simultaneously and scroll position picks which is visible.
-         DMs moved to the top bar (see TopBarIconButton with chat_bubble
-         above) so this row isn't replaced with a smaller version of
-         itself. */}
+      {/* The scroll-snap strip and its page-tab pill row were removed in the
+         adaptive-nav migration. Navigation is now an explicit navStack: only
+         the top-of-stack frame is rendered, drill-in pushes, back pops. DMs
+         live in the top bar (TopBarIconButton with chat_bubble above). */}
 
       {/* Mobile extension menu overlay */}
       {extensionMenuOpen && (
@@ -1445,8 +1287,27 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                   data-testid="local-chat-header"
                   className="font-headline font-semibold truncate"
                 >
-                  <span className="text-on-surface-variant mr-1">#</span>
-                  {porchSelectedChannel?.name ?? porchLabel}
+                  {lanMapOpen ? (
+                    <>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">wifi_tethering</span>
+                      LAN map
+                    </>
+                  ) : meshMapOpen ? (
+                    <>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">hub</span>
+                      Mesh map
+                    </>
+                  ) : peersOpen ? (
+                    <>
+                      <span className="material-symbols-outlined text-base align-middle mr-1">group</span>
+                      Peers
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-on-surface-variant mr-1">#</span>
+                      {porchSelectedChannel?.name ?? porchLabel}
+                    </>
+                  )}
                 </h2>
                 {showInlineAccountBanner && (
                   <DesktopAccountButton
@@ -1562,11 +1423,18 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
               </div>
             ) : (
               <span className="text-on-surface-variant font-body">
-                {!syncing || !serversLoaded ? (
+                {!syncing || !serversLoaded || switchingSession ? (
                   <span className="flex items-center gap-2">
                     <BringingUpSplash size="inline" />
-                    {!syncing ? "Connecting..." : "Loading servers..."}
+                    {switchingSession
+                      ? "Switching instance..."
+                      : !syncing
+                        ? "Connecting..."
+                        : "Loading servers..."}
                   </span>
+                ) : reticulumOpen ? (
+                  sources.find((s) => s.id === reticulumSourceId)?.instanceName ??
+                  "Reticulum"
                 ) : servers.length === 0 ? (
                   "Welcome — join or create a server to get started"
                 ) : (
@@ -1650,10 +1518,39 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Shared chat/voice content
   const renderChatContent = () => {
-    // Local porch chat — reuses MessageList + MessageInput so the
-    // visual surface matches every other server source.
+    // Reticulum source surface — framework-shaped (network/announces/
+    // interfaces), NOT the Discord-style chat panes. Takes the pane over
+    // every chat surface while a reticulum source is open.
+    if (reticulumOpen) {
+      return <ReticulumSurface />;
+    }
+    // Local source surfaces. The LAN map is a special cross-server view
+    // that takes precedence over the porch channel when its pseudo-channel
+    // row is selected; otherwise the porch chat renders as before.
     if (localActive) {
+      if (lanMapOpen) {
+        return <LanDiscoveryMap />;
+      }
+      if (meshMapOpen) {
+        return <MeshMap />;
+      }
+      if (peersOpen) {
+        return <PeersPanel />;
+      }
       return <LocalChatPane />;
+    }
+    // A source/instance switch is in flight — the content field plays the
+    // loading animation while the target's data loads in the background.
+    // This is what keeps clicking a not-yet-loaded connected source from
+    // feeling frozen: the user is navigated straight to a loading pane
+    // (the splash), never a stalled/blank one. switchToSource defers the
+    // heavy client recreation, so this paints first.
+    if (switchingSession) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <BringingUpSplash size="compact" status="Loading…" />
+        </div>
+      );
     }
     // DM chat
     if (dmActive && activeDMRoomId && dmConversation) {
@@ -1966,17 +1863,20 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     </div>
   );
 
-  // INS-020: iPad explicitly renders the desktop three-pane layout so
-  // the native iOS Tauri build gets the tablet UX regardless of CSS
-  // breakpoints. Non-iPad clients use the existing Tailwind `md:`
-  // split that already handles desktop browsers and phones.
+  // INS-020 + iPad back-button fix: a WIDE iPad renders the desktop
+  // three-pane layout so the native iOS Tauri build gets the tablet UX
+  // regardless of CSS breakpoints. A NARROW iPad (Split View / Slide Over)
+  // and all non-iPad clients use the responsive Tailwind `md:` split — its
+  // `md:hidden` stacked layout carries the framework-level back control, so
+  // narrow iPad and iPhone share the same back affordance.
   return (
     <>
       {isTV ? (
         // TV — three-pane with DPAD navigation and capability banners.
         renderTVLayout()
       ) : prefersTabletLayout ? (
-        // iPad native — always three-pane, regardless of viewport width.
+        // iPad, wide enough for three panes — parent panes always visible,
+        // so no back control is needed (see shouldUseTabletLayout).
         <div className="h-full w-full min-h-0 min-w-0" data-concord-layout="tablet">
           {renderDesktopLayout()}
         </div>
@@ -1988,7 +1888,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           </div>
           {/* Mobile */}
           <div className="md:hidden h-full w-full min-h-0 min-w-0" data-concord-layout="mobile">
-            {renderMobileLayout()}
+            {renderStackLayout()}
           </div>
         </>
       )}
@@ -2019,6 +1919,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
       {/* INS-020: Add Source modal — shared between mobile + desktop native */}
       {addSourceOpen && (
         <AddSourceModal
+          canManageSources={canManageSources}
           initialScreen={addSourceInitialScreen}
           onClose={() => {
             setAddSourceOpen(false);
@@ -2027,7 +1928,9 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
           onSourceAdded={() => {
             setAddSourceOpen(false);
             setAddSourceInitialScreen(null);
-            if (scrollStripRef.current) scrollToPanel(1);
+            // After adding a source, advance to the servers frame so the
+            // user sees the newly-connected instance's servers.
+            setMobileView("servers");
           }}
         />
       )}
@@ -2267,7 +2170,9 @@ export function SourceServerBrowser({
       });
       setAuthPassword("");
       addToast(`Connected ${label}`, "success");
-      await loadSourceDirectory();
+      // Connecting to a library means going to it: switch the active
+      // instance to this source (re-points homeserver + session, reloads).
+      switchToSource(source.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sign in";
       setPublicRoomsError(message);
@@ -2502,19 +2407,14 @@ export function SourceServerBrowser({
 }
 
 
-/* ── Mobile Nav Items (shared by pill row + full sheet) ── */
-// Page-depth hierarchy for swipe navigation. Swiping left goes deeper,
-// swiping right goes back (matching iOS back-gesture convention).
-// Native apps have an extra "sources" panel at the shallowest depth.
+/* ── Page-depth membership set ──
+   The set of hierarchical drill-down levels (as opposed to the dms/settings
+   overlays). Used only as a membership guard — "is the current mobileView a
+   page-depth level?" — when deciding whether to stash the current view in
+   `prevPageDepthRef` before opening an overlay. The old linear-index usage
+   (scroll-strip panel ordering) was removed with the strip; navStack now
+   owns ordering. PAGE_PILL_META was removed with the page-tab pill row. */
 const PAGE_DEPTH: MobileView[] = ["sources", "servers", "channels", "chat"];
-
-// Icon + label for the "Page" pill, contextual to the current depth.
-const PAGE_PILL_META: Record<string, { icon: string; label: string }> = {
-  sources: { icon: "hub", label: "Sources" },
-  servers: { icon: "dns", label: "Servers" },
-  channels: { icon: "tag", label: "Channels" },
-  chat: { icon: "forum", label: "Chat" },
-};
 
 
 // ActionsPanel and QuickActionButton removed (INS-041).
@@ -2529,10 +2429,19 @@ export function AddSourceModal({
   initialScreen,
   onClose,
   onSourceAdded,
+  canManageSources = true,
 }: {
   initialScreen?: string | null;
   onClose: () => void;
   onSourceAdded: () => void;
+  /**
+   * When false, the viewer is a plain web visitor (not instance
+   * admin/owner): they may ONLY connect to a peer's porch (the
+   * "pair-peer" path). All web/Matrix/Reticulum "add source" screens
+   * are hidden and any attempt to land on one is coerced back to
+   * pair-peer — adding sources is an admin/owner action.
+   */
+  canManageSources?: boolean;
 }) {
   type Screen =
     | "address"
@@ -2561,12 +2470,34 @@ export function AddSourceModal({
     "reticulum",
     "pair-peer",
   ]);
+  // Screens that ADD a web/Matrix/Reticulum source — admin/owner only.
+  // A visitor is coerced off these to the porch-pairing screen.
+  const MANAGED_SCREENS: ReadonlySet<Screen> = new Set([
+    "address",
+    "concord",
+    "matrix",
+    "matrix-auth",
+    "reticulum",
+  ]);
   const startScreen: Screen =
     initialScreen && KNOWN_SCREENS.has(initialScreen as Screen)
       ? (initialScreen as Screen)
       : "address";
-  const [screen, setScreen] = useState<Screen>(startScreen);
+  const effectiveStart: Screen =
+    canManageSources || !MANAGED_SCREENS.has(startScreen)
+      ? startScreen
+      : "pair-peer";
+  const [screen, setScreen] = useState<Screen>(effectiveStart);
   const [error, setError] = useState("");
+
+  // Hard guard: a visitor can never sit on a source-adding screen, even
+  // if some navigation/back action tries to route them there.
+  useEffect(() => {
+    if (!canManageSources && MANAGED_SCREENS.has(screen)) {
+      setScreen("pair-peer");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageSources, screen]);
 
   // Feature F2 — unified address screen. The user types one thing and
   // we figure out which protocol it is. The detection sub-state lives
@@ -2580,6 +2511,13 @@ export function AddSourceModal({
   // Concord form state
   const [host, setHost] = useState("");
   const [token, setToken] = useState("");
+  // Optional Concord sign-in. A source must hold a session for its
+  // servers to appear in the aggregated rail (multi-instance hot-swap),
+  // so the connect screen offers username/password here. Left blank, the
+  // instance is still added (discovery only) but contributes no rail
+  // tiles until the user signs in.
+  const [concordUsername, setConcordUsername] = useState("");
+  const [concordPassword, setConcordPassword] = useState("");
 
   // Matrix form state
   const [matrixHost, setMatrixHost] = useState("");
@@ -2593,7 +2531,7 @@ export function AddSourceModal({
 
   const addSource = useSourcesStore((s) => s.addSource);
   const updateSource = useSourcesStore((s) => s.updateSource);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
   const resumeHandled = useRef(false);
 
   useEffect(() => {
@@ -2617,7 +2555,9 @@ export function AddSourceModal({
         });
         clearPendingSourceSso();
         clearPendingSourceSsoQueryParams();
-        onSourceAdded();
+        // Switch the active instance to the source we just authed into,
+        // rather than dropping back onto the local one.
+        switchToSource(pending.sourceId);
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Source login failed";
@@ -2704,17 +2644,62 @@ export function AddSourceModal({
         const validation = await validateRes.json();
         if (!validation.valid) throw new Error("Invalid or expired invite token");
       }
+      // Authenticate when credentials were supplied so this instance's
+      // servers join the aggregated rail. Concord login IS Matrix login
+      // (proxied for rate-limiting), so reuse the same password flow the
+      // Matrix-source screen uses.
+      let session:
+        | { accessToken: string; userId: string; deviceId: string }
+        | null = null;
+      if (concordUsername.trim() && concordPassword) {
+        const { loginWithPasswordAtBaseUrl } = await import("../../api/matrix");
+        session = await loginWithPasswordAtBaseUrl(
+          config.homeserver_url,
+          concordUsername.trim(),
+          concordPassword,
+        );
+      }
       addSource({
         host: trimmed,
         instanceName: config.instance_name,
         inviteToken: token.trim(),
         apiBase: config.api_base,
         homeserverUrl: config.homeserver_url,
+        accessToken: session?.accessToken,
+        userId: session?.userId,
+        deviceId: session?.deviceId,
         status: "connected",
         enabled: true,
         platform: "concord",
         branding: config.branding,
+        // A source added through this flow is a FOREIGN/linked instance,
+        // never the local one — even with no invite token. Marking it
+        // explicitly stops a token-less login from looking "primary/local"
+        // and being suppressed from the rail.
+        isLocal: false,
       });
+      // Clear the password from form state immediately after use.
+      setConcordPassword("");
+      // Keychain (Phase-2 source routing): persist the concord-instance
+      // invite as a `concord` source into the primary profile. Native-only
+      // (the wrapper no-ops on web) and strictly best-effort — a keychain
+      // failure must NOT unwind a successful source add, so we log and
+      // swallow. Only persist when an invite token was actually consumed.
+      if (token.trim()) {
+        void keychainAdd({
+          sourceKind: "concord",
+          sourceHost: trimmed,
+          credentials: {
+            host: trimmed,
+            invite_token: token.trim(),
+          },
+        }).catch((err) => {
+          console.warn(
+            "[ChatLayout] keychain save for concord invite failed (non-fatal):",
+            err instanceof Error ? err.message : err,
+          );
+        });
+      }
       onSourceAdded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't reach that host");
@@ -2785,6 +2770,24 @@ export function AddSourceModal({
         updateSource,
         draft: matrixDraft,
         session,
+      });
+      // Keychain (Phase-2 source routing): persist the Matrix source login
+      // into the primary profile. Native-only (wrapper no-ops on web) and
+      // best-effort — a keychain failure must NOT unwind a successful
+      // source add.
+      void keychainAdd({
+        sourceKind: "matrix",
+        sourceHost: matrixDraft.host,
+        credentials: {
+          homeserver: matrixDraft.homeserverUrl,
+          user_id: session.userId,
+          access_token: session.accessToken,
+        },
+      }).catch((err) => {
+        console.warn(
+          "[ChatLayout] keychain save for matrix source failed (non-fatal):",
+          err instanceof Error ? err.message : err,
+        );
       });
       onSourceAdded();
     } catch (err) {
@@ -2907,8 +2910,17 @@ export function AddSourceModal({
         {/* ── Screen: pick ── */}
         {screen === "pick" && (
           <>
-            <Header title="Explore Sources" onBack={() => setScreen("address")} />
+            <Header
+              title={canManageSources ? "Explore Sources" : "Connect to a peer"}
+              onBack={canManageSources ? () => setScreen("address") : undefined}
+            />
             <div className="space-y-2">
+              {!canManageSources && (
+                <p className="text-xs text-on-surface-variant px-1 pb-1">
+                  You can connect to a peer's space below. Adding web or Matrix
+                  sources to this instance is reserved for its admin/owner.
+                </p>
+              )}
               {/*
                 "Start / Stop local hosting" sits at the top of the pick
                 screen on Tauri builds only. Web builds hide it entirely
@@ -2919,6 +2931,8 @@ export function AddSourceModal({
               */}
               <LocalHostingControl />
 
+              {canManageSources && (
+              <>
               <button
                 onClick={() => setScreen("concord")}
                 className="w-full flex items-center gap-3 p-3 rounded-xl border border-outline-variant/20 hover:border-primary/40 hover:bg-surface-container-high transition-all text-left group"
@@ -2928,7 +2942,7 @@ export function AddSourceModal({
                 </div>
                 <div>
                   <p className="text-sm font-medium text-on-surface">Concord Instance</p>
-                  <p className="text-xs text-on-surface-variant">Connect to another Concord domain with an invite token</p>
+                  <p className="text-xs text-on-surface-variant">Sign in to another Concord domain — invite token only to create a new account</p>
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
@@ -2974,6 +2988,8 @@ export function AddSourceModal({
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
+              </>
+              )}
 
               <button
                 type="button"
@@ -2991,6 +3007,8 @@ export function AddSourceModal({
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
 
+              {canManageSources && (
+              <>
               <button
                 type="button"
                 disabled
@@ -3020,6 +3038,8 @@ export function AddSourceModal({
                 </div>
                 <span className="material-symbols-outlined text-on-surface-variant/40 ml-auto group-hover:text-on-surface-variant">chevron_right</span>
               </button>
+              </>
+              )}
             </div>
           </>
         )}
@@ -3039,22 +3059,72 @@ export function AddSourceModal({
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
               </div>
+              {/* Sign-in is the PRIMARY path: connecting to an instance you
+                  already have an account on needs NO invite token. The token
+                  field below is only for creating a brand-new account. */}
+              <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/50 p-3 space-y-2">
+                <p className="text-xs text-on-surface-variant">
+                  Already have an account on this instance? Sign in — no invite
+                  token needed. Leave blank to just add it for later.
+                </p>
+                {/* Password-manager opt-out. This is a secondary credential
+                    for ANOTHER instance, rendered inside the already-signed-in
+                    app. Extensions (1Password / Bitwarden / LastPass / Proton
+                    Pass / Dashlane) otherwise grab the type=password field and
+                    clear it on every keystroke ("field deletes itself while I
+                    type"). These attributes tell each major manager to ignore
+                    the field so typing works. Proven via a clean-browser test:
+                    the field types fine without an extension present. */}
+                <input
+                  type="text"
+                  value={concordUsername}
+                  onChange={(e) => setConcordUsername(e.target.value)}
+                  placeholder="Username"
+                  name="concord-connect-username"
+                  autoComplete="off"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-protonpass-ignore="true"
+                  data-form-type="other"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+                <input
+                  type="password"
+                  value={concordPassword}
+                  onChange={(e) => setConcordPassword(e.target.value)}
+                  placeholder="Password"
+                  name="concord-connect-password"
+                  autoComplete="off"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-protonpass-ignore="true"
+                  data-form-type="other"
+                  className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
+                />
+              </div>
               <div>
-                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">Invite Token <span className="opacity-50">(optional)</span></label>
+                <label className="text-xs font-label text-on-surface-variant mb-1.5 block">
+                  Invite token <span className="opacity-50">(only to create a new account)</span>
+                </label>
                 <input
                   type="text"
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
-                  placeholder="inv_... — leave blank for open instances"
+                  placeholder="inv_… — leave blank if you already have an account"
                   className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                 />
+                <p className="mt-1 text-[11px] text-on-surface-variant/70">
+                  Only needed to register a brand-new account on this instance.
+                </p>
               </div>
               <button
                 onClick={handleConnectConcord}
                 disabled={!host.trim()}
                 className="w-full py-2.5 bg-primary text-on-primary rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-primary/90 transition-colors"
               >
-                Connect
+                {concordUsername.trim() && concordPassword ? "Sign in & connect" : "Connect"}
               </button>
             </div>
           </>
@@ -3105,11 +3175,21 @@ export function AddSourceModal({
 
               {matrixDraft.authFlows.includes("password") && (
                 <div className="space-y-2">
+                  {/* Password-manager opt-out — same rationale as the Concord
+                      connect screen: keep extensions from clearing the field
+                      on every keystroke. */}
                   <input
                     type="text"
                     value={matrixUsername}
                     onChange={(event) => setMatrixUsername(event.target.value)}
                     placeholder="Matrix username"
+                    name="matrix-connect-username"
+                    autoComplete="off"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
+                    data-protonpass-ignore="true"
+                    data-form-type="other"
                     className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                   />
                   <input
@@ -3117,6 +3197,13 @@ export function AddSourceModal({
                     value={matrixPassword}
                     onChange={(event) => setMatrixPassword(event.target.value)}
                     placeholder="Password"
+                    name="matrix-connect-password"
+                    autoComplete="off"
+                    data-1p-ignore="true"
+                    data-lpignore="true"
+                    data-bwignore="true"
+                    data-protonpass-ignore="true"
+                    data-form-type="other"
                     className="w-full px-3 py-2 bg-surface-container-highest rounded-lg text-sm text-on-surface border border-outline-variant/20 focus:border-primary/50 focus:outline-none"
                   />
                   <button
@@ -3190,6 +3277,7 @@ export function AddSourceModal({
                     status: "connected",
                     enabled: true,
                     platform: "reticulum",
+                    isLocal: false,
                   });
                   onSourceAdded();
                 }}
@@ -3223,7 +3311,7 @@ export function AddSourceModal({
             phase-specific subtitle so the user knows which protocol
             is being probed; everything else gets the generic
             "Connecting…". The BringingUpSplash is mandatory — never
-            invent a new spinner here (see the project loading-animation rule). */}
+            invent a new spinner here (see CLAUDE.md). */}
         {screen === "validating" && (
           <BringingUpSplash
             size="compact"

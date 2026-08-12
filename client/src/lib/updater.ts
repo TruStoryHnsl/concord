@@ -13,7 +13,7 @@
  * appropriate installer download URL in the user's default browser. The OS
  * installer flow takes over from there.
  *
- * Manifest layout (published by the release workflow):
+ * Manifest layout (published by `.github/workflows/release.yml`):
  *
  *   Each per-platform release (e.g. `v0.7.12-windows`) carries:
  *     1. its single installer asset (Concord_<v>_x64-setup.exe etc.)
@@ -60,7 +60,7 @@ export interface UpdaterManifest {
   installerUrl: string;
   /** Installer asset filename. */
   installerName: string;
-  /** Excerpt from release notes or a fallback line. */
+  /** Excerpt from CHANGELOG.md or a fallback line. */
   notes: string;
   /** Per-platform suffix (windows / macos-intel / macos-arm64 / linux). */
   platform: PlatformSuffix;

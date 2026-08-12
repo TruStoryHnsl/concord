@@ -9,10 +9,11 @@
  *
  * Mapping notes:
  *  - `ChannelMessage.author_peer_id` becomes the `sender`. The porch
- *    has no Matrix-style user identity for visitors; peer-id is the
- *    real handle for now. Display-name resolution is a TODO — for
- *    Phase A we render the raw peer-id, which is consistent with how
- *    the rest of the porch UI surfaces visitor identity.
+ *    has no Matrix-style user identity for visitors, so the author id
+ *    is resolved to the friendliest handle the local node already
+ *    knows: the peer's Identify vanity name from the LAN snapshot when
+ *    present, otherwise a shortened peer-id (first 8 characters) rather
+ *    than the full hex string.
  *  - `ChannelMessage.created_at` (unix ms) maps straight to
  *    `ChatMessage.timestamp`.
  *  - Reactions / edits / file uploads / typing indicators are not part
@@ -21,7 +22,7 @@
  *    in without changing this component's external contract.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatMessage } from "../../hooks/useMatrix";
 import { usePorchStore } from "../../stores/porchStore";
 import { useLocalServerSelectionStore } from "../../stores/localServerSelection";
@@ -30,7 +31,32 @@ import { MessageList } from "../chat/MessageList";
 import { MessageInput } from "../chat/MessageInput";
 import { BringingUpSplash } from "../BringingUpSplash";
 import { isTauri } from "../../api/servitude";
+import {
+  fetchLanPeersSnapshot,
+  subscribeToLanPeers,
+  vanityNameFromAgentVersion,
+} from "../../api/lanPeers";
 import { FirstLaunchTwoNameBanner } from "./FirstLaunchTwoNameBanner";
+
+/**
+ * Shorten a raw peer-id to its first 8 characters for display. Used as
+ * the fallback when no friendlier handle is known for the author.
+ */
+function shortPeerId(peerId: string): string {
+  return peerId.length > 8 ? peerId.slice(0, 8) : peerId;
+}
+
+/**
+ * Resolve a porch message author's raw peer-id to a display handle:
+ * the peer's Identify vanity name if the LAN snapshot carries one,
+ * otherwise the shortened peer-id.
+ */
+function resolveAuthor(
+  peerId: string,
+  vanityByPeerId: ReadonlyMap<string, string>,
+): string {
+  return vanityByPeerId.get(peerId) ?? shortPeerId(peerId);
+}
 
 function porchToChatMessage(
   m: {
@@ -39,10 +65,11 @@ function porchToChatMessage(
     body: string;
     created_at: number;
   },
+  vanityByPeerId: ReadonlyMap<string, string>,
 ): ChatMessage {
   return {
     id: m.id,
-    sender: m.author_peer_id,
+    sender: resolveAuthor(m.author_peer_id, vanityByPeerId),
     body: m.body,
     timestamp: m.created_at,
     redacted: false,
@@ -69,10 +96,47 @@ export function LocalChatPane() {
   // home server.
   const active = useLocalServerSelectionStore((s) => s.active);
   const homeName = useHomeServerNameStore((s) => s.name);
+  // User-facing label only — `active` still switches on the internal
+  // `"home"`/`"porch"` keys. Primary = the user's own space; guest = "Guests".
   const serverLabel =
-    active === "home" ? homeName.trim() || "home" : "porch";
+    active === "home" ? homeName.trim() || "My space" : "Guests";
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+
+  // peer-id → Identify vanity name, hydrated from the LAN snapshot and
+  // kept current via the discovery event stream. Used to render porch
+  // message authors with a friendlier handle than the raw peer-id.
+  const [vanityByPeerId, setVanityByPeerId] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+
+  useEffect(() => {
+    if (!isNative) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        const peers = await fetchLanPeersSnapshot();
+        if (cancelled) return;
+        const next = new Map<string, string>();
+        for (const p of peers) {
+          const name = vanityNameFromAgentVersion(p.agentVersion);
+          if (name) next.set(p.peerId, name);
+        }
+        setVanityByPeerId(next);
+      } catch {
+        // Snapshot read failed (e.g. swarm not up yet) — authors fall
+        // back to the shortened peer-id, which is always renderable.
+      }
+    };
+
+    void refresh();
+    const unsubscribe = subscribeToLanPeers(() => void refresh());
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [isNative]);
 
   const selectedChannel = useMemo(
     () => channels.find((c) => c.id === selectedChannelId) ?? null,
@@ -80,8 +144,8 @@ export function LocalChatPane() {
   );
 
   const chatMessages = useMemo(
-    () => messages.map(porchToChatMessage),
-    [messages],
+    () => messages.map((m) => porchToChatMessage(m, vanityByPeerId)),
+    [messages, vanityByPeerId],
   );
 
   const handleSend = useCallback(

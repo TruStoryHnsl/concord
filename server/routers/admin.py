@@ -34,15 +34,21 @@ router = APIRouter(tags=["admin"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-def require_admin(user_id: str) -> None:
+def is_admin_user(user_id: str) -> bool:
+    """True iff the user is a global admin — via the ADMIN_USER_IDS env
+    OR the dynamically-assigned admins in instance.json (set during
+    first-boot admin creation when the env var is empty). Every admin
+    check must go through here; checking only the env var reports
+    first-boot-created operators as non-admin."""
     if user_id in ADMIN_USER_IDS:
-        return
-    # Also check dynamically-assigned admins stored in instance.json
-    # (set during first-boot admin creation when ADMIN_USER_IDS env is empty).
+        return True
     settings = _read_instance_settings()
-    if user_id in settings.get("admin_user_ids", []):
-        return
-    raise HTTPException(403, "Admin access required")
+    return user_id in settings.get("admin_user_ids", [])
+
+
+def require_admin(user_id: str) -> None:
+    if not is_admin_user(user_id):
+        raise HTTPException(403, "Admin access required")
 
 
 def _read_instance_settings() -> dict:
@@ -341,7 +347,7 @@ async def submit_bug_report(
 @router.get("/api/admin/check")
 async def admin_check(user_id: str = Depends(get_user_id)):
     """Check if the current user is a global admin."""
-    return {"is_admin": user_id in ADMIN_USER_IDS}
+    return {"is_admin": is_admin_user(user_id)}
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +718,7 @@ async def admin_list_users(
             "user_id": row.user_id,
             "server_count": row.server_count,
             "first_seen": row.first_seen.isoformat() if row.first_seen else None,
-            "is_admin": row.user_id in ADMIN_USER_IDS,
+            "is_admin": is_admin_user(row.user_id),
             "has_owner_role": "owner" in roles,
         })
 

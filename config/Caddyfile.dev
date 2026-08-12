@@ -1,6 +1,14 @@
 {
     http_port 8080
     https_port 8443
+    # Slowloris mitigation — mirrors prod Caddyfile. See that file's note.
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 60s
+            idle 120s
+        }
+    }
     # Extend the internal CA's intermediate + root lifetimes so the
     # per-site leaf can match. Without this, the intermediate's
     # default ~7-day TTL caps every leaf to a few days regardless of

@@ -5,7 +5,7 @@
  * full libp2p WebRTC mesh or falls back to the LiveKit SFU. This
  * module bridges the React voice-join flow to the Rust
  * `select_voice_path` Tauri command (see
- * `native backend`).
+ * `src-tauri/src/lib.rs::select_voice_path`).
  *
  * Decision rules (Phase 8 design doc, restated for the TS side):
  *   - >8 participants → SFU (`"above_cap_8"`).
@@ -75,7 +75,7 @@ export interface VoicePathSelection {
  *
  * Native build: invokes the Tauri command. The Rust side resolves
  * the path via the same selector that backs the integration tests
- * (see the native voice selector).
+ * (see `src-tauri/src/servitude/voice/selector.rs`).
  *
  * Web build: short-circuits to LiveKit. Browsers cannot be libp2p
  * mesh peers until Phase 9.
@@ -122,6 +122,17 @@ export async function selectVoicePath(
   const node = await getBrowserNodeIfStarted();
   if (!node) {
     return { path: "livekit_sfu", reason: "browser_libp2p_not_running" };
+  }
+  // No remote participants named → there is no mesh to form. A solo join
+  // (the common case, and what `joinVoiceSession` sends today since the
+  // roster→peer resolution is still a follow-up) must ride the LiveKit
+  // SFU. Without this guard an empty list trivially passed every check
+  // below and returned `libp2p_mesh`, so the join committed to the mesh
+  // transport with no LiveKit room — and the LiveKit-based voice UI then
+  // crashed with "No room provided". Browser mesh media is only viable
+  // once real peers are present (the Phase 9 cases below).
+  if (participants.length === 0) {
+    return { path: "livekit_sfu", reason: "no_remote_participants" };
   }
   if (participants.length > 8) {
     return { path: "livekit_sfu", reason: "above_cap_8" };

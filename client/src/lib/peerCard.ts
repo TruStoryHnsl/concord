@@ -9,7 +9,7 @@
  *
  * That same URL is both the QR payload and the deeplink — the QR is just
  * a transport for the URL. The Tauri-side deeplink handler in
- * the native IPC backend (Wave 1) parses the same shape on inbound URL
+ * `src-tauri/src/lib.rs` (Wave 1) parses the same shape on inbound URL
  * open events.
  *
  * Validation: the decoder NEVER throws on malformed input — it returns a

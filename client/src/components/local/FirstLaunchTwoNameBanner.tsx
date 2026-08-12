@@ -136,8 +136,8 @@ export function FirstLaunchTwoNameBanner() {
           Welcome — name your space
         </h2>
         <p className="text-sm text-on-surface-variant font-body">
-          Your porch — the always-fresh guest entrance — is automatic.
-          Pick a label for this device and your home server below.
+          Your guest space — the always-fresh entrance visitors reach — is
+          automatic. Pick a label for this device and your private space below.
         </p>
       </header>
 
@@ -161,14 +161,14 @@ export function FirstLaunchTwoNameBanner() {
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-wider">
-            Your home server
+            Your private space
           </span>
           <input
             data-testid="first-launch-home-input"
             type="text"
             value={homeInput}
             onChange={(e) => setHomeInput(e.target.value)}
-            placeholder="home"
+            placeholder="My space"
             disabled={saving}
             className="rounded-lg bg-surface px-3 py-2 text-sm font-body text-on-surface placeholder:text-on-surface-variant/60 border border-outline/30 focus:outline-none focus:ring-2 focus:ring-primary/40"
             autoComplete="off"

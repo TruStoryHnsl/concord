@@ -6,9 +6,10 @@ import {
   getLastCheckedDisplay,
   type UpdaterCheckResult,
 } from "../../lib/updater";
+import { InstanceUpdateSection } from "./InstanceUpdateSection";
 
-// Per-platform release-suffix tags emitted by the desktop release pipeline.
-// Each one carries exactly one
+// Per-platform release-suffix tags emitted by the desktop pipeline
+// (.github/workflows/release.yml). Each one carries exactly one
 // installer asset; the asset filename embeds the SemVer version,
 // so we cannot use GitHub's static `/releases/latest/download/<name>`
 // redirect — we resolve the latest tag of each suffix at runtime via
@@ -218,6 +219,13 @@ export function AboutTab() {
           )}
         </div>
       )}
+
+      {/*
+        Web build (docker / hosted) + instance admin: user-initiated update of
+        the running server image. Self-hides for non-admins. Native builds use
+        the Tauri self-updater above instead.
+      */}
+      {!isTauri && <InstanceUpdateSection />}
 
       {/*
         Web build (docker / hosted): present the four desktop installers.

@@ -2,12 +2,12 @@
  * F-A — Concord-native user-definition protocol — API wrapper.
  *
  * Thin wrappers around the five `concord_user_*` Tauri commands exposed by
- * the native IPC backend. Mirrors the Rust types defined in
- * `native backend`. Web build returns typed
+ * `src-tauri/src/lib.rs`. Mirrors the Rust types defined in
+ * `src-tauri/src/servitude/concord_user/mod.rs`. Web build returns typed
  * errors (the user-definition protocol is a native-only feature; the
  * browser node can't sign with the install's Stronghold seed).
  *
- * See `the Concord user protocol` for the protocol
+ * See `docs/architecture/concord-user-protocol-scope.md` for the protocol
  * overview. The defining invariant is per-server identity isolation —
  * a ConcordUserDescriptor with multiple `server_profiles` and no trust
  * edges yields multiple effective profiles when reduced via merge_view.

@@ -34,22 +34,71 @@ services:
     networks:
       - concord
 
-  # Minimal-privilege proxy that lets concord-api restart the conduwuit
-  # container when the federation allowlist changes. Only CONTAINERS list
-  # and POST (restart) are enabled — no image, volume, or network access.
-  # This avoids mounting the host's /var/run/docker.sock directly into
-  # concord-api, shrinking the blast radius if concord-api is compromised.
+  # Proxy that mediates concord-api's Docker access so the raw
+  # /var/run/docker.sock is never mounted into concord-api itself.
+  #
+  # SECURITY: every allowlist flag below is justified in
+  # docs/architecture/docker-self-update-threat-model.md. Do NOT widen this
+  # casually. Note (see threat model §3.1): CONTAINERS+POST is already a
+  # host-root primitive — POST /containers/create accepts arbitrary host binds
+  # — so it is NOT "minimal privilege" despite the historical framing. The
+  # IMAGES/BUILD/NETWORKS additions below do not raise the maximum blast radius
+  # beyond what CONTAINERS+POST already grants; they enable the admin-triggered
+  # full-stack self-update (pull + build --pull + up -d of ALL services).
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     environment:
-      CONTAINERS: "1"
-      POST: "1"
-      # Everything else stays at its secure default (disabled).
+      CONTAINERS: "1"   # container lifecycle: restart (federation apply) +
+                        # create/start/recreate/inspect for the compose update
+      POST: "1"         # global switch enabling write verbs on allowed paths
+      # --- Additions for admin-triggered full-stack self-update only ---
+      IMAGES: "1"       # `compose pull` (POST /images/create) + rollback
+                        # retag/inspect (POST /images/*/tag, GET /images/*)
+      BUILD: "1"        # `compose build --pull` (POST /build) — rebuild
+                        # concord-api + web from source. Build context is the
+                        # operator-owned host compose dir, not the API request
+                        # (threat model §3.3).
+      NETWORKS: "1"     # `compose up` reconciles the `concord` network
+                        # (GET /networks*). Under this proxy's coarse method
+                        # model, POST also grants network create/delete — the
+                        # widening under most scrutiny (threat model §3.4).
+      # Everything else (VOLUMES, EXEC, SWARM, SECRETS, CONFIGS, SYSTEM, AUTH,
+      # …) stays at its secure default (disabled). The stack uses host bind
+      # mounts, not named volumes, so VOLUMES is intentionally NOT granted.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - concord
+
+  # ── Reticulum Transport feature flag (INS-037) ──────────────────────────────
+  #
+  # The Concord Tauri/desktop binary supports an optional `reticulum` Cargo
+  # feature flag that compiles in the ReticulumTransport variant. This flag is
+  # OFF by default; standard builds and this docker-compose stack are unaffected.
+  #
+  # To build with Reticulum transport enabled:
+  #   cargo build --features reticulum
+  #
+  # What it adds: ReticulumTransport struct + TransportRuntime::Reticulum variant
+  # that spawns `rnsd` (the Reticulum Network Stack daemon) as a child process
+  # and manages its lifecycle (start / health-check / graceful stop).
+  #
+  # Runtime dependency: `rnsd` must be installed (pip install rns) or bundled.
+  # The feature flag does NOT automatically bundle rnsd.
+  #
+  # Docker note: if you run a Reticulum-enabled build inside this stack, add the
+  # following to the concord-api service below to allow rnsd TUN/TAP access:
+  #
+  #   cap_add:
+  #     - NET_ADMIN
+  #   # For serial/USB radio interfaces, also add a devices: section:
+  #   # devices:
+  #   #   - /dev/ttyUSB0:/dev/ttyUSB0
+  #
+  # See docs/deployment/README.md § "Reticulum Transport (experimental)" for the
+  # full setup guide and wave-sequencing notes.
+  # ─────────────────────────────────────────────────────────────────────────────
 
   concord-api:
     build: ./server
@@ -65,8 +114,26 @@ services:
       # become writable too — the blast radius is limited to corr-owned
       # host files and admin-gated backend code paths.
       - ./config:/etc/concord-config:rw
+      # Reticulum identity + key storage (STANDARD stack — no overlay
+      # needed). Named volume (never a bind on ~/.reticulum) so the
+      # operator's host Reticulum config is untouched and the node
+      # identity survives restarts/recreates.
+      - reticulum-data:/var/lib/reticulum
+    ports:
+      # Reticulum PILLAR ENTRYPOINT. Active only when the operator enables
+      # pillar mode (PUT /api/admin/reticulum, mode=private|public) — the
+      # in-process RNS node then listens with a TCPServerInterface here and
+      # acts as a transport node for the mesh. Harmless while mode=off
+      # (nothing listens). PRIVATE-mode secrecy is by routing knowledge,
+      # not this port: the entry domain is served only to validated users
+      # via the authenticated /api/reticulum/entrypoint endpoint.
+      - "${RETICULUM_ENTRYPOINT_PORT:-4242}:4242"
     environment:
       CONCORD_DATA_DIR: /data
+      # rnsd/RNS isolated config dir → the named volume above. Both vars so
+      # bare `rnsd`/`rnstatus` in the container target the same dir.
+      RETICULUM_CONFIG_DIR: /var/lib/reticulum
+      RNS_CONFIG_DIR: /var/lib/reticulum
       MATRIX_HOMESERVER_URL: http://conduwuit:${CONDUWUIT_PORT}
       CONDUWUIT_SERVER_NAME: ${CONDUWUIT_SERVER_NAME}
       CONDUWUIT_REGISTRATION_TOKEN: ${CONDUWUIT_REGISTRATION_TOKEN}
@@ -125,6 +192,18 @@ services:
       # Native installs leave this unset; their persisted profile
       # defaults to p2p_only.
       CONCORD_PROFILE: web_first
+      # W2.2 / F5 — Hub mode. When set truthy (1/true/yes/on) the Concord
+      # Rust binary runs as a HUB: the full libp2p swarm, always-on,
+      # always-scanning (drives the F2 mesh topology), exposing the web
+      # portal AND accepting passphrase-encrypted superuser-keychain
+      # CLAIMs from native devices (stored ciphertext-only — the Hub
+      # never sees plaintext). A Hub ALWAYS forces the inbound
+      # connection_gate enforce flag ON regardless of tunnel_config.json,
+      # because it holds users' encrypted backups. Default 0 (not a Hub);
+      # an operator opts in by setting CONCORD_HUB=1 in their .env. The
+      # encrypted-blob keystore persists under
+      # ${CONCORD_DATA_DIR}/hub_keystore/ (mounted at ./data/concord).
+      CONCORD_HUB: ${CONCORD_HUB:-0}
     depends_on:
       conduwuit:
         condition: service_started
@@ -147,9 +226,10 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
-      # The container-side range here (right of `:`) MUST equal
-      # config/livekit.yaml rtc.port_range_start..port_range_end and
-      # stay disjoint from config/turnserver.conf relay ports.
+    # See docs/voice/port-coherence.md for the four-file port contract.
+    # The container-side range here (right of `:`) MUST equal
+    # config/livekit.yaml rtc.port_range_start..port_range_end.
+    # CI's config-lint job enforces this on every PR.
     ports:
       - "${LIVEKIT_TCP_PORT:-7881}:7881"
       - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"
@@ -225,8 +305,13 @@ services:
       # to https://<CONDUWUIT_SERVER_NAME>. The Caddyfile uses this for
       # the m.homeserver.base_url in /.well-known/matrix/client.
       MATRIX_BASE_URL: ${PUBLIC_BASE_URL:-https://${CONDUWUIT_SERVER_NAME}}
-      # TLS strategy picker. Empty falls back to the Caddyfile default
-      # of letsencrypt_http01.
+      # TLS strategy picker — drives the `import tls_mode_<mode>` line
+      # in both Caddyfile and Caddyfile.dev. See .env.example for the
+      # documented matrix. Empty falls back to each Caddyfile's
+      # built-in default. The prod default is `letsencrypt_http01`;
+      # the dev override (docker-compose.dev.yml) substitutes
+      # `internal_longlived` so Caddyfile.dev keeps its historical
+      # Tailscale-friendly behaviour when TLS_MODE is unset in .env.
       TLS_MODE: ${TLS_MODE:-letsencrypt_http01}
       # Optional ACME contact email. Consumed by the letsencrypt_*
       # TLS_MODE snippets via Caddy's `{$ACME_EMAIL:fallback}` syntax;
@@ -325,7 +410,8 @@ services:
   #   the same TURN_SECRET env var to generate time-limited credentials
   #   per RFC 5389 (see server/routers/voice.py _generate_turn_credentials).
   #
-  # Operators behind NAT may set TURN_EXTERNAL_IP in .env.
+  # The install script (install.sh) may add --external-ip to the command
+  # list in docker-compose.override.yml for NAT-behind-NAT scenarios.
   coturn:
     image: coturn/coturn:4.6
     restart: unless-stopped
@@ -370,3 +456,9 @@ services:
 networks:
   concord:
     driver: bridge
+
+volumes:
+  # Reticulum identity + key storage for concord-api's in-process RNS
+  # node. Named so the container identity persists across recreates and
+  # the operator's host ~/.reticulum is never touched.
+  reticulum-data:

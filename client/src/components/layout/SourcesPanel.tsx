@@ -20,8 +20,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
-import { useSourcesStore, type ConcordSource } from "../../stores/sources";
+import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
+import { useSourcesStore, useVisibleSources, type ConcordSource } from "../../stores/sources";
 import { usePeerStore } from "../../stores/peerStore";
+import { isTauri } from "../../api/servitude";
 import { useInstanceNameStore } from "../../stores/instanceName";
 import { useAvatarUrl } from "../../hooks/usePresence";
 import {
@@ -31,6 +33,8 @@ import {
 } from "../sources/sourceBrand";
 import { SourceContextMenu } from "./SourceContextMenu";
 import { disconnectSource } from "../../lib/disconnectSource";
+import { switchToSource } from "../../lib/switchToSource";
+import { isLocalInstanceSource } from "../../lib/sourceIdentity";
 
 const SOURCE_RAIL_STORAGE_KEY_PREFIX = "concord_source_rail_order";
 const ADD_SOURCE_TILE_ID = "__add_source_tile__";
@@ -187,6 +191,11 @@ function SortableSourceTile({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: source.id });
   const { bg, bgStyle, icon, label } = sourceTile(source);
+  // A p2p (porch) source is a fundamentally different connection kind
+  // from a web instance — surface it explicitly with a tinted ring +
+  // corner badge so the user reads "peer/porch" at a glance, on top of
+  // the distinct brand glyph.
+  const isP2p = source.platform === "concord-p2p";
   const constrainedTransform = transform ? { ...transform, x: 0 } : null;
 
   return (
@@ -208,16 +217,35 @@ function SortableSourceTile({
           event.stopPropagation();
           onContextMenu(source, event.clientX, event.clientY);
         }}
-        title={source.isOwner ? `${label} (owner)` : label}
+        title={
+          isP2p
+            ? `${label} — peer (p2p porch)${source.isOwner ? " · owner" : ""}`
+            : source.isOwner
+              ? `${label} (owner)`
+              : label
+        }
         data-testid={`source-tile-${source.id}`}
+        data-source-kind={isP2p ? "p2p" : "web"}
         style={bgStyle}
         className={`group relative w-8 h-8 flex items-center justify-center transition-all duration-150 ${bg} ${
+          isP2p && !bgStyle ? "ring-1 ring-secondary/50" : ""
+        } ${
           source.enabled
             ? "rounded-xl shadow-lg scale-100 text-on-surface"
             : "rounded-lg hover:rounded-xl scale-95 hover:scale-100 opacity-45 hover:opacity-80 grayscale"
         }`}
       >
         {icon}
+        {isP2p ? (
+          <span
+            data-testid={`source-p2p-badge-${source.id}`}
+            className="absolute -bottom-1 -left-1 w-3 h-3 rounded-full bg-secondary ring-2 ring-surface flex items-center justify-center"
+            title="Peer-to-peer connection"
+            aria-label="Peer-to-peer source"
+          >
+            <span className="block w-1.5 h-1.5 rounded-full bg-on-secondary" />
+          </span>
+        ) : null}
         {source.isOwner ? (
           <span
             data-testid={`source-owner-badge-${source.id}`}
@@ -430,9 +458,18 @@ export function SourcesPanel({
   onSourceOpen,
   onLocalOpen,
   onExplore,
+  onReticulumOpen,
   mobile = false,
+  canManageSources = true,
 }: {
   onAddSource: () => void;
+  /**
+   * Whether the viewer may ADD web/Matrix sources (instance admin/owner,
+   * or a native app user). When false, the add affordance routes to the
+   * peer-porch pairing flow only — a plain web visitor can still reach
+   * a native build's porch, but cannot add sources to this instance.
+   */
+  canManageSources?: boolean;
   onSourceSelect?: (sourceId: string) => void;
   /** Called when a tile is clicked — opens the source browser for that source. */
   onSourceOpen?: (sourceId: string) => void;
@@ -445,15 +482,25 @@ export function SourcesPanel({
    */
   onLocalOpen?: () => void;
   onExplore?: () => void;
+  /** Mobile: called after a reticulum tile opens its surface, so the
+   *  nav stack can advance to the content frame. */
+  onReticulumOpen?: () => void;
   mobile?: boolean;
 }) {
   const currentUserId = useAuthStore((s) => s.userId);
-  const rawSources = useSourcesStore((s) => s.sources);
+  const rawSources = useVisibleSources();
   const toggleSource = useSourcesStore((s) => s.toggleSource);
   const setSourceOrder = useSourcesStore((s) => s.setSourceOrder);
   const updateSource = useSourcesStore((s) => s.updateSource);
   const openServerSettings = useSettingsStore((s) => s.openServerSettings);
   const openSettings = useSettingsStore((s) => s.openSettings);
+
+  // The add affordance is role-aware: admins/owners get the full
+  // add-source flow; plain visitors get ONLY the peer-porch pairing
+  // path (so they can still reach a native build's porch).
+  const handleAddSource = canManageSources
+    ? onAddSource
+    : () => useSettingsStore.getState().requestAddSource("pair-peer");
 
   // Right-click / long-press surface. We keep the menu state local
   // because nothing else in the app needs to inspect "is a source
@@ -464,7 +511,52 @@ export function SourcesPanel({
     y: number;
   } | null>(null);
 
-  const sources = rawSources;
+  // Porch visibility gate. The porch / local-home surface is a native
+  // concept: it only exists once a native app has created it and the
+  // account has at least one linked p2p device. In the web/docker build
+  // there is no porch until such a device is paired, so the intrinsic
+  // local tile stays hidden — a fresh web login lands directly on its
+  // Concord server instead of an empty "lives on your desktop" porch.
+  const knownPeers = usePeerStore((s) => s.knownPeers);
+  const showLocalTile = isTauri() || knownPeers.length > 0;
+
+  // When the porch LocalTile is shown it REPRESENTS the local/embedded
+  // instance, so suppress that instance's own ConcordSource from the rail.
+  // Otherwise it renders a second "local concord" tile that just repeats the
+  // home/porch tile (the duplicate the user hit). Foreign instances
+  // (isLocal !== true) always render.
+  const sources = useMemo(
+    () => (showLocalTile ? rawSources.filter((s) => !s.isLocal) : rawSources),
+    [rawSources, showLocalTile],
+  );
+
+  // Primary click on a source tile SWITCHES to that instance — re-points
+  // the active homeserver + session at the source and reloads (no-op if it
+  // is already active). It does NOT toggle the source on/off; toggling
+  // visibility lives in the right-click menu. Clicking always reveals the
+  // source first so a click can never hide the source you're trying to reach.
+  const handleOpenSource = (id: string) => {
+    const src = sources.find((s) => s.id === id);
+    if (src && !src.enabled) {
+      updateSource(id, { enabled: true });
+    }
+    // Reticulum sources open their dedicated framework-shaped surface —
+    // there is no Matrix session to switch into (and never will be).
+    if (src?.platform === "reticulum") {
+      useReticulumSurfaceStore.getState().open(id);
+      onReticulumOpen?.();
+      return;
+    }
+    onSourceSelect?.(id);
+    // A foreign source with no stored session can't be switched into —
+    // switchToSource reports "needs-auth" instead of swapping into a
+    // token/instance mismatch. Route the user to the connect/sign-in
+    // flow so they can authenticate (then its servers join the rail).
+    const result = switchToSource(id);
+    if (result === "needs-auth") {
+      useSettingsStore.getState().requestAddSource();
+    }
+  };
 
   // INS-069 — lazy-fetch per-instance branding for any source whose
   // `branding` field is undefined. This populates the rail tile with
@@ -525,10 +617,6 @@ export function SourcesPanel({
     }),
   );
 
-  const handleToggle = (id: string) => {
-    toggleSource(id);
-    onSourceSelect?.(id);
-  };
 
   const [railOrder, setRailOrder] = useState<string[]>(() =>
     normalizeRailOrder(
@@ -586,7 +674,8 @@ export function SourcesPanel({
       return (
         <SortableAddSourceTile
           key={id}
-          onAddSource={onAddSource}
+          onAddSource={handleAddSource}
+          canManageSources={canManageSources}
         />
       );
     }
@@ -596,7 +685,7 @@ export function SourcesPanel({
       <SortableSourceTile
         key={source.id}
         source={source}
-        onToggle={handleToggle}
+        onToggle={handleOpenSource}
         onContextMenu={(src, x, y) => setContextMenu({ source: src, x, y })}
       />
     );
@@ -632,7 +721,9 @@ export function SourcesPanel({
       x={contextMenu.x}
       y={contextMenu.y}
       onClose={() => setContextMenu(null)}
-      onOpen={(id) => onSourceOpen?.(id)}
+      isLocalInstance={isLocalInstanceSource(contextMenu.source)}
+      onOpen={(id) => handleOpenSource(id)}
+      onToggleEnabled={(id) => toggleSource(id)}
       onOpenSettings={(id) => {
         const src = sources.find((s) => s.id === id);
         if (src) handleOpenSettings(src);
@@ -653,7 +744,7 @@ export function SourcesPanel({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {/* Intrinsic Porch row — always FIRST, even when sources is empty.
               Local-only; not part of useSourcesStore.sources. */}
-          <MobileLocalRow onLocalOpen={onLocalOpen} />
+          {showLocalTile && <MobileLocalRow onLocalOpen={onLocalOpen} />}
           {sources.map((source) => {
             // Outer container: <div role="button"> instead of <button>. HTML
             // forbids interactive elements nested inside <button>, and the
@@ -715,11 +806,11 @@ export function SourcesPanel({
             </button>
           )}
           <button
-            onClick={onAddSource}
+            onClick={handleAddSource}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-sm text-on-surface-variant hover:text-on-surface transition-colors"
           >
-            <span className="material-symbols-outlined text-base">add</span>
-            Add Source
+            <span className="material-symbols-outlined text-base">{canManageSources ? "add" : "hub"}</span>
+            {canManageSources ? "Add Source" : "Connect a peer"}
           </button>
         </div>
         {contextMenuOverlay}
@@ -749,9 +840,11 @@ export function SourcesPanel({
           above the sortable sources. NOT a row in useSourcesStore.sources
           (the porch is local, not a remote connection). NOT draggable —
           intentionally outside the SortableContext below. */}
-      <div className="w-full flex flex-col items-center gap-1.5 pb-1.5 flex-shrink-0">
-        <LocalTile onLocalOpen={onLocalOpen} />
-      </div>
+      {showLocalTile && (
+        <div className="w-full flex flex-col items-center gap-1.5 pb-1.5 flex-shrink-0">
+          <LocalTile onLocalOpen={onLocalOpen} />
+        </div>
+      )}
 
       {/* Source tiles — scrollable, top-down */}
       <DndContext
@@ -782,8 +875,10 @@ export function SourcesPanel({
 
 function SortableAddSourceTile({
   onAddSource,
+  canManageSources = true,
 }: {
   onAddSource: () => void;
+  canManageSources?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: ADD_SOURCE_TILE_ID });
@@ -802,10 +897,11 @@ function SortableAddSourceTile({
         {...attributes}
         {...listeners}
         onClick={onAddSource}
-        title="Add Source"
+        title={canManageSources ? "Add source" : "Connect to a peer"}
+        data-testid="add-source-tile"
         className="w-8 h-8 rounded-xl hover:rounded-lg bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-all duration-150"
       >
-        <span className="material-symbols-outlined text-lg">add</span>
+        <span className="material-symbols-outlined text-lg">{canManageSources ? "add" : "hub"}</span>
       </button>
     </div>
   );

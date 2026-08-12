@@ -13,27 +13,12 @@ server/.venv/
 **/target/
 
 # Tauri-generated Xcode/Android project files
-src-tauri/
-src-tvos/
+src-tauri/gen/
 
-# Public-export local-only material
-docs/
-branding/
-infra/
-patches/
-scripts/
-.github/
-.orrch/
-.superpowers/
-client/e2e/
-client/src/**/__tests__/
-client/src/test/
-server/tests/
-install.sh
-PLAN.md
-CHANGELOG.md
-CLA.md
-CONTRIBUTING.md
+# Tauri bundled resources: NEEDED since tauri.conf.json bundles
+# resources/tuwunel/**/* and resources/reticulum/**/* — tauri-build fails
+# the concord-servitude compile if the globs match nothing (~87M context
+# cost, paid only by images that build the servitude).
 
 # Build cache
 .build-cache/

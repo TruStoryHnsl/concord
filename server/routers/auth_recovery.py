@@ -26,9 +26,16 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
+
+from services.ratelimit import (
+    client_ip,
+    rate_limits_disabled,
+    recovery_ip_buckets,
+    recovery_user_buckets,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import MATRIX_HOMESERVER_URL, SITE_URL
@@ -186,6 +193,7 @@ async def get_recovery_email_status(
 )
 async def forgot_password(
     body: ForgotPasswordRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> ForgotPasswordResponse:
     """Request a password reset link for ``body.user_id``.
@@ -203,6 +211,18 @@ async def forgot_password(
     # but this is cooperative-best-effort, not constant-time. SQLite's
     # B-tree lookup on the primary key is roughly O(log N) regardless
     # of hit/miss, which is "close enough" for this threat model.
+    # Throttle BEFORE any work: this endpoint is an unauthenticated
+    # outbound-SMTP amplifier without it. Both keys must have budget —
+    # per caller IP and per targeted username (a distributed flood
+    # against one victim account is bounded by the second key). The
+    # response stays the generic 200 either way (anti-enumeration);
+    # a throttled request simply performs no lookup and sends nothing.
+    if not rate_limits_disabled():
+        ip_wait = recovery_ip_buckets.check(client_ip(request))
+        user_wait = recovery_user_buckets.check(body.user_id.strip().lower())
+        if ip_wait > 0 or user_wait > 0:
+            return ForgotPasswordResponse(**_FORGOT_PASSWORD_BODY)
+
     user = await db.get(User, body.user_id)
 
     if user is not None and user.recovery_email and email_service.is_configured():

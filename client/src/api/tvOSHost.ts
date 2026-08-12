@@ -1,9 +1,10 @@
 /**
  * tvOS WKWebView JS bridge client module.
  *
- * When running inside the Concord tvOS app, the native shell injects
- * message handlers into `window.webkit.messageHandlers`. This module
- * provides typed TypeScript wrappers around the 4-function bridge API:
+ * When running inside the Concord tvOS app (src-tvos/, Path C SwiftUI
+ * shell), the native side injects message handlers into
+ * `window.webkit.messageHandlers`. This module provides typed
+ * TypeScript wrappers around the 4-function bridge API:
  *
  *   1. setServerConfig(config)  — persist server config to UserDefaults
  *   2. getServerConfig()        — load server config from UserDefaults

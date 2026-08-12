@@ -4,7 +4,7 @@
  *
  * Speaks `/concord/matrix-federation/1.0.0` over a libp2p stream
  * opened on the browser node. Wire format MUST match the Rust
- * `FederationHandler` in the native federation backend:
+ * `FederationHandler` in `src-tauri/src/servitude/federation/matrix.rs`:
  *
  *   - 4-byte BIG-ENDIAN length prefix.
  *   - JSON envelope body (UTF-8).
@@ -30,7 +30,6 @@
  */
 
 import type { Libp2p, PeerId, Stream } from "@libp2p/interface";
-import type { Uint8ArrayList } from "uint8arraylist";
 import { CONCORD_MATRIX_FEDERATION_PROTOCOL } from "./node";
 
 /**
@@ -177,7 +176,14 @@ export function frameEnvelope(body: Uint8Array): Uint8Array {
  * Exported for tests.
  */
 export async function readLengthPrefixedEnvelope(
-  source: AsyncIterable<Uint8Array | Uint8ArrayList>,
+  // Structurally typed (`Uint8Array | { subarray(): Uint8Array }`) so this
+  // module stays free of the `uint8arraylist` import — the only shape we
+  // need from a `Uint8ArrayList` is its `subarray()` accessor. This also
+  // sidesteps the nominal-type mismatch when multiple `uint8arraylist`
+  // major versions coexist in the dependency tree (libp2p resolves v2 for
+  // its `Stream` type while the top-level dep is v3). Mirrors `readEnvelope`
+  // in `voiceSignaling.ts`.
+  source: AsyncIterable<Uint8Array | { subarray(): Uint8Array }>,
 ): Promise<Uint8Array> {
   const collected: number[] = [];
   let len: number | null = null;
@@ -203,7 +209,9 @@ export async function readLengthPrefixedEnvelope(
   throw new Error("stream closed mid-body");
 }
 
-function chunkToUint8Array(chunk: Uint8Array | Uint8ArrayList): Uint8Array {
+function chunkToUint8Array(
+  chunk: Uint8Array | { subarray(): Uint8Array },
+): Uint8Array {
   // `Uint8ArrayList` exposes a `.subarray()` that materializes a flat
   // `Uint8Array`; plain `Uint8Array` is already what we want.
   if (chunk instanceof Uint8Array) return chunk;

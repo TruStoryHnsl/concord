@@ -38,6 +38,23 @@ export interface Server {
    * non-local rooms with a distinct color.
    */
   federated?: boolean;
+  /**
+   * Client-only marker: the id of the `ConcordSource` this server was
+   * fetched from. Set by the server store when aggregating servers
+   * across multiple connected instances. Undefined for servers from the
+   * active source loaded via the legacy `loadServers` path. Never sent
+   * on the wire.
+   */
+  sourceId?: string;
+  /**
+   * Client-only marker: true when this server belongs to a connected
+   * source that is NOT the active instance — i.e. a read-only rail tile
+   * fetched from another instance's `/servers`. The active Matrix client
+   * has no rooms for it, so clicking it must hot-swap to its source
+   * (`switchToSource`) before the chat/voice machinery can open it.
+   * Never sent on the wire.
+   */
+  foreign?: boolean;
 }
 
 export interface Invite {
@@ -170,8 +187,103 @@ export async function listExtensions(accessToken: string): Promise<ServerExtensi
   return apiFetch("/extensions", {}, accessToken);
 }
 
+/**
+ * Repo-driven install (S4). Hands the existing server install pipeline a
+ * bundle URL + optional SHA-384 integrity string sourced from a
+ * `concord-repo/v1` index version entry.
+ *
+ *   POST /api/extensions/install  { remote_url, integrity? }
+ *
+ * This is the SAME endpoint the legacy install-by-zip-URL admin path uses
+ * — the repo system layers discovery on top of it, it does not reinvent
+ * the install. Admin-gated server-side (403 for non-admins). The returned
+ * shape carries the installed id + version; callers typically follow with
+ * `reloadCatalog` so the Applications sidebar surfaces the new extension.
+ */
+export interface InstallByUrlResult {
+  id: string;
+  version: string;
+  pricing: string;
+  enabled: boolean;
+}
+
+export async function installExtensionFromUrl(
+  remoteUrl: string,
+  accessToken: string,
+  integrity?: string,
+): Promise<InstallByUrlResult> {
+  return apiFetch(
+    "/extensions/install",
+    {
+      method: "POST",
+      body: JSON.stringify(
+        integrity
+          ? { remote_url: remoteUrl, integrity }
+          : { remote_url: remoteUrl },
+      ),
+    },
+    accessToken,
+  );
+}
+
+/**
+ * Remove an installed extension by id (S4). DELETE /api/extensions/{id},
+ * admin-gated server-side. 204 on success.
+ */
+export async function uninstallExtensionById(
+  extensionId: string,
+  accessToken: string,
+): Promise<void> {
+  await apiFetch(
+    `/extensions/${encodeURIComponent(extensionId)}`,
+    { method: "DELETE" },
+    accessToken,
+  );
+}
+
 export async function listServers(accessToken: string): Promise<Server[]> {
   return apiFetch("/servers", {}, accessToken);
+}
+
+/**
+ * List servers from an EXPLICIT instance, bypassing the global active
+ * `getApiBase()` resolution. Used by the rail's multi-instance
+ * aggregation (`loadForeignServers`) to fetch each connected source's
+ * servers against that source's own `api_base` + token, regardless of
+ * which instance is currently active. Mirrors `apiFetch`'s error
+ * handling but never reads the active config.
+ */
+export async function listServersAt(
+  apiBase: string,
+  accessToken: string,
+): Promise<Server[]> {
+  const base = apiBase.replace(/\/+$/, "");
+  const resp = await fetch(`${base}/servers`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    let errcode: string | undefined;
+    try {
+      const body = await resp.json();
+      if (typeof body.detail === "string") detail = body.detail;
+      else if (typeof body.error === "string") detail = body.error;
+      if (typeof body.errcode === "string") errcode = body.errcode;
+    } catch {
+      /* non-JSON error body */
+    }
+    const err = new Error(detail) as Error & {
+      httpStatus?: number;
+      errcode?: string;
+    };
+    err.httpStatus = resp.status;
+    err.errcode = errcode;
+    throw err;
+  }
+  if (resp.status === 204 || resp.headers.get("content-length") === "0") {
+    return [];
+  }
+  return resp.json();
 }
 
 export async function createServer(
@@ -401,6 +513,18 @@ export interface SoundboardClip {
   license_url?: string | null;
   /** Original uploader's name on the source platform. Required for CC-BY etc. */
   attribution?: string | null;
+  /**
+   * Effects board: opaque JSON string describing an optional screenspace
+   * visual effect paired with this clip — the serialised `EffectMetadata`
+   * ({@link src/effects/types.ts}). `null`/absent ⇒ a plain sound-only
+   * clip. When set with a real `visualId`, the clip fires a visual (with
+   * or without the sound). A clip with `effect_metadata` set and an
+   * empty/absent audio file is a visual-only item.
+   */
+  effect_metadata?: string | null;
+  /** False for a visual-only effects item (no audio file). Defaults true
+   *  for legacy/sound clips that predate the field. */
+  has_sound?: boolean;
 }
 
 /** INS-073: list every clip on the instance.
@@ -430,10 +554,14 @@ export async function uploadSoundboardClip(
   name: string,
   file: File,
   accessToken: string,
+  /** Effects board: optional serialised EffectMetadata to pair a visual
+   *  with the uploaded sound (sound+visual item). Omit for sound-only. */
+  effectMetadata?: string | null,
 ): Promise<SoundboardClip> {
   const formData = new FormData();
   formData.append("name", name);
   formData.append("file", file);
+  if (effectMetadata) formData.append("effect_metadata", effectMetadata);
 
   const resp = await fetch(`${getBase()}/soundboard/${serverId}`, {
     method: "POST",
@@ -451,12 +579,41 @@ export async function uploadSoundboardClip(
 
 export async function updateSoundboardClip(
   clipId: number,
-  updates: { name?: string; keybind?: string },
+  updates: {
+    name?: string;
+    keybind?: string;
+    /** Effects board: set/replace the paired visual (serialised
+     *  EffectMetadata), or pass "" to clear it back to sound-only.
+     *  Omit the key entirely to leave any existing effect untouched. */
+    effect_metadata?: string;
+  },
   accessToken: string,
-): Promise<{ status: string; name: string; keybind: string | null }> {
+): Promise<{ status: string; name: string; keybind: string | null; effect_metadata: string | null }> {
   return apiFetch(
     `/soundboard/${clipId}`,
     { method: "PATCH", body: JSON.stringify(updates) },
+    accessToken,
+  );
+}
+
+/**
+ * Effects board: create a visual-only effects item (no sound). The server
+ * stores a clip with `effect_metadata` set and an empty audio filename;
+ * the client renders it as a pure screenspace visual.
+ */
+export async function createVisualEffect(
+  serverId: string,
+  name: string,
+  effectMetadata: string,
+  accessToken: string,
+): Promise<SoundboardClip> {
+  return apiFetch(
+    `/soundboard/${serverId}/visual`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, effect_metadata: effectMetadata }),
+    },
     accessToken,
   );
 }
@@ -928,6 +1085,16 @@ export async function getRecoveryEmailStatus(
   accessToken: string,
 ): Promise<RecoveryEmailStatus> {
   return apiFetch("/user/recovery-email-status", {}, accessToken);
+}
+
+// Public, no-auth, anti-enumeration: always returns the same message whether or
+// not the account exists / has a recovery email on file. Sends a reset link to
+// the recovery email when one is configured.
+export async function forgotPassword(userId: string): Promise<{ message: string }> {
+  return apiFetch("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
 }
 
 // --- Bug Reports ---
@@ -1419,6 +1586,15 @@ export interface DMConversation {
   other_user_id: string;
   matrix_room_id: string;
   created_at: string | null;
+  /**
+   * Which connected source/account this DM belongs to. Set by the DM
+   * store when it aggregates DMs across every connected source (the
+   * superuser's DMs follow them: the native app holds each source's auth
+   * and merges their DMs into one profile-keyed list). Undefined for a
+   * DM on the active instance that wasn't tagged. Opening a DM whose
+   * sourceId is not the active instance hot-swaps to that source first.
+   */
+  sourceId?: string;
 }
 
 export interface RoomDiagnosticStep {
@@ -1455,6 +1631,26 @@ export async function listDMs(
   accessToken: string,
 ): Promise<DMConversation[]> {
   return apiFetch("/dms", {}, accessToken);
+}
+
+/**
+ * List DMs from a SPECIFIC source's instance (its own api_base + token),
+ * rather than the active instance. Mirrors {@link listServersAt} — this is
+ * what lets the native app aggregate the superuser's DMs across every
+ * connected source they hold auth for.
+ */
+export async function listDMsAt(
+  apiBase: string,
+  accessToken: string,
+): Promise<DMConversation[]> {
+  const base = apiBase.replace(/\/+$/, "");
+  const resp = await fetch(`${base}/dms`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    throw new Error(`listDMsAt ${base}: ${resp.status} ${resp.statusText}`);
+  }
+  return (await resp.json()) as DMConversation[];
 }
 
 export async function createDM(

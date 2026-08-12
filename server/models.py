@@ -1,7 +1,7 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import String, DateTime, Integer, Float, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import String, DateTime, Integer, Float, Boolean, ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -193,6 +193,17 @@ class SoundboardClip(Base):
     license_url: Mapped[str | None] = mapped_column(String, nullable=True)  # canonical license URL
     attribution: Mapped[str | None] = mapped_column(String, nullable=True)  # original author/uploader
 
+    # Effects board: an optional screenspace visual effect paired with this
+    # clip. Stored as a JSON string (the client's `EffectMetadata`:
+    # {"visualId": "confetti", "config": {...}, "version": 1}). NULL for a
+    # plain sound-only clip — every existing row stays valid without a
+    # data migration. When set with a real visualId the clip plays a
+    # visual (with or without the sound); the client decides sound-only /
+    # visual-only / both from the combination of this field + the clip's
+    # file. Kept as TEXT (not a JSON column) so SQLite stores it portably
+    # and the server never needs to parse it — it round-trips opaquely.
+    effect_metadata: Mapped[str | None] = mapped_column(String, nullable=True)
+
     server: Mapped["Server"] = relationship()
 
 
@@ -331,7 +342,7 @@ class BugReport(Base):
 class DisposableNode(Base):
     """A short-lived anonymous node session.
 
-    Used by the disposable-anonymous-browsing flow. A
+    Used by the disposable-anonymous-browsing pillar (PLAN.md). A
     disposable node has no email, no password, and no Matrix account —
     only a random session token. The node MUST contribute compute back
     to the network (the ``must_contribute_compute`` flag is a hint to
@@ -361,6 +372,74 @@ class DisposableNode(Base):
         default=lambda: datetime.now(timezone.utc) + timedelta(hours=24),
     )
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class MeshPresence(Base):
+    """A signed presence record pushed to this docker PILLAR by a connected
+    p2p-capable (native) instance — Spec B (docker-pillar).
+
+    The docker/web build never speaks libp2p or WireGuard. Instead, native
+    instances that connect to it over the auth pathway publish their
+    *presence + adjacency* here so the pillar can fold them into the mesh
+    topology it serves at ``/api/mesh/topology`` as hop-1, web-threaded
+    nodes (``via: "pillar"``). The pillar is a relay/host of mesh data, not
+    a p2p participant.
+
+    Authenticity is established by an Ed25519 signature over a canonical
+    byte string of ``(persona_id, persona_pubkey, adjacency, ttl)``,
+    verified at intake against the supplied 32-byte public key. We store
+    the verified pubkey + signature for audit/debug; the record is TTL'd
+    (``expires_at``) and a background sweeper evicts stale rows so the
+    live "who is connected to this pillar" set only ever reflects peers
+    that refreshed within their TTL.
+
+    Columns:
+      persona_id     stable persona slug the native instance signs with.
+                     A persona re-publishing upserts its own row (one live
+                     row per persona).
+      persona_pubkey the 32-byte Ed25519 public key the signature verified
+                     against (raw bytes).
+      sig            the 64-byte Ed25519 signature (raw bytes) over the
+                     canonical message — retained for audit.
+      adjacency      JSON array (TEXT) of the persona's directly-adjacent
+                     peer ids, as reported by the native instance.
+      ttl            the requested time-to-live in seconds (already clamped
+                     to the server max at intake).
+      expires_at     UTC instant after which the row is stale; INDEXED so
+                     the eviction sweep + the non-expired topology query
+                     are cheap.
+      posted_at      UTC instant the record was accepted (debug/ordering).
+      via_pillar     this instance's ``server_name`` — the pillar that
+                     accepted the record. Lets a future multi-pillar merge
+                     attribute each peer to the pillar it threaded through.
+    """
+
+    __tablename__ = "mesh_presence"
+    __table_args__ = (
+        UniqueConstraint("persona_id", name="uq_mesh_presence_persona"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    persona_pubkey: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sig: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    adjacency: Mapped[str] = mapped_column(String, nullable=False, default="[]")
+    ttl: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, index=True
+    )
+    posted_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    via_pillar: Mapped[str] = mapped_column(String, nullable=False)
+    # The instance account that published this row (Matrix user id from the
+    # authenticated intake session). Mesh/p2p data is USER-scoped: topology
+    # reads only fold in rows owned by the viewing account. Nullable so rows
+    # published before the column existed keep working until they expire —
+    # a NULL owner is visible to nobody (fail-closed).
+    owner_user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )
 
 
 class Extension(Base):
@@ -442,6 +521,139 @@ class User(Base):
     )
 
 
+class UserSource(Base):
+    """A platform source (connection) belonging to ONE user of this instance.
+
+    The docker instance is a *portal*: each account curates its own
+    catalogue of outward connections — federated Matrix homeservers,
+    the Reticulum mesh, other Concord instances, p2p meshes. Rows here
+    are the authoritative per-user source catalogue the client rail
+    renders; they are NEVER served to any other user. The only source
+    every user shares is the core instance itself, which is implicit
+    (it is not stored here — the client seeds it from ``.well-known``).
+
+    Credentials are deliberately NOT stored: access tokens for a remote
+    homeserver stay on the user's client (localStorage / Stronghold).
+    The server holds descriptors only, so the catalogue can follow the
+    user across devices without the instance ever holding third-party
+    session tokens.
+
+    Columns:
+      kind      "matrix" | "reticulum" | "concord" | "concord-p2p".
+      host      canonical hostname of the remote service. Empty string
+                for host-less kinds (reticulum, concord-p2p).
+      meta      client-defined JSON blob (branding, ordering hints, …).
+    """
+
+    __tablename__ = "user_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "kind", "host", name="uq_user_sources_user_kind_host"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: secrets.token_urlsafe(12)
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    host: Mapped[str] = mapped_column(String, nullable=False, default="")
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    api_base: Mapped[str | None] = mapped_column(String, nullable=True)
+    homeserver_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    meta: Mapped[str] = mapped_column(String, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class PersonaBinding(Base):
+    """Binds a peer-facing persona to ONE account on this instance.
+
+    This is the docker half of the native superuser→persona link. The
+    superuser itself is device↔device only and never crosses a
+    peer-facing channel — what the instance learns is only which
+    *personae* the authenticated account claims. The binding is what
+    lets the instance scope p2p/mesh data (``mesh_presence`` rows and
+    anything derived from them) to the account that owns the persona,
+    instead of serving the whole live peer set to every viewer.
+
+    A persona_id may be bound to exactly ONE account (unique). First
+    authenticated claim wins (trust-on-first-use at the account level,
+    mirroring the existing pubkey TOFU in ``routers/mesh.py``); a later
+    claim by a different account is rejected with 409.
+    """
+
+    __tablename__ = "persona_bindings"
+    __table_args__ = (
+        UniqueConstraint("persona_id", name="uq_persona_bindings_persona"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    persona_pubkey: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PendingMessage(Base):
+    """Store-and-forward mailbox row for the p2p pathway.
+
+    Concord's native 1:1 messaging queues undelivered messages ONLY on
+    the sender's device — if the recipient stays offline, nothing ever
+    arrives. This table is the docker pillar's answer: a sender (over
+    HTTP with an authenticated session, or over Reticulum via the pillar
+    mailbox destination) deposits an OPAQUE payload addressed to a
+    recipient persona; the recipient's account fetches and acks it the
+    next time any of their devices talks to this instance.
+
+    Scoping + safety invariants:
+      - the payload is opaque bytes (base64 in transit). The pillar
+        never interprets, never needs plaintext; senders are expected to
+        seal content for the recipient (the client-side inbox dedupes on
+        ``wire_id`` so redelivery is safe).
+      - deposits are accepted only for recipients with a
+        ``persona_bindings`` row — the mailbox stores for THIS
+        instance's validated users, not for the whole internet.
+      - fetch/ack are strictly user-scoped: an account sees only rows
+        addressed to personas bound to it.
+      - rows are TTL'd (``expires_at``, swept) and capped per recipient.
+    """
+
+    __tablename__ = "pending_messages"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: secrets.token_urlsafe(16)
+    )
+    recipient_persona_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # Sender attribution — best effort, for recipient display/filtering
+    # only. Clients must not treat these as authenticated beyond what the
+    # deposit channel proved (HTTP: Matrix account + optional persona
+    # signature; Reticulum: link-identified RNS identity hash).
+    sender_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    sender_persona_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    sender_pubkey: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    sender_identity_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    channel: Mapped[str] = mapped_column(String, nullable=False, default="http")  # http | reticulum
+    # Sender-side message id (the SocialFrameV2 ``id`` / inbox ULID);
+    # recipients dedupe on it.
+    wire_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    deposited_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PlaceLedgerHeader(Base):
     """Compressed snapshot of a place ledger after a re-mint.
 
@@ -472,4 +684,5 @@ class PlaceLedgerHeader(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
 

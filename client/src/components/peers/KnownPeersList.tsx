@@ -2,8 +2,10 @@
  * KnownPeersList (Phase 5 — peer pairing).
  *
  * Renders the paired-peers list from `usePeerStore`. Each row shows:
- *   - A short fingerprint (first 12 chars + ellipsis) so the row stays
- *     compact in the Profile tab's narrow column.
+ *   - A truncated PEER ID (first 12 chars + ellipsis) so the row stays
+ *     compact in the Profile tab's narrow column. It is a peer id, not a
+ *     fingerprint — the two are different strings and this list has never
+ *     shown the latter.
  *   - A source badge (Qr / Link / Matrix / DHT) so the user knows where
  *     the pairing came from.
  *   - A relative "last seen" timestamp.
@@ -15,10 +17,12 @@
  * we want the parent's layout to stay stable as the list fills in.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePeerStore } from "../../stores/peerStore";
 import type { KnownPeer, PeerSource } from "../../api/peerStore";
+import { connectToPeer } from "../../api/peerDial";
 import { useToastStore } from "../../stores/toast";
+import { useWebviewCall } from "../../voice/webviewVoiceMesh";
 
 /**
  * Human-readable label for each source, kept short to fit in a chip.
@@ -30,6 +34,7 @@ const SOURCE_LABEL: Record<PeerSource, string> = {
   deeplink: "Link",
   matrix_room: "Matrix",
   dht: "DHT",
+  proximity: "Tap-paired",
 };
 
 /**
@@ -94,6 +99,46 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
   const revokeAccess = usePeerStore((s) => s.revokeAccess);
   const grantAccess = usePeerStore((s) => s.grantAccess);
   const addToast = useToastStore((s) => s.addToast);
+  const [connecting, setConnecting] = useState(false);
+
+  // P2P-FR-002 — turn the intentional pairing into a live connection.
+  // Native invokes the `peer_dial` Rust command (queues a real swarm.dial);
+  // web ensures the browser node and dials the peer's stored multiaddrs.
+  // Either way, no discovery is consulted — only the paired addresses.
+  const handleConnect = async () => {
+    if (connecting) return;
+    setConnecting(true);
+    try {
+      await connectToPeer(peer);
+      // Native resolves on "dial queued"; web resolves on "connection
+      // opened". Phrase the toast so it's truthful for both.
+      addToast("Connecting to peer…", "success");
+    } catch (err) {
+      addToast(
+        `Could not connect: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  // INS-019b — start a webview WebRTC voice+video p2p call with this peer.
+  // Dials first (queues the libp2p connection), then offers media. The remote
+  // auto-answers via the app-root WebviewCallLayer listener.
+  const handleCall = async () => {
+    try {
+      await connectToPeer(peer);
+    } catch {
+      /* dial may already be live / queued — proceed to offer regardless */
+    }
+    try {
+      await useWebviewCall.getState().startCall(peer.peerId, { video: true });
+    } catch (err) {
+      addToast(
+        `Could not start call: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
 
   const handleRemove = async () => {
     // window.confirm is fine here — it's a destructive action on a single
@@ -175,7 +220,7 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
         className="inline-flex items-center gap-1.5 text-xs text-on-surface-variant whitespace-nowrap cursor-pointer select-none"
         title={
           peer.accessGranted
-            ? "Access granted — this peer can dial into your porch/home."
+            ? "Access granted — this peer can dial into your space."
             : "Access revoked — peer stays in your visible list but can't dial in."
         }
       >
@@ -189,6 +234,48 @@ function KnownPeerRow({ peer }: { peer: KnownPeer }) {
         />
         Access
       </label>
+      {/* INS-019b — Call: start a webview WebRTC voice+video p2p call. */}
+      <button
+        type="button"
+        onClick={() => void handleCall()}
+        disabled={!peer.accessGranted}
+        className="btn-press inline-flex items-center justify-center px-1.5 py-1 rounded-md text-on-surface-variant hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
+        aria-label={`Call paired peer ${peer.peerId.slice(0, 12)}`}
+        title={peer.accessGranted ? "Voice + video call this peer (p2p)" : "Grant access before calling"}
+        data-testid={`call-peer-${peer.peerId}`}
+      >
+        <span
+          className="material-symbols-outlined text-base leading-none"
+          style={{ fontVariationSettings: '"FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24' }}
+        >
+          videocam
+        </span>
+      </button>
+      {/* P2P-FR-002 — Connect: dial this paired peer using its stored
+          multiaddrs. Disabled when access is revoked (a visible-only peer
+          can't be dialed) or while a dial is already in flight. */}
+      <button
+        type="button"
+        onClick={() => void handleConnect()}
+        disabled={!peer.accessGranted || connecting}
+        className="btn-press inline-flex items-center justify-center px-1.5 py-1 rounded-md text-on-surface-variant hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
+        aria-label={`Connect to paired peer ${peer.peerId.slice(0, 12)}`}
+        title={
+          peer.accessGranted
+            ? "Connect to this peer (dials its stored addresses)"
+            : "Grant access before connecting"
+        }
+        data-testid={`connect-peer-${peer.peerId}`}
+      >
+        <span
+          className="material-symbols-outlined text-base leading-none"
+          style={{
+            fontVariationSettings: '"FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24',
+          }}
+        >
+          {connecting ? "sync" : "cable"}
+        </span>
+      </button>
       <button
         type="button"
         onClick={handleRemove}

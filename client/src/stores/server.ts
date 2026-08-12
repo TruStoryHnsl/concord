@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Server, Channel, ServerMember, AppAccess } from "../api/concord";
 import {
   listServers,
+  listServersAt,
   createServer as apiCreateServer,
   createChannel as apiCreateChannel,
   createInvite as apiCreateInvite,
@@ -17,6 +18,9 @@ import {
   rejoinServerRooms as apiRejoinServerRooms,
 } from "../api/concord";
 import { useToastStore } from "./toast";
+import { selectVisibleSources, useSourcesStore } from "./sources";
+import { useServerConfigStore } from "./serverConfig";
+import { isLocalInstanceSource } from "../lib/sourceIdentity";
 
 /**
  * Synthetic server ID prefix used for federated (loose) rooms. Any
@@ -101,12 +105,43 @@ export interface FederatedRoomsClientLike {
 
 interface ServerState {
   servers: Server[];
+  /**
+   * Servers aggregated from OTHER connected Concord sources (not the
+   * active instance). Each is tagged `{ sourceId, foreign: true }`. The
+   * rail renders these as read-only tiles alongside `servers`; clicking
+   * one hot-swaps to its source before it becomes interactive. Kept in a
+   * separate slice (not merged into `servers`) so the entire existing
+   * chat/voice/unread machinery keeps operating only on the active
+   * instance's `servers` — aggregation is purely additive in the rail.
+   */
+  foreignServers: Server[];
   activeServerId: string | null;
   activeChannelId: string | null; // matrix_room_id
+  /**
+   * True while a source/instance switch is in flight (set by
+   * switchToSource around the login + loadServers round-trip). The
+   * content pane reads this to show its OWN inline loader instead of the
+   * "Welcome — join or create a server" empty state, which otherwise
+   * flashes during the window where login() has reset `servers` to []
+   * but the new instance's servers haven't arrived yet. Scoped to the
+   * content pane so the rail (sources/servers tiles) stays stable — the
+   * content reloads independently of the rest of the page.
+   */
+  switchingSession: boolean;
   members: Record<string, ServerMember[]>; // keyed by server ID
   resetState: () => void;
 
   loadServers: (accessToken: string) => Promise<void>;
+  /**
+   * Aggregate servers from every connected, authenticated Concord source
+   * that is NOT the active instance, into `foreignServers`. Fetches each
+   * source's `/servers` against its own `api_base` + token via
+   * `listServersAt`. A source whose token is rejected (401 /
+   * M_UNKNOWN_TOKEN) is flagged `status:"error"` so its tile can prompt
+   * re-auth; one bad source never aborts the others. Idempotent — safe
+   * to call on load, on switch, and after add-source.
+   */
+  loadForeignServers: () => Promise<void>;
   /**
    * Populate (or refresh) the synthetic Server records that wrap
    * joined Matrix rooms outside any Concord-managed server. Callers:
@@ -188,15 +223,79 @@ interface ServerState {
 
 export const useServerStore = create<ServerState>((set, get) => ({
   servers: [],
+  foreignServers: [],
   activeServerId: null,
   activeChannelId: null,
+  switchingSession: false,
   members: {},
   resetState: () => set({
     servers: [],
+    foreignServers: [],
     activeServerId: null,
     activeChannelId: null,
     members: {},
   }),
+
+  loadForeignServers: async () => {
+    const cfg = useServerConfigStore.getState().config;
+    const activeHost = cfg?.host?.toLowerCase() ?? null;
+    // Aggregate only the CURRENT user's visible sources — rows persisted
+    // for other accounts on this browser must not contribute rail tiles
+    // (or get fetched with their stale tokens).
+    const { sources: persistedSources, boundUserId } = useSourcesStore.getState();
+    const allSources = selectVisibleSources(persistedSources, boundUserId);
+
+    // Candidate foreign sources: enabled, Concord-platform, authenticated,
+    // and NOT the active instance. When no homeserver override is set the
+    // active instance IS the local/origin source, so exclude that one;
+    // otherwise exclude whichever source matches the active host (the
+    // local/origin source then legitimately appears as a foreign tile).
+    const candidates = allSources.filter((s) => {
+      if (!s.enabled) return false;
+      if ((s.platform ?? "concord") !== "concord") return false;
+      if (!s.accessToken || !s.userId || !s.apiBase) return false;
+      if (activeHost === null) return !isLocalInstanceSource(s);
+      return s.host.toLowerCase() !== activeHost;
+    });
+
+    const sourcesStore = useSourcesStore.getState();
+    const results = await Promise.all(
+      candidates.map(async (s) => {
+        try {
+          const servers = await listServersAt(s.apiBase, s.accessToken!);
+          if (s.authError || s.status === "error") {
+            sourcesStore.updateSource(s.id, {
+              authError: undefined,
+              status: "connected",
+            });
+          }
+          return servers.map((srv) => ({
+            ...srv,
+            sourceId: s.id,
+            foreign: true,
+          }));
+        } catch (err) {
+          const e = err as {
+            httpStatus?: number;
+            errcode?: string;
+          };
+          // Only an auth rejection flags the tile for re-sign-in. A
+          // transient network/server error leaves the source untouched
+          // (it simply contributes no tiles this pass and recovers on the
+          // next call) so a flaky link doesn't nag the user to re-auth.
+          if (e.httpStatus === 401 || e.errcode === "M_UNKNOWN_TOKEN") {
+            sourcesStore.updateSource(s.id, {
+              status: "error",
+              authError: "Session expired — sign in again",
+            });
+          }
+          return [] as Server[];
+        }
+      }),
+    );
+
+    set({ foreignServers: results.flat() });
+  },
 
   hydrateFederatedRooms: (client) => {
     const { servers } = get();

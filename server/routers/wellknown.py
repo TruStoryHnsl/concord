@@ -172,6 +172,17 @@ class ConcordClientWellKnown(BaseModel):
             "Defaults to False when the service-node config is absent."
         ),
     )
+    reticulum_entrypoint: dict | None = Field(
+        None,
+        description=(
+            "PUBLIC reticulum entrypoint descriptor "
+            "({domain, port, pillar_identity, mailbox_destination}). "
+            "Present ONLY when the operator set the reticulum node to "
+            "public mode. Private-mode entrypoints are NEVER advertised "
+            "here — their descriptor is served exclusively by the "
+            "authenticated, persona-gated /api/reticulum/entrypoint."
+        ),
+    )
     branding: BrandingConfig | None = Field(
         None,
         description=(
@@ -399,6 +410,24 @@ async def concord_client_wellknown() -> ConcordClientWellKnown:
     from services.service_node_config import public_view as _public_node_view
 
     node_view = _public_node_view()
+
+    # Reticulum entrypoint: advertised ONLY in public mode. Inline
+    # import + failure-soft, same rationale as the service-node view.
+    reticulum_entrypoint: dict | None = None
+    try:
+        from services import reticulum_node as _ret
+
+        _ret_cfg = _ret.load_config()
+        if _ret_cfg.mode == "public" and _ret_cfg.entry_domain:
+            reticulum_entrypoint = {
+                "domain": _ret_cfg.entry_domain,
+                "port": _ret_cfg.listen_port,
+                "pillar_identity": _ret.runtime.identity_hash(),
+                "mailbox_destination": _ret.runtime.mailbox_destination_hash(),
+            }
+    except Exception:  # noqa: BLE001 — discovery must never 500 over this
+        reticulum_entrypoint = None
+
     return ConcordClientWellKnown(
         api_base=_resolve_api_base(),
         livekit_url=_resolve_livekit_url(),
@@ -407,5 +436,6 @@ async def concord_client_wellknown() -> ConcordClientWellKnown:
         turn_servers=_resolve_turn_servers(),
         node_role=node_view.node_role,
         tunnel_anchor=node_view.tunnel_anchor_enabled,
+        reticulum_entrypoint=reticulum_entrypoint,
         branding=_resolve_branding(),
     )

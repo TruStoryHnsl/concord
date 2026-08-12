@@ -1,10 +1,11 @@
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
-import { useSourcesStore } from "../../stores/sources";
+import { useVisibleSources } from "../../stores/sources";
 import { disconnectSource } from "../../lib/disconnectSource";
 import { useBrowserLibp2p } from "../../hooks/useBrowserLibp2p";
 import { SourceBrandIcon } from "../sources/sourceBrand";
 import { PeerConnectionsSection } from "./connections/PeerConnectionsSection";
+import { LanAutoPairSection } from "./connections/LanAutoPairSection";
 import { TunnelHardeningSection } from "./connections/TunnelHardeningSection";
 
 /**
@@ -21,7 +22,7 @@ import { TunnelHardeningSection } from "./connections/TunnelHardeningSection";
 export function UserConnectionsTab() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const requestAddSource = useSettingsStore((s) => s.requestAddSource);
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
 
   // Phase 9 (browser P2P UI surface): opening Settings → Connections is
   // the trigger for booting the browser libp2p swarm. No-op on Tauri.
@@ -54,7 +55,7 @@ export function UserConnectionsTab() {
       <ConnectionCard
         brand="concord"
         title="Concord Instance"
-        subtitle="Connect to another Concord domain with an invite token"
+        subtitle="Sign in to another Concord domain — invite token only to create a new account"
         action={concordCount === 0 ? "Connect" : "Add another"}
         onAction={() => requestAddSource("concord")}
         count={concordCount}
@@ -92,22 +93,24 @@ export function UserConnectionsTab() {
       />
 
       <ConnectionCard
-        brand="slack"
-        title="Slack"
-        subtitle="Preloaded release target"
-        action="Soon"
-        disabled
-      />
-      <ConnectionCard
         brand="reticulum"
         title="Reticulum"
-        subtitle="Preloaded release target"
-        action="Soon"
+        subtitle="Reach a peer over the Reticulum network by destination hash. Requires the native build with the reticulum transport enabled."
+        action="Connect"
+        onAction={() => requestAddSource("reticulum")}
+      />
+
+      <ConnectionCard
+        brand="slack"
+        title="Slack"
+        subtitle="Bridge a Slack workspace into Concord. The bridge isn't built yet; this card is a placeholder for it and does nothing when clicked."
+        action="Not available"
         disabled
       />
 
       <ConnectedAccountsList />
       <PeerConnectionsSection />
+      <LanAutoPairSection />
       <TunnelHardeningSection />
     </div>
   );
@@ -121,7 +124,7 @@ export function UserConnectionsTab() {
  * there are no sources — keeps the tab clean on a fresh install.
  */
 function ConnectedAccountsList() {
-  const sources = useSourcesStore((s) => s.sources);
+  const sources = useVisibleSources();
 
   if (sources.length === 0) return null;
 

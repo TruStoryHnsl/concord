@@ -2,7 +2,7 @@
  * Porch Phase A — API wrapper.
  *
  * Thin wrappers around the six `porch_*` Tauri commands exposed by
- * the native IPC backend:
+ * `src-tauri/src/lib.rs`:
  *
  *   - porch_list_my_channels — LOCAL: list this install's channels.
  *   - porch_get_messages — LOCAL: page messages from a local channel.
@@ -17,7 +17,7 @@
  * with the dispatch picked automatically based on `isTauri()`.
  *
  * Wire shapes mirror the Rust types in
- * the native porch channel backend and the native porch protocol.
+ * `src-tauri/src/porch/channel.rs` and `src-tauri/src/porch/protocol.rs`.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -33,6 +33,10 @@ export type AclMode = "open" | "allowlist" | "owner_only";
 /** Roles inside a channel ACL row. */
 export type AclRole = "visitor" | "member" | "owner";
 
+/** Which intrinsic local server a channel belongs to. `"porch"` is the
+ *  ephemeral guest doorman; `"home"` is the persistent home server. */
+export type LocalServerId = "porch" | "home";
+
 /** Public channel record. Mirrors `PorchChannel` on the Rust side. */
 export interface PorchChannel {
   id: string;
@@ -41,6 +45,9 @@ export interface PorchChannel {
   acl_mode: AclMode;
   /** Unix milliseconds. */
   created_at: number;
+  /** Which local server this channel belongs to ("porch" | "home").
+   *  Schema v12 added the backing `server_id` column. */
+  server_id: LocalServerId;
 }
 
 /** A single channel message. */
@@ -278,18 +285,30 @@ export async function porchRejectKnock(knockId: string): Promise<Knock> {
   return await invoke<Knock>("porch_reject_knock", { knockId });
 }
 
-/** Owner-side: mint a new channel on this install's porch. */
+/** Owner-side: mint a new channel on this install's porch. `serverId`
+ *  segments the channel onto the porch or home server; defaults to
+ *  `"home"` (the user's primary surface) when omitted. */
 export async function porchCreateChannel(
   name: string,
   kind: ChannelKind,
   aclMode: AclMode,
+  serverId: LocalServerId = "home",
 ): Promise<PorchChannel> {
   if (!isTauri()) throw new Error("porch_create_channel is native-only");
   return await invoke<PorchChannel>("porch_create_channel", {
     name,
     kind,
     aclMode,
+    serverId,
   });
+}
+
+/** Owner-side: export ALL local data (channels + messages + home meta)
+ *  to a single JSON file at the user-chosen `path`. Native only —
+ *  browsers don't host a porch. */
+export async function exportLocalData(path: string): Promise<void> {
+  if (!isTauri()) throw new Error("porch_export_local_data is native-only");
+  await invoke<void>("porch_export_local_data", { path });
 }
 
 /** Owner-side: grant `member` on a channel. Idempotent. */
@@ -706,18 +725,35 @@ export async function porchMyDeviceId(): Promise<string> {
   return await invoke<string>("porch_my_device_id");
 }
 
-/** Phase F — promote `peerId` to "personal device" status. Dials the
- *  remote, exchanges device-ids, commits the local side of the link. */
+/** C2 — result of a completed initiator-side supertrust handshake.
+ *  Mirrors the Rust `supertrust_wire::HandshakeOutcome` (snake_case). */
+export interface SupertrustHandshakeOutcome {
+  peer_id: string;
+  escalated_to_supertrusted: boolean;
+  linked_as_device: boolean;
+}
+
+/** Phase F / C2 — promote `peerId` to "personal device" status by running
+ *  the INITIATOR side of the mutual-signed supertrust escalation handshake.
+ *  Succeeds only if the remote user independently armed consent on THAT
+ *  machine (`supertrustRespond(peer, true)` — see `./supertrust.ts`);
+ *  otherwise the responder closes the stream without signing and nothing
+ *  is linked on either side.
+ *  NUI-F36: `label` is OUR name for the peer (stored locally only);
+ *  `offeredLabel` is this device's self-identifying name, sent to the
+ *  peer so it can store a sensible name for us. */
 export async function porchLinkPersonalDevice(
   peerId: string,
   label: string | null,
-): Promise<DeviceLink> {
+  offeredLabel: string | null = null,
+): Promise<SupertrustHandshakeOutcome> {
   if (!isTauri()) {
     throw new Error("porch_link_personal_device is native-only");
   }
-  return await invoke<DeviceLink>("porch_link_personal_device", {
+  return await invoke<SupertrustHandshakeOutcome>("porch_link_personal_device", {
     peerId,
     label,
+    offeredLabel,
   });
 }
 
@@ -759,7 +795,7 @@ export async function porchSyncAllPersonalDevices(): Promise<SyncReport[]> {
  * Ed25519 public key. Receivers verify the peer-id derives from the
  * pubkey before trusting any signature in the chain.
  *
- * Mirrors the Rust `PeerIdent` shape (the native porch history protocol).
+ * Mirrors the Rust `PeerIdent` shape (`src-tauri/src/porch/history_protocol.rs`).
  */
 export interface PorchHistoryPeerIdent {
   /** base58 libp2p PeerId. */

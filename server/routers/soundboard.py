@@ -21,6 +21,42 @@ router = APIRouter(prefix="/api/soundboard", tags=["soundboard"])
 
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".ogg", ".webm", ".m4a"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+# Effects board: cap the opaque effect_metadata JSON so a malicious client
+# can't stuff the column. The legitimate payload is a small effect id +
+# config diff (well under 1 KB); 4 KB is generous headroom.
+MAX_EFFECT_METADATA_LEN = 4096
+
+# Sentinel distinguishing "field omitted" from "field set to null/empty"
+# in the PATCH body (None already means "clear"). pydantic treats any
+# non-None default as the value when the key is absent.
+_UNSET = "__unset__"
+
+
+def _validate_effect_metadata(raw: str | None) -> str | None:
+    """Normalise an inbound effect_metadata string.
+
+    Empty/whitespace clears the field (returns None). Otherwise the value
+    must be valid JSON within the size cap — we parse only to reject
+    garbage, then re-serialise compactly so the stored form is canonical.
+    The server treats the contents as opaque beyond this validity check;
+    the client owns the EffectMetadata schema.
+    """
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    if len(raw) > MAX_EFFECT_METADATA_LEN:
+        raise HTTPException(400, "effect_metadata too large")
+    import json
+
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "effect_metadata must be valid JSON")
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "effect_metadata must be a JSON object")
+    return json.dumps(parsed, separators=(",", ":"))
 
 # Magic bytes for validating audio file types
 MAGIC_BYTES = {
@@ -46,6 +82,15 @@ class ClipOut(BaseModel):
     license: str | None = None
     license_url: str | None = None
     attribution: str | None = None
+    # Effects board: opaque JSON string describing an optional screenspace
+    # visual effect paired with this clip (the client's EffectMetadata).
+    # None for a plain sound-only clip. The server never parses it — it
+    # round-trips verbatim between the client and the DB column.
+    effect_metadata: str | None = None
+    # True when the clip has a real audio file on disk. False for a
+    # visual-only effects item (empty filename sentinel). Lets the client
+    # skip the doomed /file/ fetch and render a pure visual.
+    has_sound: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -63,6 +108,8 @@ def _clip_to_out(clip: SoundboardClip) -> "ClipOut":
         license=clip.license,
         license_url=clip.license_url,
         attribution=clip.attribution,
+        effect_metadata=clip.effect_metadata,
+        has_sound=bool(clip.filename),
     )
 
 
@@ -93,6 +140,11 @@ async def serve_clip(
     # originating-server check is the cheapest existence proof we have
     # without introducing a new "instance member" concept.
     await require_server_member(clip.server_id, user_id, db)
+
+    # Effects board: a visual-only item has no audio file on disk (empty
+    # filename sentinel). There's nothing to serve.
+    if not clip.filename:
+        raise HTTPException(404, "Clip has no audio (visual-only effect)")
 
     file_path = SOUNDBOARD_DIR / clip.server_id / clip.filename
     if not file_path.exists():
@@ -347,6 +399,7 @@ async def upload_clip(
     server_id: str,
     name: str = Form(...),
     file: UploadFile = File(...),
+    effect_metadata: str | None = Form(None),
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -407,6 +460,9 @@ async def upload_clip(
         name=name,
         filename=stored_name,
         uploaded_by=user_id,
+        # Effects board: an authored sound+visual clip carries its visual
+        # descriptor at upload time. Sound-only uploads leave it NULL.
+        effect_metadata=_validate_effect_metadata(effect_metadata),
     )
     db.add(clip)
     await db.commit()
@@ -418,6 +474,12 @@ async def upload_clip(
 class ClipUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     keybind: str | None = None  # e.g. "Alt+1", or "" to clear
+    # Effects board: set/replace the paired visual effect descriptor, or
+    # pass "" / "null" to clear it (revert to sound-only). Omitting the
+    # field entirely leaves the existing value untouched — so a name/
+    # keybind edit never accidentally wipes an attached effect. We use a
+    # sentinel because None already means "no change".
+    effect_metadata: str | None = Field(default=_UNSET)
 
 
 @router.patch("/{clip_id}")
@@ -427,7 +489,10 @@ async def update_clip(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a soundboard clip (name, keybind). Requires uploader, originating-server owner, or admin."""
+    """Update a soundboard clip (name, keybind, effect_metadata).
+
+    Requires uploader, originating-server owner, or admin.
+    """
     clip = await db.get(SoundboardClip, clip_id)
     if not clip:
         raise HTTPException(404, "Clip not found")
@@ -441,8 +506,62 @@ async def update_clip(
         clip.name = body.name.strip()
     if body.keybind is not None:
         clip.keybind = body.keybind.strip() or None  # empty string clears it
+    if body.effect_metadata is not _UNSET:
+        # Present (even as "" → clears) → set; absent → untouched.
+        clip.effect_metadata = _validate_effect_metadata(body.effect_metadata)
     await db.commit()
-    return {"status": "updated", "name": clip.name, "keybind": clip.keybind}
+    return {
+        "status": "updated",
+        "name": clip.name,
+        "keybind": clip.keybind,
+        "effect_metadata": clip.effect_metadata,
+    }
+
+
+class VisualEffectCreate(BaseModel):
+    """Create a visual-only effects-board item (no sound file)."""
+
+    name: str = Field(min_length=1, max_length=100)
+    effect_metadata: str = Field(min_length=1)
+
+
+@router.post("/{server_id}/visual", response_model=ClipOut)
+async def create_visual_effect(
+    server_id: str,
+    body: VisualEffectCreate,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a visual-only effects-board item.
+
+    Mirrors the sound upload path but persists no file — the clip is a
+    pure screenspace visual with ``effect_metadata`` set and an empty
+    ``filename`` sentinel. The file-serving endpoint refuses to serve a
+    visual-only item (no audio to play), and the client renders it as a
+    visual with no paired sound.
+    """
+    await require_server_member(server_id, user_id, db)
+
+    server = await db.get(Server, server_id)
+    if not server:
+        raise HTTPException(404, "Server not found")
+
+    meta = _validate_effect_metadata(body.effect_metadata)
+    if meta is None:
+        raise HTTPException(400, "effect_metadata required for a visual effect")
+
+    clip = SoundboardClip(
+        server_id=server_id,
+        name=body.name.strip(),
+        filename="",  # sentinel: visual-only, no audio file on disk
+        uploaded_by=user_id,
+        effect_metadata=meta,
+    )
+    db.add(clip)
+    await db.commit()
+    await db.refresh(clip)
+
+    return _clip_to_out(clip)
 
 
 @router.delete("/{clip_id}")

@@ -13,6 +13,7 @@
  * enhancement could use Tauri Stronghold for encrypted storage.
  */
 
+import { useMemo } from "react";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { MatrixLoginFlowKind } from "../api/matrix";
@@ -94,6 +95,20 @@ export interface ConcordSource {
    * persisted sources.
    */
   branding?: HomeserverBranding;
+  /**
+   * True when this source IS the device's own local/embedded instance —
+   * the one represented on native by the synthetic porch `LocalTile`
+   * (home icon). Set by the boot/host creators (`migrateFromSession`,
+   * `ensurePrimarySource`). On native this source is SUPPRESSED from the
+   * Sources rail and the server rail: the porch tile already represents
+   * it, so rendering it again produces the "local concord tile that just
+   * repeats the home tile" duplicate. Foreign instances added through the
+   * add-source flow set this `false`, so a token-less foreign login is
+   * never mistaken for the local instance. Backfilled by migration v7
+   * (any pre-existing primary source was, by definition, the migrated
+   * local instance — foreign instances back then always carried a token).
+   */
+  isLocal?: boolean;
 }
 
 export function getSourceHomeserverHost(source: Pick<ConcordSource, "homeserverUrl">): string | null {
@@ -186,8 +201,50 @@ function generateSourceId(): string {
   return `src_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function isPrimarySource(source: Pick<ConcordSource, "platform" | "inviteToken">): boolean {
+function isPrimarySource(
+  source: Pick<ConcordSource, "platform" | "inviteToken" | "isLocal">,
+): boolean {
+  // A row explicitly flagged `isLocal: false` is NEVER primary, even
+  // token-less concord rows — foreign instances added via the add-source
+  // flow and rows pulled from the instance's per-user catalogue both set
+  // it false. Legacy rows (isLocal undefined) keep the historical
+  // token-less-concord heuristic.
+  if (source.isLocal === false) return false;
   return (source.platform ?? "concord") === "concord" && source.inviteToken.trim() === "";
+}
+
+/**
+ * The user-visible slice of the persisted source set.
+ *
+ * The catalogue of sources is USER-specific — the only connection every
+ * account shares is the core/primary instance itself. Rows owned by a
+ * different user stay persisted (so switching accounts on one browser
+ * doesn't destroy anyone's catalogue) but are filtered out of every
+ * rendering / aggregation surface via this selector.
+ *
+ * Visibility rules:
+ *  - primary/local rows: always visible (the shared default connection);
+ *  - owned rows: visible iff owned by the currently-bound user;
+ *  - legacy rows with no recorded owner: visible only while no user is
+ *    bound (they get stamped with an owner on the next bindToUser).
+ */
+export function selectVisibleSources(
+  sources: ConcordSource[],
+  boundUserId: string | null,
+): ConcordSource[] {
+  return sources.filter(
+    (s) =>
+      isPrimarySource(s) ||
+      s.isLocal === true ||
+      (s.ownerUserId ?? null) === boundUserId,
+  );
+}
+
+/** Hook: the sources visible to the currently-bound user. */
+export function useVisibleSources(): ConcordSource[] {
+  const sources = useSourcesStore((s) => s.sources);
+  const boundUserId = useSourcesStore((s) => s.boundUserId);
+  return useMemo(() => selectVisibleSources(sources, boundUserId), [sources, boundUserId]);
 }
 
 function resolveOwnedSourceUserId(
@@ -213,6 +270,13 @@ export const useSourcesStore = create<SourcesState>()(
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, full] }));
+        // Mirror the descriptor (never credentials) into the core
+        // instance's per-user catalogue so the source follows the user
+        // across devices. Best-effort + fire-and-forget; dynamic import
+        // avoids a store↔lib cycle.
+        void import("../lib/sourceSync").then(({ pushSourceToPortal }) =>
+          pushSourceToPortal(full),
+        ).catch(() => {});
         return id;
       },
 
@@ -256,9 +320,15 @@ export const useSourcesStore = create<SourcesState>()(
       },
 
       removeSource: (id) => {
+        const removed = get().sources.find((s) => s.id === id);
         set((state) => ({
           sources: state.sources.filter((s) => s.id !== id),
         }));
+        if (removed) {
+          void import("../lib/sourceSync").then(({ removeSourceFromPortal }) =>
+            removeSourceFromPortal(removed),
+          ).catch(() => {});
+        }
       },
 
       getSource: (id) => get().sources.find((s) => s.id === id),
@@ -300,6 +370,8 @@ export const useSourcesStore = create<SourcesState>()(
                     homeserverUrl: config.homeserver_url,
                     status: "connected",
                     ownerUserId: null,
+                    // This is the boot/host instance — the local one.
+                    isLocal: true,
                     // Preserve the user's enabled toggle if they
                     // previously hid this source — don't force-enable.
                   }
@@ -320,33 +392,40 @@ export const useSourcesStore = create<SourcesState>()(
           status: "connected",
           enabled: true,
           ownerUserId: null,
+          // The boot/host-picked instance IS the local instance (the porch
+          // tile represents it on native — see `isLocal` docs).
+          isLocal: true,
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, primary] }));
       },
 
       bindToUser: (userId) => {
-        set((state) => {
-          const nextSources: ConcordSource[] = [];
-          for (const source of state.sources) {
+        // NON-destructive: binding to a user never deletes anyone's rows.
+        // Isolation is a VIEW concern (`selectVisibleSources`) — rows owned
+        // by other accounts stay persisted so switching accounts on a
+        // shared browser doesn't destroy another user's catalogue. All we
+        // do here is stamp an owner onto legacy owner-less rows (they were
+        // created while the outgoing/incoming user was active) and record
+        // the bound user.
+        set((state) => ({
+          sources: state.sources.map((source) => {
             if (isPrimarySource(source)) {
-              nextSources.push({ ...source, ownerUserId: null });
-              continue;
+              return source.ownerUserId === null ? source : { ...source, ownerUserId: null };
             }
-
-            const ownerUserId = resolveOwnedSourceUserId(source, state.boundUserId);
-            if (!userId || ownerUserId !== userId) {
-              continue;
+            if (source.ownerUserId === undefined) {
+              // Stamp legacy owner-less rows with the user they were
+              // created under (the previously-bound user). NEVER the
+              // incoming user — an unowned row may carry another
+              // person's session, and handing it to whoever logs in
+              // next would transfer that session across accounts.
+              const owner = resolveOwnedSourceUserId(source, state.boundUserId);
+              if (owner != null) return { ...source, ownerUserId: owner };
             }
-
-            nextSources.push({ ...source, ownerUserId });
-          }
-
-          return {
-            sources: nextSources,
-            boundUserId: userId,
-          };
-        });
+            return source;
+          }),
+          boundUserId: userId,
+        }));
       },
 
       /**
@@ -379,6 +458,8 @@ export const useSourcesStore = create<SourcesState>()(
           status: "connected",
           enabled: true,
           ownerUserId: null,
+          // Migrated from the boot config — this IS the local instance.
+          isLocal: true,
           addedAt: new Date().toISOString(),
         };
         set((state) => ({ sources: [...state.sources, primary] }));
@@ -395,7 +476,7 @@ export const useSourcesStore = create<SourcesState>()(
         sources: state.sources,
         boundUserId: state.boundUserId,
       }),
-      version: 6,
+      version: 7,
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as { sources?: ConcordSource[]; boundUserId?: string | null };
         if (version === 0 && state.sources) {
@@ -444,6 +525,18 @@ export const useSourcesStore = create<SourcesState>()(
           state.sources = state.sources.map((s) => ({
             ...s,
             branding: s.branding ?? undefined,
+          }));
+        }
+        if (version < 7 && state.sources) {
+          // v6 → v7: add `isLocal`. The local/embedded instance was
+          // historically a PRIMARY source (empty invite token) created by
+          // migrateFromSession/ensurePrimarySource; foreign instances back
+          // then always carried an invite token. So a pre-existing primary
+          // source IS the local instance — flag it so the native rail
+          // suppresses its duplicate tile (the porch represents it).
+          state.sources = state.sources.map((s) => ({
+            ...s,
+            isLocal: s.isLocal ?? isPrimarySource(s),
           }));
         }
         return state as SourcesState;

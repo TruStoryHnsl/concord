@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import traceback
@@ -18,7 +19,7 @@ logging.basicConfig(
 
 from database import async_session, init_db
 from errors import ConcordError, ErrorResponse
-from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_extensions, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown, extensions, rooms, service_node, ext_proxy, auth_recovery, matrix_proxy, hosting
+from routers import servers, invites, registration, voice, soundboard, webhooks, admin, admin_extensions, direct_invites, stats, totp, moderation, preview, media, dms, nodes, explore, wellknown, extensions, rooms, service_node, ext_proxy, auth_recovery, matrix_proxy, hosting, mesh, instance_update, user_sources, relay, reticulum
 from services import voice_health
 
 
@@ -346,6 +347,13 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning("Bot init failed (webhooks will not work): %s", e)
 
+    # Create the env-configured owner/admin account (idempotent).
+    try:
+        await _bootstrap_owner()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Owner bootstrap failed: %s", e)
+
     # Seed default public server on first run
     try:
         await _seed_default_server()
@@ -388,9 +396,205 @@ async def lifespan(app: FastAPI):
     # stays available so the Concord *client* role still works.
     voice_health.start_background_probe()
 
+    # Spec B (docker-pillar): sweep expired mesh_presence rows on a 60s
+    # cadence so the pillar's live web-threaded peer set stays honest and
+    # the table can't grow unbounded. Topology reads already filter on
+    # expires_at; this sweep is the deletion backstop. Started here, torn
+    # down on shutdown below.
+    _mesh_presence_sweeper.start()
+
+    # Reticulum pillar node (2026-08-12): start the in-process RNS
+    # transport node when the operator has enabled it AND rns is
+    # installed (CONCORD_INSTALL_RNS=1 image). Failure is logged and
+    # non-fatal — the API never depends on the mesh being up. The
+    # drainer task moves mailbox deposits arriving over Reticulum into
+    # the pending_messages relay table.
+    _reticulum_tasks: list[asyncio.Task] = []
+    try:
+        from services import reticulum_node as _ret
+
+        _ret_cfg = _ret.load_config()
+        if _ret_cfg.mode != "off" and _ret.ReticulumNodeRuntime.rns_available():
+            _ret.runtime.start(_ret_cfg)
+            _reticulum_tasks.append(
+                asyncio.create_task(_drain_reticulum_deposits(_ret.runtime))
+            )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Reticulum pillar startup failed: %s", e)
+    _reticulum_tasks.append(asyncio.create_task(_sweep_pending_messages()))
+
     yield
 
+    for _t in _reticulum_tasks:
+        _t.cancel()
+    try:
+        from services import reticulum_node as _ret
+
+        _ret.runtime.soft_stop()
+    except Exception:
+        pass
+    await _mesh_presence_sweeper.stop()
     await voice_health.stop_background_probe()
+
+
+class _MeshPresenceSweeper:
+    """Periodic eviction loop for expired ``mesh_presence`` rows.
+
+    Mirrors the voice-health probe shape: a single asyncio task that wakes
+    every ``_MESH_PRESENCE_SWEEP_INTERVAL`` seconds, deletes stale rows,
+    and exits promptly on stop. Exceptions are logged and never escape the
+    loop, so a transient DB error can't kill the sweeper.
+    """
+
+    _SWEEP_INTERVAL_SECONDS = 60.0
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self._task: "asyncio.Task | None" = None
+        self._stop = asyncio.Event()
+
+    async def _loop(self) -> None:
+        import asyncio
+
+        from routers.mesh import evict_expired_presence
+
+        while not self._stop.is_set():
+            try:
+                removed = await evict_expired_presence()
+                if removed:
+                    logger.debug("mesh: evicted %d expired presence row(s)", removed)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("mesh: presence eviction failed: %s", e)
+            try:
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self._SWEEP_INTERVAL_SECONDS
+                )
+            except asyncio.TimeoutError:
+                continue
+
+    def start(self) -> None:
+        import asyncio
+
+        if self._task is not None and not self._task.done():
+            return
+        self._stop.clear()
+        self._task = asyncio.create_task(self._loop(), name="mesh_presence_sweeper")
+
+    async def stop(self) -> None:
+        import asyncio
+
+        self._stop.set()
+        if self._task is not None:
+            try:
+                await asyncio.wait_for(self._task, timeout=2.0)
+            except asyncio.TimeoutError:
+                self._task.cancel()
+            self._task = None
+
+
+_mesh_presence_sweeper = _MeshPresenceSweeper()
+
+
+async def _drain_reticulum_deposits(runtime) -> None:
+    """Move mailbox deposits that arrived over Reticulum into the
+    pending_messages relay table.
+
+    The RNS callbacks run on RNS's own threads and enqueue
+    ``InboundDeposit`` items; this task is the single DB writer for
+    them. Recipient validation mirrors the HTTP deposit path: only
+    personas bound on this instance get mail stored.
+    """
+    import logging as _logging
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func, select
+
+    from models import PendingMessage, PersonaBinding
+    from routers.relay import DEFAULT_TTL_SECS, MAX_PENDING_PER_RECIPIENT
+
+    log = _logging.getLogger(__name__)
+    while True:
+        try:
+            deposit = await asyncio.to_thread(runtime.inbound.get, True, 5.0)
+        except Exception:
+            await asyncio.sleep(0)  # queue.Empty timeout — loop again
+            continue
+        try:
+            import base64 as _b64
+
+            from database import async_session as _session_factory
+
+            async with _session_factory() as db:
+                bound = (
+                    await db.execute(
+                        select(PersonaBinding.id)
+                        .where(PersonaBinding.persona_id == deposit.to_persona)
+                        .limit(1)
+                    )
+                ).first()
+                if bound is None:
+                    log.debug(
+                        "reticulum deposit for unknown persona %s dropped",
+                        deposit.to_persona,
+                    )
+                    continue
+                pending = (
+                    await db.execute(
+                        select(func.count())
+                        .select_from(PendingMessage)
+                        .where(
+                            PendingMessage.recipient_persona_id == deposit.to_persona,
+                            PendingMessage.delivered_at.is_(None),
+                        )
+                    )
+                ).scalar_one()
+                if pending >= MAX_PENDING_PER_RECIPIENT:
+                    log.warning(
+                        "reticulum deposit dropped: mailbox full for %s",
+                        deposit.to_persona,
+                    )
+                    continue
+                now = datetime.now(timezone.utc)
+                db.add(
+                    PendingMessage(
+                        recipient_persona_id=deposit.to_persona,
+                        sender_identity_hash=deposit.sender_identity_hash,
+                        channel="reticulum",
+                        wire_id=deposit.wire_id,
+                        payload=_b64.b64decode(deposit.payload_b64),
+                        deposited_at=now,
+                        expires_at=now + timedelta(seconds=DEFAULT_TTL_SECS),
+                    )
+                )
+                await db.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("reticulum deposit drain failed: %s", exc)
+
+
+async def _sweep_pending_messages() -> None:
+    """Hourly TTL sweep for the pending-message relay table."""
+    import logging as _logging
+
+    from routers.relay import sweep_expired_messages
+
+    log = _logging.getLogger(__name__)
+    while True:
+        try:
+            await asyncio.sleep(3600)
+            from database import async_session as _session_factory
+
+            async with _session_factory() as db:
+                removed = await sweep_expired_messages(db)
+                if removed:
+                    log.info("relay sweep: %d expired pending messages removed", removed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("relay sweep failed: %s", exc)
 
 
 LOBBY_WELCOME_POST_VERSION = 2
@@ -439,6 +643,44 @@ def build_lobby_welcome_message(instance_name: str) -> str:
         "\n"
         "Post in **#general** with what device, browser, and room you were using when something broke.\n"
     )
+
+
+async def _bootstrap_owner():
+    """Create the env-configured owner account and grant it instance admin.
+
+    Lets an operator configure the owning user entirely through compose env:
+    set ``CONCORD_OWNER_USERNAME`` + ``CONCORD_OWNER_PASSWORD`` and the account
+    is created on first boot and made an instance admin (its Matrix id is added
+    to ADMIN_USER_IDS). Idempotent: if the account already exists the password
+    is left untouched and only the admin grant is (re)applied. No-op when the
+    two env vars aren't both set.
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+    username = os.getenv("CONCORD_OWNER_USERNAME", "").strip().lstrip("@").split(":")[0]
+    password = os.getenv("CONCORD_OWNER_PASSWORD", "")
+    if not username or not password:
+        return
+
+    from config import MATRIX_SERVER_NAME, ADMIN_USER_IDS
+    from services.matrix_admin import register_matrix_user
+
+    owner_id = f"@{username}:{MATRIX_SERVER_NAME}"
+    # Grant admin first so it holds even if the account already exists. The
+    # set is the same object admin.require_admin imports, so this is live.
+    ADMIN_USER_IDS.add(owner_id)
+
+    try:
+        await register_matrix_user(username, password)
+        logger.info("Bootstrapped owner account %s (instance admin)", owner_id)
+    except Exception as e:
+        msg = str(e).lower()
+        if "taken" in msg or "in use" in msg or "exclusive" in msg or "already" in msg:
+            logger.info("Owner account %s already exists; admin grant ensured", owner_id)
+        else:
+            logger.warning("Owner account bootstrap for %s failed: %s", owner_id, e)
 
 
 async def _seed_default_server():
@@ -702,6 +944,16 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+# Global per-IP rate limiting (2026-08-12 protections pass). Added AFTER
+# CORSMiddleware, which makes it the OUTERMOST layer — a flood is rejected
+# before any other middleware/handler work happens. Browser-visible CORS
+# headers on 429s are supplied by the Caddy edge (header_down on /api/*).
+# Kill switch: CONCORD_RATE_LIMIT_DISABLED=1 (the test conftest sets it;
+# dedicated rate-limit tests re-enable explicitly).
+from services.ratelimit import RateLimitMiddleware  # noqa: E402
+
+app.add_middleware(RateLimitMiddleware)
+
 app.include_router(servers.router)
 app.include_router(invites.router)
 app.include_router(registration.router)
@@ -732,6 +984,11 @@ app.include_router(service_node.router)
 app.include_router(matrix_proxy.router)
 app.include_router(auth_recovery.router)
 app.include_router(hosting.router)
+app.include_router(mesh.router)
+app.include_router(instance_update.router)
+app.include_router(user_sources.router)
+app.include_router(relay.router)
+app.include_router(reticulum.router)
 
 
 @app.get("/api/health")

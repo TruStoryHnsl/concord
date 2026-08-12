@@ -30,7 +30,7 @@ beyond Pydantic, rate limits, ownership checks, etc.) should go through
 | `DISPOSABLE_NODE_REJECTED` | 403 | Disposable node was rejected (banned, place restricted, etc.) |
 | `OWNERSHIP_TRANSFER_FAILED` | 400 | Re-mint pre-flight check failed (target user invalid, etc.) |
 | `LEDGER_NOT_FOUND` | 404 | Cannot read the place ledger for re-minting |
-| `ENCRYPTION_NOT_AVAILABLE` | 501 | Feature requires an encryption backend that is not yet implemented (re-mint with encrypted=True) |
+| `ENCRYPTION_NOT_AVAILABLE` | 501 | (Retired 2026-06-13) Encrypted re-mint is now implemented and this code is no longer raised. An encrypted re-mint with a missing passphrase returns `OWNERSHIP_TRANSFER_FAILED` (400). |
 | `REMINT_SNAPSHOT_INCOMPLETE` | 500 | Re-mint snapshot is missing channel or member data required to reconstruct the place |
 
 ## Stack trace policy

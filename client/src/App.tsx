@@ -1,12 +1,10 @@
-import { useEffect, useRef, useCallback, useState } from "react";
-import { LiveKitRoom } from "@livekit/components-react";
+import { useEffect, useRef, useCallback, useState, lazy, Suspense } from "react";
 import { useAuthStore } from "./stores/auth";
 import { useServerStore } from "./stores/server";
 import { useToastStore } from "./stores/toast";
 import { useVoiceStore, getPendingVoiceSession, clearPendingVoiceSession, MAX_RECONNECT_ATTEMPTS, RECONNECT_BASE_DELAY_MS } from "./stores/voice";
 import { useSettingsStore } from "./stores/settings";
 import { useServerConfigStore } from "./stores/serverConfig";
-import { isDesktopMode } from "./api/serverUrl";
 import { joinVoiceSession } from "./components/voice/joinVoiceSession";
 import { usePlatform } from "./hooks/usePlatform";
 import { useServitudeLifecycle } from "./hooks/useServitudeLifecycle";
@@ -25,10 +23,27 @@ import { MarkReady } from "./components/MarkReady";
 import { ToastContainer } from "./components/ui/Toast";
 import { VoiceConnectionBar } from "./components/voice/VoiceConnectionBar";
 import { DirectInviteBanner } from "./components/DirectInviteBanner";
-import { CustomAudioRenderer } from "./components/voice/CustomAudioRenderer";
+import { ConsolidatePrompt } from "./components/social/consolidate/ConsolidatePrompt";
 import { classifyVoiceError } from "./components/voice/classifyVoiceError";
-import { FloatingVideoTiles } from "./components/voice/FloatingVideoTiles";
-import { buildLiveKitAudioCaptureOptions } from "./voice/noiseGate";
+import { EffectsOverlay } from "./effects/EffectsOverlay";
+import { NativeCallLayer } from "./components/voice/NativeCallLayer";
+import { WebviewCallLayer } from "./components/voice/WebviewCallLayer";
+import { KeychainMigrationPrompt } from "./components/settings/KeychainMigrationPrompt";
+import { shouldShowKeychainMigration } from "./components/settings/keychainMigration";
+// superuser-ux (p2p social): first-run owner-claim gate. Additive mount —
+// native-only, renders nothing on web or once an owner is already claimed.
+import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFirstRunGate";
+// native-pm-ui (Cycle 1): the personal-messenger Home front door. Native-only,
+// mounted OVER the always-alive ChatLayout. Web/docker entry path untouched.
+import { NativeFrontDoor } from "./components/home/NativeFrontDoor";
+
+// Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
+// only `@livekit/components-react` consumer in App's render path. Lazy-
+// loading it defers the LiveKit vendor chunk until `voiceConnected` flips
+// true (first voice join) rather than paying it at cold start. The
+// `<BringingUpSplash/>` Suspense fallback is the repo's single canonical
+// loading animation.
+const VoiceRoomLayer = lazy(() => import("./components/voice/VoiceRoomLayer"));
 
 // Capture invite token immediately at module load — before React mounts,
 // before session restoration, before anything can clear the URL.
@@ -105,6 +120,291 @@ export default function App() {
       });
   }, [isTauri]);
 
+  // E2E media probe — when launched in CONCORD_E2E mode, test whether
+  // getUserMedia works in this (simulator) WKWebView and report the result to
+  // a file the autonomous test driver reads off the container. Inert otherwise.
+  useEffect(() => {
+    if (!isTauri) return;
+    void (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      let enabled = false;
+      try {
+        enabled = await invoke<boolean>("e2e_enabled");
+      } catch {
+        return;
+      }
+      if (!enabled) return;
+      const e2eReport = (name: string, value: unknown) =>
+        invoke("e2e_report", { name, json: JSON.stringify(value) }).catch(() => {});
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+      // Boot breadcrumb + console tee: E2E runs are headless, so the webview
+      // console is otherwise invisible. Mirror recent console lines (and
+      // uncaught errors) to a report file the driver can read.
+      const logBuf: string[] = [];
+      const pushLog = (line: string) => {
+        logBuf.push(`${new Date().toISOString()} ${line}`);
+        if (logBuf.length > 300) logBuf.splice(0, logBuf.length - 300);
+      };
+      for (const level of ["log", "info", "warn", "error", "debug"] as const) {
+        const orig = console[level].bind(console);
+        console[level] = (...args: unknown[]) => {
+          try {
+            pushLog(
+              `[${level}] ${args
+                .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+                .join(" ")}`,
+            );
+          } catch {
+            /* never break console */
+          }
+          orig(...args);
+        };
+      }
+      window.addEventListener("error", (e) =>
+        pushLog(`[uncaught] ${e.message} @${e.filename}:${e.lineno}`),
+      );
+      window.addEventListener("unhandledrejection", (e) =>
+        pushLog(`[unhandledrejection] ${String(e.reason)}`),
+      );
+      setInterval(() => void e2eReport("e2e_console.json", { lines: logBuf.slice(-150) }), 3000);
+      await e2eReport("e2e_boot.json", {
+        t: Date.now(),
+        ua: navigator.userAgent,
+        rtcPeerConnection: typeof RTCPeerConnection,
+        mediaDevices: typeof navigator.mediaDevices,
+      });
+
+      // Media probe — bounded so a hung getUserMedia can't stall the whole
+      // e2e flow (observed on Linux/WebKitGTK when a capture device wedges),
+      // and PINNED to this instance's e2e devices: two same-host instances
+      // opening the SAME default camera concurrently has been OBSERVED to
+      // freeze one webview's WebProcess entirely (timers stop firing).
+      const { e2eCaptureConstraints } = await import("./voice/webviewVoiceMesh");
+      let report: Record<string, unknown>;
+      try {
+        const s = await Promise.race([
+          e2eCaptureConstraints(true).then((c) => navigator.mediaDevices.getUserMedia(c)),
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error("getUserMedia probe timeout (15s)")), 15000),
+          ),
+        ]);
+        report = {
+          ok: true,
+          audioTracks: s.getAudioTracks().length,
+          videoTracks: s.getVideoTracks().length,
+          videoLabel: s.getVideoTracks()[0]?.label ?? null,
+          audioLabel: s.getAudioTracks()[0]?.label ?? null,
+        };
+        s.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        report = { ok: false, error: String(e) };
+      }
+      await e2eReport("e2e_media.json", report);
+
+      // ── QR pairing (data path: encode → decode → add → store) ────────────
+      // A sim's mock camera can't capture a real QR, so the driver cross-feeds
+      // each device's QR payload as a file (e2e_inbound_card.json). We verify
+      // the real encode/decode/peer_store_add path: our card is published, the
+      // peer's card is decoded and stored.
+      const qrTask = (async () => {
+        const { encodeToQrPayload, decodeFromDeeplink } = await import("./lib/peerCard");
+        const { addPeer } = await import("./api/peerStore");
+        // Publish our own card (the "QR we display").
+        let myCardUrl = "";
+        let cardDbg: Record<string, unknown> = { tries: 0 };
+        for (let i = 0; i < 45 && !myCardUrl; i++) {
+          try {
+            const c = await invoke<{
+              peerId: string;
+              publicKeyHex: string;
+              multiaddrs: string[];
+            }>("proximity_pair_local_card");
+            cardDbg = { tries: i + 1, peerId: c.peerId, maddrs: c.multiaddrs.length };
+            if (c.peerId && c.multiaddrs.length > 0) {
+              myCardUrl = encodeToQrPayload({
+                peerId: c.peerId,
+                publicKeyHex: c.publicKeyHex,
+                multiaddrs: c.multiaddrs,
+              });
+            }
+          } catch (e) {
+            cardDbg = { tries: i + 1, error: String(e) };
+          }
+          if (!myCardUrl) await sleep(1000);
+        }
+        await e2eReport("e2e_carddebug.json", cardDbg);
+        await e2eReport("e2e_card.json", { url: myCardUrl });
+        // Ingest the peer's card (driver-fed), decode, and add to the store.
+        for (let i = 0; i < 60; i++) {
+          let inbound: string | null = null;
+          try {
+            inbound = await invoke<string | null>("e2e_read", {
+              name: "e2e_inbound_card.json",
+            });
+          } catch {
+            /* not present yet */
+          }
+          if (inbound) {
+            const decoded = decodeFromDeeplink(inbound.trim());
+            if (decoded.ok) {
+              try {
+                const peer = await addPeer(decoded.card, "qr");
+                await e2eReport("e2e_qr.json", {
+                  ok: true,
+                  decodedPeerId: decoded.card.peerId,
+                  storedPeerId: peer.peerId,
+                });
+              } catch (e) {
+                await e2eReport("e2e_qr.json", {
+                  ok: false,
+                  error: String(e),
+                  decodedPeerId: decoded.card.peerId,
+                });
+              }
+            } else {
+              await e2eReport("e2e_qr.json", { ok: false, error: decoded.error });
+            }
+            break;
+          }
+          await sleep(1000);
+        }
+      })();
+      void qrTask;
+
+      // ── Autonomous voice+video call ──────────────────────────────────────
+      // Every stage drops a breadcrumb: a hang anywhere in here (import,
+      // init, discovery, dial, offer) must be attributable from report files
+      // alone — the run is headless.
+      const progress = (stage: string, extra?: Record<string, unknown>) =>
+        e2eReport("e2e_call_progress.json", { stage, t: Date.now(), ...extra });
+      await progress("importing");
+      const { useWebviewCall, e2eGatherCallStats } = await import(
+        "./voice/webviewVoiceMesh"
+      );
+      // Install the inbound voice-signaling listener on BOTH peers.
+      await useWebviewCall.getState().init();
+      await progress("init_done");
+
+      let shouldCall = false;
+      try {
+        shouldCall = await invoke<boolean>("e2e_should_call");
+      } catch {
+        /* default callee */
+      }
+      // Media-plane selection. Preferred plane = webview browser WebRTC
+      // (iOS WKWebView, Windows WebView2). But distro WebKitGTK builds ship
+      // ENABLE_WEB_RTC=OFF (OBSERVED on Arch: no RTCPeerConnection global,
+      // zero webrtcbin/GstWebRTC symbols in libwebkit2gtk-4.1) — there the
+      // fallback is the RUST media plane: `voice_mesh_join` (webrtc-rs +
+      // cpal + opus over the same libp2p signaling protocol).
+      const rtcAvailable = typeof RTCPeerConnection !== "undefined";
+      const MESH_ROOM = "e2e-av-room";
+      await progress("role", { shouldCall, rtcAvailable });
+
+      if (!rtcAvailable && !shouldCall) {
+        // Rust-plane CALLEE: open an empty call for the room so inbound
+        // Offers route into it (the registry drops envelopes with no
+        // active call). Retry until servitude/libp2p is up.
+        let joined = false;
+        for (let i = 0; i < 60 && !joined; i++) {
+          try {
+            await invoke("voice_mesh_join", {
+              roomId: MESH_ROOM,
+              participants: [],
+              iceServers: [],
+            });
+            joined = true;
+          } catch {
+            await sleep(1000);
+          }
+        }
+        await progress("mesh_callee_joined", { joined });
+      }
+
+      if (shouldCall) {
+        // Find a peer to call: prefer a live mDNS-discovered LAN peer, else a
+        // stored/paired peer (QR or mDNS pairing populates the store). Using a
+        // paired peer makes the call deterministic and matches the real product
+        // flow (you call someone you've paired with).
+        let peerId = "";
+        for (let i = 0; i < 45 && !peerId; i++) {
+          try {
+            const lan = await invoke<Array<Record<string, unknown>>>("lan_peers_snapshot");
+            const p = lan?.[0];
+            if (p) peerId = String(p.peer_id ?? p.peerId ?? "");
+          } catch {
+            /* keep polling */
+          }
+          if (!peerId) {
+            try {
+              const known = await invoke<Array<Record<string, unknown>>>("peer_store_list");
+              const k = known?.[0];
+              if (k) peerId = String(k.peerId ?? k.peer_id ?? "");
+            } catch {
+              /* none yet */
+            }
+          }
+          if (!peerId) await sleep(1000);
+        }
+        await progress("peer_search_done", { peerId });
+        if (peerId) {
+          // Ensure a libp2p connection exists before signaling (the auto-dial
+          // may not have run for a store-sourced peer).
+          try {
+            await invoke("peer_dial", { peerId });
+          } catch {
+            /* may already be connected */
+          }
+          await sleep(2500);
+          await progress("dialed", { peerId });
+          try {
+            if (rtcAvailable) {
+              await useWebviewCall.getState().startCall(peerId, { video: true });
+            } else {
+              // Rust-plane CALLER: join the room with the remote as a
+              // participant — the registry builds the PeerConnection,
+              // creates the Offer, and pushes it over libp2p.
+              await invoke("voice_mesh_join", {
+                roomId: MESH_ROOM,
+                participants: [peerId],
+                iceServers: [],
+              });
+            }
+            await e2eReport("e2e_call_started.json", { peerId, ok: true, plane: rtcAvailable ? "webview" : "rust-mesh" });
+          } catch (e) {
+            await e2eReport("e2e_call_started.json", { peerId, ok: false, error: String(e) });
+          }
+        } else {
+          await e2eReport("e2e_call_started.json", { ok: false, error: "no peer found" });
+        }
+      }
+
+      // Both peers: report live media stats so the test can verify real flow.
+      // 60 × 3s = 3min window — pairing + dial on desktop can eat the first
+      // minute, and the driver samples the file twice to prove GROWTH.
+      for (let i = 0; i < 60; i++) {
+        await sleep(3000);
+        try {
+          if (rtcAvailable) {
+            const stats = await e2eGatherCallStats();
+            await e2eReport("e2e_call.json", { tSec: (i + 1) * 3, plane: "webview", stats });
+          } else {
+            let mesh: unknown;
+            try {
+              mesh = await invoke("voice_mesh_status", { roomId: MESH_ROOM });
+            } catch (e) {
+              mesh = { error: String(e) };
+            }
+            await e2eReport("e2e_call.json", { tSec: (i + 1) * 3, plane: "rust-mesh", mesh });
+          }
+        } catch {
+          /* best effort */
+        }
+      }
+    })();
+  }, []);
+
   // INS-023 launch animation: a cross-platform boot splash that
   // covers the first-paint gap and any subsequent isLoading window.
   // `launchDone` flips true once the `<LaunchAnimation/>` has
@@ -147,6 +447,8 @@ export default function App() {
   // again whenever the user moves the slider in Settings → Appearance.
   const chatFontSize = useSettingsStore((s) => s.chatFontSize);
   const themePreset = useSettingsStore((s) => s.themePreset);
+  const logoColorPrimary = useSettingsStore((s) => s.logoColorPrimary);
+  const logoColorSecondary = useSettingsStore((s) => s.logoColorSecondary);
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.style.setProperty(
@@ -159,6 +461,16 @@ export default function App() {
     if (typeof document === "undefined") return;
     document.documentElement.setAttribute("data-theme", themePreset);
   }, [themePreset]);
+
+  // Mirror the user's logo colors into the logo CSS vars, overriding the
+  // theme defaults so the mark keeps its own identity (canon bronze/teal by
+  // default) regardless of the active menu theme.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.style.setProperty("--color-logo-primary", logoColorPrimary);
+    root.style.setProperty("--color-logo-secondary", logoColorSecondary);
+  }, [logoColorPrimary, logoColorSecondary]);
 
   // Mirror the theme's surface colour into the <meta name="theme-color">
   // tag so mobile browser chrome matches the active palette. The
@@ -310,6 +622,26 @@ export default function App() {
     })();
   }, [isLoggedIn, cleanupUserId, addToast]);
 
+  // One-shot keychain migration prompt (Phase-2 source routing). The first
+  // native launch (logged in) after this ships, IF the user has saved
+  // sources still living in plaintext localStorage, offer to copy them into
+  // the porch-backed encrypted keychain. `shouldShowKeychainMigration`
+  // enforces native-only + the `concord_keychain_migrated` localStorage
+  // flag + at-least-one-migratable-source. The flag is set by EITHER action
+  // inside the modal, so dismissing ("Not now") is one-and-done too. A
+  // session-scoped ref stops the gate from re-evaluating on every render.
+  const keychainMigrationChecked = useRef(false);
+  const [showKeychainMigration, setShowKeychainMigration] = useState(false);
+  useEffect(() => {
+    if (!isLoggedIn || !isTauri || keychainMigrationChecked.current) return;
+    keychainMigrationChecked.current = true;
+    if (shouldShowKeychainMigration()) {
+      // Defer out of the effect body so the show-flag flip doesn't cascade
+      // a synchronous re-render (react-hooks no-sync-setState guidance).
+      queueMicrotask(() => setShowKeychainMigration(true));
+    }
+  }, [isLoggedIn, isTauri]);
+
   // Auto-reconnect to voice after page refresh.
   // Retries up to MAX_RECONNECT_ATTEMPTS with exponential backoff
   // (1s, 2s, 4s) before giving up and clearing the pending session.
@@ -386,6 +718,12 @@ export default function App() {
   // the chat is in the user's face fast; native users have a real
   // "I just opened the app" moment that the animation should fill.
   const launchMinDurationMs = isTauri ? 3000 : 1500;
+  // Safety ceiling — the curtain dismisses by here even if readiness never
+  // settles. Kept short (default 30s both platforms): the curtain is gated on
+  // the FAST REST load, not the slow Matrix sync, so it should lift in
+  // seconds. The sync finishes in the background with in-place loaders, so
+  // there is no reason to hold the curtain longer — a long ceiling just makes
+  // a stalled boot feel hung.
   const launchOverlay = !launchDone ? (
     <LaunchAnimation
       isLoading={isLoading}
@@ -513,81 +851,72 @@ export default function App() {
     <>
       <ErrorBoundary>
         {voiceConnected && voiceToken && livekitUrl ? (
-          <LiveKitRoom
-            token={voiceToken}
-            serverUrl={livekitUrl}
-            connectOptions={{
-              autoSubscribe: true,
-              ...(iceServers.length > 0 && {
-                rtcConfig: {
-                  iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    ...iceServers,
-                  ],
-                },
-              }),
-            }}
-            audio={
-              micGranted && !isDesktopMode()
-                ? buildLiveKitAudioCaptureOptions({
-                    masterInputVolume,
-                    preferredInputDeviceId,
-                    echoCancellation,
-                    noiseSuppression,
-                    autoGainControl,
-                    inputNoiseGateEnabled,
-                    inputNoiseGateThresholdDb,
-                  })
-                : false
-            }
-            video={false}
-            options={{
-              // Do NOT set ``webAudioMix: true``. It was added in v0.2.4 on
-              // a wrong premise (it is NOT required for the local-mic
-              // processor — ``Room.acquireAudioContext`` always creates a
-              // room AudioContext, and both ``LocalParticipant.createTracks``
-              // and ``publishOrRepublishTrack`` call
-              // ``LocalAudioTrack.setAudioContext`` unconditionally). Its
-              // actual effect is to also propagate the room AudioContext to
-              // every REMOTE audio track — which then hits
-              // ``RemoteAudioTrack.attach``'s ``connectWebAudio`` branch and
-              // pipes the remote stream through ``ctx.destination`` in
-              // PARALLEL with our ``CustomAudioRenderer`` Tier 2 cloned-
-              // track chain. Two simultaneous outputs of the same track
-              // create comb-filter coloration that users perceive as a
-              // tinny / "two streams overlapping" sound. Leave it off and
-              // let CustomAudioRenderer be the sole remote-playback path.
-              audioCaptureDefaults: {
-                ...buildLiveKitAudioCaptureOptions({
-                  masterInputVolume,
-                  preferredInputDeviceId,
-                  echoCancellation,
-                  noiseSuppression,
-                  autoGainControl,
-                  inputNoiseGateEnabled,
-                  inputNoiseGateThresholdDb,
-                }),
-              },
-            }}
-            onDisconnected={handleVoiceDisconnect}
-            onError={handleVoiceError}
-            onMediaDeviceFailure={handleMediaDeviceFailure}
-            style={{ display: "contents" }}
-          >
-            <CustomAudioRenderer />
-            {/* Issue E (2026-04-18): floating picture-in-picture tiles so
-             *  camera/screen streams stay visible when the user navigates
-             *  away from the voice channel. Renders null when the user is
-             *  viewing the voice channel's docked UI. */}
-            <FloatingVideoTiles />
-            {shellContent}
-          </LiveKitRoom>
+          // Lazy LiveKit provider tree. The `fallback` is the *same*
+          // shellContent so the chat UI stays fully visible while the
+          // LiveKit vendor chunk streams in on first join — no visual
+          // disruption, the audio/video layer just wraps it once ready.
+          <Suspense fallback={shellContent}>
+            <VoiceRoomLayer
+              voiceToken={voiceToken}
+              livekitUrl={livekitUrl}
+              iceServers={iceServers}
+              micGranted={micGranted}
+              audioCaptureSettings={{
+                masterInputVolume,
+                preferredInputDeviceId,
+                echoCancellation,
+                noiseSuppression,
+                autoGainControl,
+                inputNoiseGateEnabled,
+                inputNoiseGateThresholdDb,
+              }}
+              onDisconnected={handleVoiceDisconnect}
+              onError={handleVoiceError}
+              onMediaDeviceFailure={handleMediaDeviceFailure}
+            >
+              {shellContent}
+            </VoiceRoomLayer>
+          </Suspense>
         ) : (
           shellContent
         )}
         <ToastContainer />
       </ErrorBoundary>
+      {/* Effects board overlay: a single fullscreen, pointer-events-none
+       *  canvas that plays screenspace visual effects fired from the
+       *  Effects panel (or broadcast by peers in voice). Mounted at the
+       *  app root so effects paint over the whole UI. Idle cost is zero —
+       *  the rAF loop only runs while an effect is active. */}
+      <EffectsOverlay />
+      {/* INS-019b — webview WebRTC voice+video p2p call overlay + inbound
+          signaling listener (auto-answers incoming offers). App-root so it
+          works on every layout and survives nav. */}
+      <WebviewCallLayer />
+      {/* p2p video plane (Rust media path) — paints remote call video that
+          the Rust render pipeline decodes and streams over Tauri events.
+          Used where the webview has no WebRTC (Linux WebKitGTK); shows
+          itself only while live frames arrive. */}
+      <NativeCallLayer />
+      {/* native-pm-ui (Cycle 1): personal-messenger Home as the native default
+          entry surface, gated on isTauri. Sits over the always-mounted
+          ChatLayout; opening a row routes into the existing navStack flow. */}
+      {isTauri && <NativeFrontDoor />}
+      {showKeychainMigration && (
+        <KeychainMigrationPrompt
+          onClose={() => setShowKeychainMigration(false)}
+        />
+      )}
       {launchOverlay}
+      {/* superuser-ux (p2p social): first-run owner-claim gate. Activated
+          only once the launch animation has finished so it doesn't fight the
+          splash. Native-only; self-dismisses once the owner profile is
+          claimed (or if it was already claimed on a prior run). */}
+      <SuperuserFirstRunGate active={launchDone} />
+      {/* WS-6 multi-device consolidation: surfaces a merge prompt whenever a
+          same-owner device is discovered and a proposal is pending. Renders
+          null when there are no pending proposals, so it's safe at app root.
+          Native-only (the consolidation store is filesystem-backed). */}
+      {isTauri && <ConsolidatePrompt />}
     </>
   );
 }

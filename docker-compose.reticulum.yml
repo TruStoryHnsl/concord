@@ -1,0 +1,32 @@
+# docker-compose.reticulum.yml — DEPRECATED (kept for hardware opt-ins only)
+#
+# Reticulum is part of the STANDARD stack now: the base docker-compose.yml
+# carries the rnsd runtime (server/Dockerfile installs rns by default), the
+# persistent `reticulum-data` volume, the RETICULUM_CONFIG_DIR/RNS_CONFIG_DIR
+# wiring, and the pillar entrypoint port mapping. A plain
+#
+#   docker compose up -d --build
+#
+# gives every operator the full reticulum-capable stack; the node itself
+# stays dormant until enabled via the admin UI (PUT /api/admin/reticulum,
+# mode=private|public). No overlay, no build args.
+#
+# This file remains ONLY for the security-sensitive hardware opt-ins that
+# must never be on by default. Compose it on top of the base if you need one:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.reticulum.yml up -d
+
+services:
+  concord-api: {}
+    # ── OPT-IN: physical / TUN interfaces (OFF by default) ──────────────
+    # Only if you add a TUN/TAP or IP-level Reticulum interface that rnsd
+    # must create (grants network administration to the container):
+    # cap_add:
+    #   - NET_ADMIN
+
+    # ── OPT-IN: RNode / LoRa USB radio (OFF by default) ─────────────────
+    # To attach a serial RNode radio, map its device into the container and
+    # declare an RNodeInterface in the rnsd config (see the commented
+    # [[LoRa Radio]] block that build_rnsd_config() emits):
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0

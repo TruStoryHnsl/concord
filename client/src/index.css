@@ -17,7 +17,7 @@
   --color-on-surface: #f9f9fd;
   --color-on-surface-variant: #aaabaf;
 
-  /* ── Brand (Concord reference tokens).
+  /* ── Brand (Concord — reference tokens, see branding/BRAND.md).
          Not aliased to --color-primary because the existing Electric
          Indigo identity is load-bearing across the chat UI. Use
          text-brand-primary / bg-brand-primary explicitly where the
@@ -80,6 +80,34 @@
   --font-headline: "Space Grotesk", sans-serif;
   --font-body: "Manrope", sans-serif;
   --font-label: "Manrope", sans-serif;
+
+  /* ── Elevation / Shadow System (#10 visual-quality pass) ──
+   * A small, consistent dark-surface elevation ramp. Values are tuned
+   * for near-black surfaces: a soft ambient drop plus a tight contact
+   * shadow so raised surfaces (modals, popovers, cards, active tiles)
+   * read as floating above the page without a muddy halo. Registering
+   * them in `@theme` makes Tailwind emit `shadow-sm/md/lg/xl` utilities
+   * that resolve to these exact ramps.
+   *
+   * Each step pairs a 1px contact shadow (crisp edge) with a wider,
+   * lower-opacity ambient blur (depth). On a #0e0d0b surface a pure
+   * black shadow is nearly invisible, so the contact layer also carries
+   * a faint primary-tinted top-edge highlight on raised UI via the
+   * `.elev-*` helpers below — the `shadow-*` tokens stay neutral so they
+   * compose with any theme. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40), 0 1px 1px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.50), 0 24px 56px rgba(0, 0, 0, 0.55);
+
+  /* ── Edge / Ring tokens ──
+   * Crisp hairline separators for dark surfaces. `--edge-*` are subtle
+   * neutral borders; `--ring-primary` is the focus/active accent ring
+   * tinted to the active theme's primary so raised + selected elements
+   * get a 1px luminous edge instead of a flat fill. */
+  --edge-subtle: rgba(255, 255, 255, 0.06);
+  --edge-soft: rgba(255, 255, 255, 0.10);
+  --edge-strong: rgba(255, 255, 255, 0.16);
 }
 
 :root[data-theme="kinetic-node"] {
@@ -282,6 +310,23 @@ html {
   * { scrollbar-width: none; -ms-overflow-style: none; }
 }
 
+/* ── Global text rendering (#10) ──
+ * `optimizeLegibility` turns on kerning + ligatures; the font-smoothing
+ * pair forces subpixel-free grayscale AA which is what makes light text
+ * on near-black read crisp instead of fringed/low-res. Set on the root
+ * so every element (not just body descendants) inherits it, including
+ * portalled overlays. `text-size-adjust` stops mobile WebKit from
+ * silently inflating font sizes on rotate, which was breaking the
+ * intended type scale. */
+html {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+
 body {
   height: 100%;
   font-family: "Manrope", sans-serif;
@@ -289,10 +334,57 @@ body {
   color: #f9f9fd;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   overscroll-behavior: none;
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  /* Body copy default: slightly looser leading + a hair of negative
+   * tracking reads as intentional rather than the browser default. */
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+}
+
+/* ── Type scale & weight discipline (#10) ──
+ * The "looks low-res" complaint on dark UI is usually two things:
+ *   1. Headlines set at a thin weight (300/400) where the thin stems
+ *      under-render against the dark surface.
+ *   2. No optical letter-spacing, so large type looks loose and small
+ *      type looks cramped.
+ * Space Grotesk (display) wants tighter tracking as it scales up;
+ * Manrope (body/UI) wants a touch of positive tracking at small sizes
+ * to stay legible. These are baseline defaults — Tailwind utilities on
+ * individual elements still override where a component needs something
+ * specific. We deliberately floor display weight at 600 so no heading
+ * paints with hairline stems. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+h1 { letter-spacing: -0.028em; }
+h2 { letter-spacing: -0.024em; }
+h3 { letter-spacing: -0.020em; }
+
+/* Small UI labels / overline text: positive tracking keeps short
+ * uppercase strings from smearing together at 10-12px. Components opt in
+ * with `.text-overline`. */
+.text-overline {
+  font-family: "Manrope", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Numeric UI (counts, timers, sliders) reads steadier with lining
+ * tabular figures so digits don't jitter as values change. */
+.tabular-nums,
+time,
+[data-numeric] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 /* Re-enable text selection for content areas */
@@ -357,6 +449,34 @@ select {
   animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* ── Adaptive nav stack frame transitions ──
+   Phone drill-down: a freshly-pushed frame slides in from the right; a
+   pop reveals the frame beneath. Transform-only (GPU-cheap) and gated on
+   prefers-reduced-motion so low-end / motion-sensitive users get an
+   instant swap with no jank. Keyed remount drives the animation. */
+@keyframes navFrameInForward {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes navFrameInBack {
+  from { transform: translateX(-30%); }
+  to { transform: translateX(0); }
+}
+.nav-frame-forward {
+  animation: navFrameInForward 0.22s ease-out both;
+  will-change: transform;
+}
+.nav-frame-back {
+  animation: navFrameInBack 0.22s ease-out both;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-frame-forward,
+  .nav-frame-back {
+    animation: none;
+  }
+}
+
 /* ── Button Press Feedback ── */
 .btn-press {
   transition: transform 100ms ease, background-color 150ms ease, color 150ms ease;
@@ -418,7 +538,7 @@ select {
   /* max() floor so the bottom gap never collapses on viewports with no
      safe-area inset (e.g. desktop, where env() resolves to 0). This rule is
      intentionally UNLAYERED so it still wins over Tailwind's layered
-     padding utilities and applies uniformly. Previously this was
+     pb-*/py-*/p-* utilities and applies uniformly. Previously this was
      `env(safe-area-inset-bottom, 0px)` alone, which silently zeroed the
      bottom padding of every .safe-bottom element on desktop and slammed
      content flush to the container bottom edge (Explore Sources modal,
@@ -457,6 +577,76 @@ select {
 /* ── Ghost Border (accessibility fallback) ── */
 .ghost-border {
   border: 1px solid rgba(70, 72, 75, 0.15);
+}
+
+/* ── Elevation helpers (#10) ──────────────────────────────────────────
+ * Apply to raised surfaces (modals, popovers, cards, menus). Each helper
+ * pairs the neutral `--shadow-*` ramp with a 1px inset top-edge highlight
+ * so the surface catches a faint rim of light — the single biggest
+ * cheap win for "this looks rendered, not flat." The highlight is white
+ * at very low alpha so it stays theme-agnostic; combine with
+ * `.edge-hairline` for a crisp outer border on top of a busy backdrop.
+ * Shadows are safe under prefers-reduced-motion (they don't animate). */
+.elev-sm {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+}
+.elev-md {
+  box-shadow: var(--shadow-md), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+.elev-lg {
+  box-shadow: var(--shadow-lg), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+.elev-xl {
+  box-shadow: var(--shadow-xl), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+}
+
+/* Crisp hairline edges for dark surfaces. `.edge-hairline` is a neutral
+ * 1px separator; `.ring-active` is the primary-tinted selection ring for
+ * active source-rail tiles / selected cards. */
+.edge-hairline {
+  border: 1px solid var(--edge-soft);
+}
+.ring-active {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-primary) 55%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+/* Message-row hover lift — a barely-there raise so the hovered row
+ * separates from the stream without a heavy background flip. Components
+ * opt in by adding `.msg-hover-lift` to the row container. */
+.msg-hover-lift {
+  transition: box-shadow 140ms ease, background-color 140ms ease;
+}
+.msg-hover-lift:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Crisp raster scaling (#10) ──────────────────────────────────────
+ * Photographic content (avatars, uploaded images, video posters) must
+ * scale with high-quality interpolation, NOT nearest-neighbour, or it
+ * looks blocky on HiDPI. Most browsers default to this, but Chromium
+ * downgrades to low-quality on transformed/animated layers — pin it.
+ * `.pixel-crisp` is the opposite escape hatch for intentionally sharp
+ * pixel art / 1px lines that must NOT be smoothed. */
+img,
+video {
+  image-rendering: auto;
+  image-rendering: -webkit-optimize-contrast; /* WebKit: high-quality downscale */
+  image-rendering: high-quality;
+}
+.pixel-crisp {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+/* Avatars are circular photo crops — force the GPU to keep them smooth
+ * even when they ride inside a transformed/animated parent (member list
+ * hover, nav transitions). */
+img.avatar-img {
+  image-rendering: auto;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 /* === T003+T004+T005: mobile shell + nav + wrap globals === */

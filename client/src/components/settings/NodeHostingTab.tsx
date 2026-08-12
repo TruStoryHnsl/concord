@@ -12,9 +12,9 @@ import { HostPairingQR } from "../pairing/HostPairingQR";
 /**
  * Settings tab exposing the embedded servitude (service node hosting) toggle.
  *
- * The Rust side of servitude lives in the native service backend and is
+ * The Rust side of servitude lives in `src-tauri/src/servitude/` and is
  * wired into Tauri via `servitude_start` / `servitude_stop` /
- * `servitude_status` commands in the native IPC backend. This component is
+ * `servitude_status` commands in `src-tauri/src/lib.rs`. This component is
  * the user-facing switch for that pipeline — part of INS-022 (mobile
  * phone-as-relay), scope also applies to desktop Tauri builds.
  *
@@ -32,7 +32,7 @@ import { HostPairingQR } from "../pairing/HostPairingQR";
  *
  * Note — v0.1 reality check: the embedded servitude lifecycle is wired
  * end-to-end but the layered transports are `TODO(transport)` stubs in
- * the native service backend. "Running" means the state machine
+ * `src-tauri/src/servitude/mod.rs`. "Running" means the state machine
  * reports Running, NOT that a single byte of traffic has crossed a
  * network boundary. The UI intentionally does not lie about this — the
  * status text reads "Hosting enabled (transports pending)" until the
@@ -172,12 +172,13 @@ export function NodeHostingTab() {
           data-testid="node-hosting-browser-banner"
         >
           <p className="text-sm text-on-surface">
-            Node hosting is only available in the native Concord app.
+            Runs this device as a Concord service node that routes mesh calls
+            and chat for other users.
           </p>
           <p className="text-xs text-on-surface-variant mt-1">
-            Install the desktop or mobile build and reopen this settings tab
-            to enable the toggle. The web client remains a full-featured
-            client; it just can't act as a host itself.
+            Available in the desktop and mobile apps. The web client connects
+            to nodes but can&apos;t act as one; the toggle below stays disabled
+            here.
           </p>
         </div>
       )}

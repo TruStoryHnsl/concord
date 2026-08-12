@@ -22,6 +22,8 @@ import time
 from collections import defaultdict, deque
 
 from fastapi import APIRouter, Depends, Request
+
+from services.ratelimit import client_ip as shared_client_ip
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,12 +108,11 @@ def _check_disposable_rate_limit(ip: str) -> bool:
 
 
 def _client_ip(request: Request) -> str | None:
-    return (
-        request.headers.get("Cf-Connecting-Ip")
-        or request.headers.get("X-Real-Ip")
-        or (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None)
-        or (request.client.host if request.client else None)
-    )
+    # Shared trusted-proxy-aware resolver: forwarded headers count only
+    # when the direct peer is a trusted proxy. Cf-Connecting-Ip and
+    # X-Real-Ip are no longer honored unconditionally — they are
+    # client-controlled and were a rate-limit bypass.
+    return shared_client_ip(request)
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ async def create_disposable_node(
     pillar — for now the token is just an opaque identifier).
     """
     if not body.contribute_compute:
-        # Hard requirement from the disposable-node review notes:
+        # Hard requirement from PLAN.md feedback_open_questions:
         # disposable nodes MUST contribute compute. Refusing the
         # contribution is a fast-fail.
         raise ConcordError(

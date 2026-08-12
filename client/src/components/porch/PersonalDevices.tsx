@@ -6,17 +6,23 @@
  *
  * Two roles in one component:
  *
- *   1. **My personal devices** — peers the local user has tagged as
- *      personal-device tier. Per-row Sync now + Unlink actions; status
+ *   1. **My personal devices** — peers the local user has escalated to
+ *      personal-device status. Per-row Sync now + Unlink actions; status
  *      badges showing `last_sync_at` so the user can tell which device
- *      is in sync. The add-device form takes a peer-id and a label
- *      (e.g. "iPhone").
+ *      is in sync.
  *
  *   2. **Background auto-sync** — a 60-second timer kicks
  *      `porch_sync_all_personal_devices` while the tab is mounted, so
  *      the user gets eventually-consistent state across devices
  *      without having to mash buttons. Errors per-peer surface as
  *      badges; transient failures don't block the next round.
+ *
+ * NEW links are NOT created here. The free-text "add device by peer-id"
+ * form this component originally carried predated the C2 supertrust
+ * escalation and bypassed the confirmation + device-fingerprint check the
+ * NUI-F35 flow requires, so it was absorbed by the "Link another of your
+ * devices" section in `settings/DevicesTab.tsx` — the section that mounts
+ * this component.
  *
  * Native only — browsers don't host a porch.
  */
@@ -25,7 +31,6 @@ import { useEffect, useState } from "react";
 import {
   type DeviceLink,
   type SyncReport,
-  porchLinkPersonalDevice,
   porchListDeviceLinks,
   porchSyncAllPersonalDevices,
   porchSyncNow,
@@ -43,9 +48,6 @@ const AUTO_SYNC_INTERVAL_MS = 60_000;
 export function PersonalDevices() {
   const [links, setLinks] = useState<DeviceLink[]>([]);
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [draftPeerId, setDraftPeerId] = useState("");
-  const [draftLabel, setDraftLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pendingPeerId, setPendingPeerId] = useState<string | null>(null);
@@ -92,22 +94,6 @@ export function PersonalDevices() {
     return () => clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const peer = draftPeerId.trim();
-    if (!peer) return;
-    try {
-      await porchLinkPersonalDevice(peer, draftLabel.trim() || null);
-      setDraftPeerId("");
-      setDraftLabel("");
-      setAdding(false);
-      setToast(`Linked ${shortPeerId(peer)} as a personal device.`);
-      await reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
 
   const handleSyncNow = async (peerId: string) => {
     setPendingPeerId(peerId);
@@ -181,93 +167,7 @@ export function PersonalDevices() {
           }}
         >
           <span>My personal devices</span>
-          {!adding && (
-            <button
-              type="button"
-              data-testid="personal-add-device-button"
-              onClick={() => setAdding(true)}
-              style={{
-                fontSize: 11,
-                background: "transparent",
-                border: "1px solid var(--outline-variant, #2a2c30)",
-                color: "inherit",
-                padding: "2px 8px",
-                borderRadius: 4,
-                cursor: "pointer",
-                marginLeft: "auto",
-                textTransform: "none",
-                letterSpacing: 0,
-              }}
-            >
-              + Add device
-            </button>
-          )}
         </div>
-
-        {adding && (
-          <form
-            onSubmit={handleAdd}
-            style={{ display: "flex", flexDirection: "column", gap: 6 }}
-          >
-            <input
-              type="text"
-              value={draftPeerId}
-              onChange={(e) => setDraftPeerId(e.target.value)}
-              placeholder="Remote peer-id (12D3KooW…)"
-              data-testid="personal-add-device-peer-id"
-              autoFocus
-              maxLength={120}
-              style={inputStyle}
-            />
-            <input
-              type="text"
-              value={draftLabel}
-              onChange={(e) => setDraftLabel(e.target.value)}
-              placeholder="Label (e.g. iPhone)"
-              data-testid="personal-add-device-label"
-              maxLength={60}
-              style={inputStyle}
-            />
-            <div style={{ display: "flex", gap: 6 }}>
-              <button
-                type="submit"
-                disabled={!draftPeerId.trim()}
-                data-testid="personal-add-device-submit"
-                style={{
-                  fontSize: 12,
-                  background: "var(--primary, #4f9eff)",
-                  border: 0,
-                  color: "white",
-                  padding: "4px 10px",
-                  borderRadius: 4,
-                  cursor: draftPeerId.trim() ? "pointer" : "not-allowed",
-                  opacity: draftPeerId.trim() ? 1 : 0.5,
-                }}
-              >
-                Link device
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAdding(false);
-                  setDraftPeerId("");
-                  setDraftLabel("");
-                }}
-                style={{
-                  fontSize: 12,
-                  background: "transparent",
-                  border: "1px solid var(--outline-variant, #2a2c30)",
-                  color: "inherit",
-                  padding: "4px 10px",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
 
         {loading ? (
           <div style={{ fontSize: 12, opacity: 0.6 }}>Loading…</div>
@@ -276,7 +176,8 @@ export function PersonalDevices() {
             style={{ fontSize: 13, opacity: 0.6, fontStyle: "italic" }}
             data-testid="personal-devices-empty"
           >
-            No personal devices linked yet.
+            No personal devices linked yet. Link one from the “Link another of
+            your devices” section above.
           </div>
         ) : (
           <ul
@@ -421,15 +322,6 @@ export function PersonalDevices() {
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  fontSize: 13,
-  padding: "6px 8px",
-  borderRadius: 4,
-  border: "1px solid var(--outline-variant, #2a2c30)",
-  background: "var(--surface, #18191c)",
-  color: "inherit",
-};
 
 const smallButtonStyle: React.CSSProperties = {
   fontSize: 11,

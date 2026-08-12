@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { MatrixClient } from "matrix-js-sdk";
 import { createMatrixClient } from "../api/matrix";
+import { getApiBase } from "../api/serverUrl";
+import { bindPortal, clearPortal } from "../lib/sourceSync";
 import { useServerStore } from "./server";
 import { useSourcesStore } from "./sources";
 
@@ -18,7 +20,12 @@ interface AuthState {
   // duplicating that hook's federated-hydration side effects.
   syncing: boolean;
 
-  login: (accessToken: string, userId: string, deviceId: string) => void;
+  login: (
+    accessToken: string,
+    userId: string,
+    deviceId: string,
+    opts?: { rebindSources?: boolean },
+  ) => void;
   /** Log in as a guest (anonymous, read-mostly, ephemeral session). */
   loginGuest: (accessToken: string, userId: string, deviceId: string) => void;
   logout: () => void;
@@ -45,10 +52,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   setSyncing: (syncing) => set({ syncing }),
 
-  login: (accessToken, userId, deviceId) => {
+  login: (accessToken, userId, deviceId, opts) => {
     const client = createMatrixClient(accessToken, userId, deviceId);
     useServerStore.getState().resetState();
-    useSourcesStore.getState().bindToUser(userId);
+    // `bindToUser` scopes the persisted source set to a Concord user for
+    // multi-account browser isolation — it DROPS sources owned by any
+    // other user. That is correct for a real login-screen login, but
+    // DESTRUCTIVE when merely switching the active instance: two
+    // instances have different Matrix user IDs (@corr:dev vs
+    // @corr:stable), so rebinding to the target's id would delete the
+    // home instance's source tile (and vice-versa) — "clicking a tile
+    // deletes the other". switchToSource passes rebindSources:false so
+    // the multi-instance source set is preserved across switches.
+    if (opts?.rebindSources !== false) {
+      useSourcesStore.getState().bindToUser(userId);
+      // This login is a HOME/portal login (not an instance switch, which
+      // passes rebindSources:false) — bind the per-user source-catalogue
+      // sync to this instance + session. Best-effort background reconcile.
+      bindPortal({ apiBase: getApiBase(), accessToken, userId });
+    }
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ accessToken, userId, deviceId }),
@@ -73,6 +95,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     useServerStore.getState().resetState();
     useSourcesStore.getState().bindToUser(null);
+    clearPortal();
     localStorage.removeItem(STORAGE_KEY);
     set({
       client: null,
@@ -118,7 +141,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       const client = createMatrixClient(accessToken, userId, deviceId);
       useServerStore.getState().resetState();
-      useSourcesStore.getState().bindToUser(userId);
+      // Bind to the persisted HOME user, not the active session's user.
+      // After switching the active instance, the persisted session is the
+      // foreign instance's (e.g. @corr:stable) while the source set still
+      // belongs to the home user (e.g. @corr:dev). Rebinding to the
+      // foreign id here would drop the home source on every reload — the
+      // same destructive filter that broke tile-switching. The home id is
+      // already persisted as `boundUserId`; only fall back to the session
+      // id when no source set has been bound yet (first launch).
+      const boundUserId = useSourcesStore.getState().boundUserId;
+      useSourcesStore.getState().bindToUser(boundUserId ?? userId);
+      // Re-bind the portal catalogue sync ONLY when the restored session
+      // is the home user's (after an instance switch the persisted session
+      // belongs to a foreign instance — its token must not be used
+      // against the home portal's /api/me endpoints).
+      if (boundUserId === null || boundUserId === userId) {
+        bindPortal({ apiBase: getApiBase(), accessToken, userId });
+      }
       set({
         client,
         userId,
@@ -126,6 +165,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isLoggedIn: true,
         isLoading: false,
       });
+      // Validate the restored token in the background. If the homeserver
+      // rejects it (e.g. the instance was reset, or the session was revoked),
+      // self-heal by logging out so a normal page load lands cleanly on the
+      // login screen instead of hanging on "Connecting…" behind a dead token.
+      // ONLY auth failures clear the session — a network error / server-down
+      // leaves a valid session intact (the SDK retries sync).
+      client
+        .whoami()
+        .catch((err: { errcode?: string; httpStatus?: number }) => {
+          if (err?.errcode === "M_UNKNOWN_TOKEN" || err?.httpStatus === 401) {
+            // Only if this is still the active session (avoid clobbering a
+            // login that happened while whoami was in flight).
+            if (get().accessToken === accessToken) {
+              get().logout();
+            }
+          }
+        });
       return true;
     } catch {
       localStorage.removeItem(STORAGE_KEY);

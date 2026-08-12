@@ -25,6 +25,37 @@
  */
 
 import { useServerConfigStore } from "../stores/serverConfig";
+import { useAuthStore } from "../stores/auth";
+import { useSourcesStore } from "../stores/sources";
+
+/**
+ * When no homeserver override is active (`serverConfig.config === null`),
+ * fall back to the source that owns the LIVE Matrix session.
+ *
+ * On native, `config` is routinely null after a boot session-restore
+ * (`bootHome` is null), which made `getApiBase()` return the RELATIVE
+ * `"/api"`. `new URL("/api")` throws WebKitGTK's "The string did not match
+ * the expected pattern" — and ChatLayout's boot load fires four calls in one
+ * `Promise.allSettled`, so the user saw four identical error toasts on every
+ * launch. The active session's source carries a valid absolute
+ * `api_base`/`homeserver_url`, so resolve through it.
+ */
+function activeSessionSourceBase(): {
+  api_base?: string;
+  homeserver_url?: string;
+} | null {
+  try {
+    const userId = useAuthStore.getState().userId;
+    if (!userId) return null;
+    const src = useSourcesStore
+      .getState()
+      .sources.find((s) => s.userId === userId);
+    if (!src) return null;
+    return { api_base: src.apiBase, homeserver_url: src.homeserverUrl };
+  } catch {
+    return null;
+  }
+}
 
 // Detect Tauri environment.
 //
@@ -109,14 +140,45 @@ export function getApiBase(): string {
     // middleware hydrates synchronously from localStorage). Fall
     // through to the legacy path.
   }
+  // No active override → use the live session's source (absolute base)
+  // before falling back to legacy/relative, so we never hand a relative
+  // "/api" to `new URL()` (the WebKit "did not match the expected pattern"
+  // toast storm).
+  const sess = activeSessionSourceBase();
+  if (sess?.api_base) return sess.api_base;
   return _serverUrl ? `${_serverUrl}/api` : "/api";
 }
 
 /**
- * Get the homeserver URL for Matrix client.
- * Web: window.location.origin, Desktop: stored server URL
+ * Get the homeserver URL for the Matrix client.
+ *
+ * Resolution order — symmetric with `getApiBase()` above:
+ *   1. `serverConfig` Zustand store `homeserver_url`. This is the
+ *      ACTIVE source's Matrix base. Without this, the web build pinned
+ *      every Matrix client to `window.location.origin` regardless of
+ *      which source was selected, so switching to another instance
+ *      kept the client on the origin homeserver while the API base
+ *      pointed at the new instance — the mismatch surfaced as
+ *      "Invalid or expired access token" the moment a foreign token
+ *      was used against the origin homeserver. Making the client
+ *      follow the active source is what lets the rail hot-swap between
+ *      instances (web AND native) without a full page reload.
+ *   2. Legacy `_serverUrl` module var (Tauri / direct `setServerUrl`).
+ *   3. Origin fallback — the plain single-instance web deployment with
+ *      no source selected (`config === null`) keeps talking to its own
+ *      origin exactly as before.
  */
 export function getHomeserverUrl(): string {
+  try {
+    const cfg = useServerConfigStore.getState().config;
+    if (cfg?.homeserver_url) {
+      return cfg.homeserver_url.replace(/\/$/, "");
+    }
+  } catch {
+    // Store not hydrated yet — fall through to legacy / origin.
+  }
+  const sess = activeSessionSourceBase();
+  if (sess?.homeserver_url) return sess.homeserver_url.replace(/\/$/, "");
   return _serverUrl || window.location.origin;
 }
 
