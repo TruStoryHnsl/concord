@@ -116,6 +116,26 @@ def persona_destination_hash(
     ).hex()
 
 
+def reticulum_persona_destination(identity_hash: bytes, persona_id: str) -> str:
+    """Canonical ``concord.persona.<persona_id>`` destination hash (hex) for a
+    node whose RNS *identity* hash is ``identity_hash`` (16 bytes).
+
+    This is the recipient-side reverse of what a peer's OWN
+    ``persona_destination_hex`` computes: the same KAT-locked
+    ``rns_destination_hash`` a DIRECT reticulum link delivery keys the
+    conversation by (``reticulum:<dest>`` — see the engine
+    ``inbound_to_inbox_row`` / ``derive_sender_contact`` path). Given a
+    persona's node identity hash — learned from an authenticated relay
+    deposit or served by the persona directory — a recipient computes the
+    IDENTICAL destination, so a relayed message folds into the same thread
+    as a direct one instead of forking. Reuses ``rns_destination_hash``; it
+    is NOT a second derivation.
+    """
+    return rns_destination_hash(
+        identity_hash, RETICULUM_APP_NAME, RETICULUM_PERSONA_ASPECT, persona_id
+    ).hex()
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------

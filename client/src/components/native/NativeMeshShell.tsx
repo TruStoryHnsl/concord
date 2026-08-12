@@ -84,7 +84,7 @@ function AnnouncesSection() {
     return () => clearInterval(id);
   }, [pull]);
 
-  const peers = graph.nodes.filter((n) => n.kind !== "self");
+  const peers = graph.nodes.filter((n) => n.nodeKind !== "self");
 
   return (
     <div className="h-full overflow-y-auto p-4" data-testid="native-shell-announces">

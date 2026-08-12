@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import get_user_id
-from models import PendingMessage, PersonaBinding
+from models import PendingMessage, PersonaBinding, PersonaDirectory
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ MIN_TTL_SECS = 3600
 MAX_TTL_SECS = 90 * 24 * 3600
 
 _PERSONA_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_IDENTITY_HASH_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 DEPOSIT_SIG_CONTEXT = "concord-relay-deposit/v1"
 
@@ -103,6 +104,14 @@ class DepositRequest(BaseModel):
     sender_persona: str | None = Field(default=None, max_length=128)
     sender_pubkey: str | None = None
     sig: str | None = None
+    # Optional RNS *node* identity hash (32 hex) the sender's
+    # ``concord.persona.<persona>`` destination derives from — the X4
+    # persona-resolution hint. Only honoured alongside a VERIFIED persona
+    # attestation; lets the pillar fold this relayed message into the SAME
+    # ``reticulum:<dest>`` conversation a direct link delivery uses, and
+    # seeds the persona directory. Self-asserted (not signed): a bad value
+    # only mis-keys the sender's OWN conversation, never another peer's.
+    sender_identity_hash: str | None = Field(default=None, max_length=32)
 
 
 class DepositResponse(BaseModel):
@@ -134,6 +143,35 @@ class DepositReceipt(BaseModel):
     deposited_at: str
     expires_at: str
     delivered: bool
+
+
+async def _record_persona_identity(
+    db: AsyncSession, persona_id: str, identity_hash: str
+) -> None:
+    """Upsert a persona -> RNS node identity mapping (X4 directory). Last
+    write wins so a re-keyed device moves its persona with it. The caller
+    commits."""
+    row = (
+        await db.execute(
+            select(PersonaDirectory).where(
+                PersonaDirectory.persona_id == persona_id
+            )
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if row is None:
+        db.add(
+            PersonaDirectory(
+                persona_id=persona_id,
+                identity_hash=identity_hash,
+                source="deposit",
+                updated_at=now,
+            )
+        )
+    elif row.identity_hash != identity_hash:
+        row.identity_hash = identity_hash
+        row.source = "deposit"
+        row.updated_at = now
 
 
 async def _bound_personas(db: AsyncSession, user_id: str) -> list[str]:
@@ -218,6 +256,21 @@ async def deposit_message(
             raise HTTPException(403, "sender persona is bound to a different key")
         sender_persona = body.sender_persona
 
+    # X4 persona resolution: an attested deposit MAY carry the sender's RNS
+    # node identity hash so the recipient folds this relayed message into
+    # the SAME reticulum:<dest> thread a direct delivery would use. Only
+    # honoured with a verified persona (``sender_persona`` set above) —
+    # otherwise there is no key ownership to anchor the mapping to.
+    sender_identity_hash: str | None = None
+    if body.sender_identity_hash is not None:
+        if sender_persona is None:
+            raise HTTPException(
+                400, "sender_identity_hash requires a verified sender persona"
+            )
+        if not _IDENTITY_HASH_RE.match(body.sender_identity_hash):
+            raise HTTPException(400, "sender_identity_hash must be 32 hex chars")
+        sender_identity_hash = body.sender_identity_hash.lower()
+
     # Per-recipient mailbox cap (undelivered rows only).
     pending_count = (
         await db.execute(
@@ -239,6 +292,7 @@ async def deposit_message(
         sender_user_id=user_id,
         sender_persona_id=sender_persona,
         sender_pubkey=sender_pubkey_bytes,
+        sender_identity_hash=sender_identity_hash,
         channel="http",
         wire_id=body.wire_id,
         payload=payload,
@@ -246,6 +300,13 @@ async def deposit_message(
         expires_at=now + timedelta(seconds=ttl),
     )
     db.add(row)
+
+    # Seed the persona directory so this persona resolves to its canonical
+    # reticulum destination for every future read (and for the resolve
+    # endpoint), not just this row.
+    if sender_persona is not None and sender_identity_hash is not None:
+        await _record_persona_identity(db, sender_persona, sender_identity_hash)
+
     await db.commit()
     await db.refresh(row)
     return DepositResponse(id=row.id, expires_at=row.expires_at.isoformat())

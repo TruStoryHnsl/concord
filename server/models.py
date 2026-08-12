@@ -618,6 +618,48 @@ class PersonaBinding(Base):
     )
 
 
+class PersonaDirectory(Base):
+    """Pillar-served persona -> RNS node identity directory (gap item X4).
+
+    Maps a peer-facing ``persona_id`` to the RNS *node* identity hash that
+    hosts its ``concord.persona.<persona_id>`` destination. The point: a
+    recipient who received a RELAYED deposit attributed to persona ``P``
+    can compute the SAME ``reticulum:<dest>`` conversation key a DIRECT
+    link delivery from ``P`` would use — instead of forking the thread
+    under the sender's Matrix/identity id. Direct delivery keys by
+    ``rns_destination_hash(node_identity_hash, "concord", "persona", P)``
+    (engine ``derive_sender_contact``); with the node identity hash in this
+    table the pillar reproduces that exact key for the relay path.
+
+    How it is learned: an attested deposit whose sender proved its persona
+    key (the deposit Ed25519 signature) may also carry the RNS node
+    identity hash its destinations derive from. The identity hash is
+    self-asserted (not covered by the signature — the deposit canonical
+    message stays byte-identical to the engine's), which is safe because a
+    sender can only mis-key ITS OWN conversation on the recipient, never
+    another peer's; the recipient still verifies persona-key ownership.
+
+    One persona resolves to exactly one node identity (unique); last write
+    wins, so a device that re-keys its RNS identity moves the persona with
+    it on its next deposit.
+    """
+
+    __tablename__ = "persona_directory"
+    __table_args__ = (
+        UniqueConstraint("persona_id", name="uq_persona_directory_persona"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    # 32-char lowercase hex: the RNS identity hash (16 bytes).
+    identity_hash: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="deposit")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class PendingMessage(Base):
     """Store-and-forward mailbox row for the p2p pathway.
 

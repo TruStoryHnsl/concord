@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from dependencies import get_user_id
-from models import PersonaBinding
+from models import PersonaBinding, PersonaDirectory
 from routers.admin import require_admin
 
 logger = logging.getLogger(__name__)
@@ -223,6 +223,87 @@ async def reticulum_entrypoint(
         port=cfg.listen_port,
         pillar_identity=svc.runtime.identity_hash(),
         mailbox_destination=svc.runtime.mailbox_destination_hash(),
+    )
+
+
+class PersonaResolution(BaseModel):
+    persona_id: str
+    # 32-char hex RNS node identity hash, when known.
+    identity_hash: str | None
+    # ``reticulum:<destination_hash>`` folds the conversation; this is the
+    # bare 32-hex destination the recipient keys by.
+    destination_hash: str | None
+    display_name: str | None
+    # Whether this persona is bound to an account on THIS instance.
+    bound: bool
+
+
+@router.get("/api/reticulum/persona/{persona_id}", response_model=PersonaResolution)
+async def resolve_persona(
+    persona_id: str,
+    identity_hash: str | None = None,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> PersonaResolution:
+    """Persona directory (gap item X4): resolve a persona id to the canonical
+    ``concord.persona.<persona_id>`` destination hash a DIRECT reticulum link
+    delivery keys the conversation by, so a recipient who only received a
+    RELAYED deposit attributed to this persona folds it into the same thread.
+
+    - ``?identity_hash=<32 hex>`` — derive the destination for that specific
+      node identity purely (the KAT-locked ``rns_destination_hash``), no
+      server state needed. Use this when the caller already learned the
+      sender's identity hash (e.g. off the deposit).
+    - otherwise — look the persona up in the pillar directory (learned from
+      attested deposits) and, if known, derive the destination from the
+      stored identity hash.
+
+    404 only when the persona is wholly unknown (not in the directory, not
+    bound here) and no ``identity_hash`` was supplied.
+    """
+    if not _PERSONA_ID_RE.match(persona_id):
+        raise HTTPException(400, "invalid persona id")
+
+    from services.reticulum_node import reticulum_persona_destination
+
+    binding = (
+        await db.execute(
+            select(PersonaBinding).where(PersonaBinding.persona_id == persona_id)
+        )
+    ).scalar_one_or_none()
+
+    resolved_hash: str | None = None
+    display_name: str | None = binding.label if binding is not None else None
+
+    if identity_hash is not None:
+        if not _DEST_RE.match(identity_hash):
+            raise HTTPException(400, "identity_hash must be 32 hex chars")
+        resolved_hash = identity_hash.lower()
+    else:
+        entry = (
+            await db.execute(
+                select(PersonaDirectory).where(
+                    PersonaDirectory.persona_id == persona_id
+                )
+            )
+        ).scalar_one_or_none()
+        if entry is not None:
+            resolved_hash = entry.identity_hash
+            display_name = display_name or entry.display_name
+        elif binding is None:
+            raise HTTPException(404, "unknown persona")
+
+    destination_hash = (
+        reticulum_persona_destination(bytes.fromhex(resolved_hash), persona_id)
+        if resolved_hash is not None
+        else None
+    )
+    return PersonaResolution(
+        persona_id=persona_id,
+        identity_hash=resolved_hash,
+        destination_hash=destination_hash,
+        display_name=display_name,
+        bound=binding is not None,
     )
 
 

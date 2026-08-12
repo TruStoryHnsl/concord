@@ -48,6 +48,7 @@ from dependencies import get_user_id
 from models import (
     PendingMessage,
     PersonaBinding,
+    PersonaDirectory,
     UserContact,
     UserConversation,
     UserConversationMessage,
@@ -125,15 +126,65 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
-def _relay_peer_key(row: PendingMessage) -> str:
-    """Derive a stable conversation key for a relayed inbound message."""
+def _reticulum_key_from_identity(persona_id: str, identity_hash_hex: str) -> str | None:
+    """The ``reticulum:<dest>`` key a DIRECT link delivery uses, reproduced
+    from a persona's RNS node identity hash via the KAT-locked derivation.
+    ``None`` when either part is malformed (fall back to non-reticulum
+    keying)."""
+    if not _PERSONA_ID_RE.match(persona_id) or not _DEST_RE.match(identity_hash_hex):
+        return None
+    from services.reticulum_node import reticulum_persona_destination
+
+    dest = reticulum_persona_destination(bytes.fromhex(identity_hash_hex), persona_id)
+    return f"reticulum:{dest}"
+
+
+def _relay_peer_key(
+    row: PendingMessage, directory: dict[str, str] | None = None
+) -> str:
+    """Derive a stable conversation key for a relayed inbound message.
+
+    X4 resolution: when the sender persona's RNS node identity hash is known
+    — carried on the row itself (attested deposit) or via the pillar persona
+    ``directory`` — the message folds under the SAME ``reticulum:<dest>`` key
+    a direct link delivery from that peer uses, instead of forking under
+    ``persona:``/``rns:``/``user:``. Unattested / unresolvable deposits keep
+    the v1 fallback keying (preserved by design)."""
     if row.sender_persona_id:
+        identity_hash = row.sender_identity_hash or (directory or {}).get(
+            row.sender_persona_id
+        )
+        if identity_hash:
+            key = _reticulum_key_from_identity(row.sender_persona_id, identity_hash)
+            if key:
+                return key
         return f"persona:{row.sender_persona_id}"
     if row.sender_identity_hash:
         return f"rns:{row.sender_identity_hash}"
     if row.sender_user_id:
         return f"user:{row.sender_user_id}"
     return "rns:unknown"
+
+
+async def _load_persona_directory(
+    db: AsyncSession, rows: list[PendingMessage]
+) -> dict[str, str]:
+    """Fetch persona -> identity-hash mappings for the sender personas present
+    in ``rows`` that don't already carry their own identity hash. Empty when
+    nothing needs a lookup."""
+    wanted = {
+        r.sender_persona_id
+        for r in rows
+        if r.sender_persona_id and not r.sender_identity_hash
+    }
+    if not wanted:
+        return {}
+    result = await db.execute(
+        select(PersonaDirectory.persona_id, PersonaDirectory.identity_hash).where(
+            PersonaDirectory.persona_id.in_(wanted)
+        )
+    )
+    return {pid: ih for pid, ih in result.all()}
 
 
 def _decode_relay_body(payload: bytes) -> str | None:
@@ -404,9 +455,10 @@ async def list_conversations(
                 )
             )
         ).scalars().all()
+        directory = await _load_persona_directory(db, list(pending))
         for p in pending:
             touch(
-                _relay_peer_key(p),
+                _relay_peer_key(p, directory),
                 "mailbox",
                 preview=_decode_relay_body(p.payload) or "(sealed message)",
                 at=_iso(p.deposited_at),
@@ -588,8 +640,9 @@ async def conversation_messages(
                 )
             )
         ).scalars().all()
+        directory = await _load_persona_directory(db, list(pending))
         for p in pending:
-            if _relay_peer_key(p) != peer_key:
+            if _relay_peer_key(p, directory) != peer_key:
                 continue
             if p.wire_id and p.wire_id in seen_wire:
                 continue
@@ -834,8 +887,9 @@ async def list_contacts(
                 )
             )
         ).scalars().all()
+        directory = await _load_persona_directory(db, list(pending))
         for p in pending:
-            key = _relay_peer_key(p)
+            key = _relay_peer_key(p, directory)
             if key in merged:
                 continue
             merged[key] = ContactOut(
