@@ -17,8 +17,10 @@ export type NativeShellSection =
   | "chats"
   | "peers"
   | "network"
-  | "announces"
-  | "interfaces";
+  /** The reticulum connection path, opened from Connections — a chosen
+   *  parallel protocol (like entering a docker instance), NOT the core
+   *  transport. The core messenger rides libp2p + WireGuard. */
+  | "reticulum";
 
 interface NativeShellState {
   /** "shell" = mesh messenger (default). "instance" = the user entered a

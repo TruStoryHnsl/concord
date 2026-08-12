@@ -41,11 +41,17 @@ const SECTIONS: Array<{
   label: string;
   hint: string;
 }> = [
+  // Core = the libp2p + WireGuard p2p messenger. Reticulum is NOT core:
+  // it is a chosen parallel connection path, listed under Connections
+  // below exactly like a docker instance.
   { id: "chats", icon: "forum", label: "Chats", hint: "Conversations & history" },
   { id: "peers", icon: "groups", label: "Peers", hint: "Known peers" },
   { id: "network", icon: "lan", label: "Network", hint: "Topology map" },
-  { id: "announces", icon: "podcasts", label: "Announces", hint: "Discovered destinations" },
-  { id: "interfaces", icon: "settings_input_antenna", label: "Interfaces", hint: "rnsd links" },
+];
+
+const RETICULUM_TABS = [
+  { id: "announces" as const, icon: "podcasts", label: "Announces" },
+  { id: "interfaces" as const, icon: "settings_input_antenna", label: "Interfaces" },
 ];
 
 function shortHash(id: string): string {
@@ -151,6 +157,9 @@ function InstanceReturnChip() {
 
 export function NativeMeshShell() {
   const mode = useNativeShellStore((s) => s.mode);
+  const [reticulumTab, setReticulumTab] = useState<"announces" | "interfaces">(
+    "announces",
+  );
   const section = useNativeShellStore((s) => s.section);
   const setSection = useNativeShellStore((s) => s.setSection);
   const chatPeerId = useNativeShellStore((s) => s.chatPeerId);
@@ -216,11 +225,33 @@ export function NativeMeshShell() {
             </button>
           ))}
 
+          <div className="px-3 pb-1 pt-4 text-[10px] font-label uppercase tracking-widest text-on-surface-variant">
+            Connections
+          </div>
+          {/* Reticulum — a parallel connection path the user CHOOSES,
+              surfaced exactly like a docker instance. The docker
+              instance doubles as a reticulum support node (pillar), so
+              this path is www-agnostic. */}
+          <button
+            type="button"
+            onClick={() => setSection("reticulum")}
+            data-testid="shell-connection-reticulum"
+            className={`btn-press flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+              section === "reticulum"
+                ? "bg-surface-container-high text-on-surface"
+                : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
+            }`}
+          >
+            <span className={`material-symbols-outlined text-xl ${section === "reticulum" ? "text-green-700" : ""}`}>
+              podcasts
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium leading-tight">Reticulum</span>
+              <span className="block truncate text-[11px] leading-tight opacity-70">Mesh protocol</span>
+            </span>
+          </button>
           {instances.length > 0 && (
             <>
-              <div className="px-3 pb-1 pt-4 text-[10px] font-label uppercase tracking-widest text-on-surface-variant">
-                Instances
-              </div>
               {instances.map((src) => {
                 const brand = inferSourceBrand(src);
                 return (
@@ -271,10 +302,35 @@ export function NativeMeshShell() {
             <MeshMap />
           </div>
         )}
-        {section === "announces" && <AnnouncesSection />}
-        {section === "interfaces" && (
-          <div className="h-full overflow-y-auto p-4">
-            <ReticulumInterfacesPanel />
+        {section === "reticulum" && (
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex items-center gap-1 border-b border-outline-variant/10 px-3 py-2">
+              {RETICULUM_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setReticulumTab(t.id)}
+                  data-testid={`shell-reticulum-tab-${t.id}`}
+                  className={`btn-press flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                    reticulumTab === t.id
+                      ? "bg-surface-container-high text-on-surface"
+                      : "text-on-surface-variant hover:text-on-surface"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-lg">{t.icon}</span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 flex-1">
+              {reticulumTab === "announces" ? (
+                <AnnouncesSection />
+              ) : (
+                <div className="h-full overflow-y-auto p-4">
+                  <ReticulumInterfacesPanel />
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
