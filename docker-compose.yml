@@ -119,6 +119,14 @@ services:
       - "${RETICULUM_ENTRYPOINT_PORT:-4242}:4242"
     environment:
       CONCORD_DATA_DIR: /data
+      # Owner/admin bootstrap (superuser protocol, docker half): when both
+      # are set, concord-api creates this account on first boot and grants
+      # it instance admin (idempotent — an existing account keeps its
+      # password and only the admin grant is re-applied). Without these the
+      # instance has no admin and the whole admin/superuser settings
+      # surface stays locked for everyone.
+      CONCORD_OWNER_USERNAME: ${CONCORD_OWNER_USERNAME:-}
+      CONCORD_OWNER_PASSWORD: ${CONCORD_OWNER_PASSWORD:-}
       # rnsd/RNS isolated config dir → the named volume above. Both vars so
       # bare `rnsd`/`rnstatus` in the container target the same dir.
       RETICULUM_CONFIG_DIR: /var/lib/reticulum

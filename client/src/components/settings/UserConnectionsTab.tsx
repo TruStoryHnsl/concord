@@ -7,6 +7,7 @@ import { SourceBrandIcon } from "../sources/sourceBrand";
 import { PeerConnectionsSection } from "./connections/PeerConnectionsSection";
 import { LanAutoPairSection } from "./connections/LanAutoPairSection";
 import { TunnelHardeningSection } from "./connections/TunnelHardeningSection";
+import { MeshPersonaeSection } from "./connections/MeshPersonaeSection";
 
 /**
  * Per-user Connections tab.
@@ -109,6 +110,7 @@ export function UserConnectionsTab() {
       />
 
       <ConnectedAccountsList />
+      <MeshPersonaeSection />
       <PeerConnectionsSection />
       <LanAutoPairSection />
       <TunnelHardeningSection />

@@ -677,7 +677,14 @@ async def _bootstrap_owner():
         logger.info("Bootstrapped owner account %s (instance admin)", owner_id)
     except Exception as e:
         msg = str(e).lower()
-        if "taken" in msg or "in use" in msg or "exclusive" in msg or "already" in msg:
+        if (
+            "taken" in msg
+            or "in use" in msg
+            or "in_use" in msg
+            or "not available" in msg
+            or "exclusive" in msg
+            or "already" in msg
+        ):
             logger.info("Owner account %s already exists; admin grant ensured", owner_id)
         else:
             logger.warning("Owner account bootstrap for %s failed: %s", owner_id, e)

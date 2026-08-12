@@ -38,7 +38,6 @@
  * through") every time StrictMode poked the lifecycle.
  */
 
-import { useEffect, useRef } from "react";
 
 export type BringingUpSplashSize = "full" | "compact" | "inline";
 
@@ -111,73 +110,12 @@ export function BringingUpSplash({
   const outerClass = className
     ? `${spec.outerLayout} ${className}`
     : spec.outerLayout;
-  const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Make the loop continuous ACROSS REMOUNTS. Each BringingUpSplash
-  // instance gets a fresh <video> element from React, and that element's
-  // playback starts at frame 0 — so as the user navigates through
-  // loading states (boot → ChatLayout sync → empty-state → etc.) the
-  // splash visibly snaps back to the beginning each time a new instance
-  // mounts. That's what the user sees as "restarts halfway through."
-  //
-  // Fix: persist the video's currentTime to sessionStorage on every
-  // tick, and restore it on mount. The visual effect is one
-  // uninterrupted, looping animation regardless of how many times
-  // React unmounts and recreates the element. The boot-splash video
-  // in index.html (id="boot-splash-anim") seeds the first time so
-  // the React handoff stays continuous too.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const STORAGE_KEY = "concord:splash:currentTime";
-    // Seed from sessionStorage first; fall back to the boot-splash
-    // video element if it's still in the DOM during early handoff.
-    let seed = 0;
-    try {
-      const stored = window.sessionStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const t = parseFloat(stored);
-        if (!isNaN(t) && isFinite(t) && t > 0) seed = t;
-      }
-    } catch {
-      // sessionStorage may be unavailable in some sandboxes
-    }
-    if (seed === 0) {
-      const boot = document.getElementById("boot-splash-anim");
-      if (boot && boot instanceof HTMLVideoElement && boot.currentTime > 0) {
-        seed = boot.currentTime;
-      }
-    }
-    if (seed > 0) {
-      try {
-        v.currentTime = seed;
-      } catch {
-        // setting currentTime can throw before the video has loaded
-        // its metadata — fall through to autoPlay's default 0 start
-      }
-    }
-    const persist = () => {
-      try {
-        window.sessionStorage.setItem(STORAGE_KEY, String(v.currentTime));
-      } catch {
-        // ignore — best-effort
-      }
-    };
-    const interval = window.setInterval(persist, 150);
-    // jsdom returns `undefined` from `play()` (no Promise impl), so
-    // guard against the missing Promise before calling .catch.
-    const result = v.play();
-    if (result && typeof result.catch === "function") {
-      result.catch(() => {
-        // Autoplay policies may reject silently; the element falls
-        // back to whatever the platform allows. Nothing to do.
-      });
-    }
-    return () => {
-      window.clearInterval(interval);
-      persist();
-    };
-  }, []);
+  // The splash is the canonical TRANSPARENT animated WebP
+  // (branding/BOOT-SPLASH.md) — a seamless 147-frame loop, so a remount
+  // restarting the loop is visually clean. The old <video> needed a
+  // sessionStorage currentTime-seek dance to hide mid-animation snaps;
+  // an animated WebP cannot seek and does not need to.
   return (
     <span
       data-testid={testId}
@@ -192,13 +130,10 @@ export function BringingUpSplash({
           filter: spec.dropShadow,
         }}
       >
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="auto"
+        <img
+          src="/boot-splash.webp"
+          alt=""
+          decoding="async"
           aria-hidden="true"
           style={{
             width: spec.videoSize,
@@ -208,18 +143,7 @@ export function BringingUpSplash({
             transform: "translateZ(0)",
             backfaceVisibility: "hidden",
           }}
-        >
-          {/*
-            VP9-alpha WebM first — it carries a real alpha channel so the
-            mark renders with TRANSPARENCY (no opaque square) on Chromium
-            and Firefox. The H.264 mp4 (which composites onto #0c0e11 and
-            therefore shows a square box) stays as the fallback only for
-            engines without VP9-alpha support (e.g. Safari/WebKit). The
-            source order matters: the browser picks the first it can play.
-          */}
-          <source src="/boot-splash.webm" type="video/webm" />
-          <source src="/boot-splash.mp4" type="video/mp4" />
-        </video>
+        />
       </span>
       {spec.showBrand || spec.showStatus ? (
         <span className="flex flex-col items-center gap-1">

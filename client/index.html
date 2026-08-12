@@ -6,7 +6,7 @@
       The mask halves (`/logo-upper.png`, `/logo-lower.png`) used to be
       preloaded here because the splash painted them inline before
       React mounted. They're no longer on the first-paint path — the
-      splash is now the boot-splash.mp4 video — so the browser was
+      splash is now the transparent boot-splash.webp animation — so the browser was
       flagging them as "preloaded but not used within a few seconds."
       They're still consumed by `<ConcordLogo />` (sidebar, source
       tiles) but on demand at React mount time. Each half is ~6KB, so
@@ -221,25 +221,21 @@
     <div id="boot-splash" data-state="visible" aria-hidden="true">
       <div id="boot-splash-logo">
         <!--
-          Hand-crafted Blender animation. Loops continuously — the
-          splash is a cyclical animation and the user wants it to
-          keep playing as long as we're still loading, not freeze on
-          the last frame. The mp4 is authored to seam cleanly.
+          Hand-exported frame-by-frame splash animation — the CANONICAL
+          asset (branding/BOOT-SPLASH.md): 147-frame animated WebP with a
+          REAL alpha channel, loop count 0. Composites over any backdrop.
+          The old boot-splash.{webm,mp4} videos were the same animation
+          but opaque (yuv420p on black) — a fake that only worked against
+          one exact background colour. Do not substitute the videos back.
         -->
-        <video
+        <img
           id="boot-splash-anim"
           class="boot-splash-anim"
-          autoplay
-          muted
-          loop
-          playsinline
-          preload="auto"
+          src="/boot-splash.webp"
+          alt=""
+          decoding="async"
           aria-hidden="true"
-        >
-          <!-- VP9-alpha WebM first (transparent), mp4 fallback for WebKit. -->
-          <source src="/boot-splash.webm" type="video/webm" />
-          <source src="/boot-splash.mp4" type="video/mp4" />
-        </video>
+        />
       </div>
       <div id="boot-splash-brand">Concord</div>
     </div>
