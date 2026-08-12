@@ -66,7 +66,7 @@ export function PeerMessengerSurface() {
             <SocialPeersPanel onOpenConversation={openConversation} />
           )
         ) : (
-          <WebPeerHistory tab={tab} />
+          <WebPeerHistory tab={tab} initialSelected={initialPeerId} />
         )}
       </div>
     </div>

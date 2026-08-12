@@ -141,6 +141,17 @@ async def put_admin_reticulum(
     return {"saved": True, **apply_result}
 
 
+@router.get("/api/reticulum/mesh")
+async def reticulum_mesh(user_id: str = Depends(get_user_id)) -> dict:
+    """The pillar's LIVE view of the reticulum mesh — identity,
+    interfaces, and the announce table (destination hashes + hops +
+    last-heard). This is what makes the docker instance a usable
+    ENTRYPOINT: web clients render the real network from here instead
+    of an empty native-only connector graph."""
+    svc = _service()
+    return svc.runtime.mesh_snapshot()
+
+
 @router.get("/api/reticulum/status")
 async def reticulum_status(user_id: str = Depends(get_user_id)) -> dict:
     """Coarse node health for any authenticated user. Never carries the

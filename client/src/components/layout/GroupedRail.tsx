@@ -247,16 +247,6 @@ export const GroupedRail = memo(function GroupedRail({
     setDMActive(true); // clears localActive via ChatLayout effect
   };
 
-  // Peer messenger — the p2p per-peer inboxes + known-peers registry as a
-  // PRIMARY surface (promoted out of the Settings tabs). Mutually
-  // exclusive with the other chat surfaces, same pattern as reticulum.
-  const peerMessengerOpen = usePeerMessengerSurfaceStore((s) => s.isOpen);
-  const handlePeerMessengerClick = () => {
-    useServerStore.setState({ activeServerId: null, activeChannelId: null });
-    setDMActive(false);
-    useReticulumSurfaceStore.getState().close();
-    usePeerMessengerSurfaceStore.getState().open();
-  };
 
   const sourceLabel = (src: ConcordSource) => src.instanceName || src.host;
 
@@ -412,27 +402,6 @@ export const GroupedRail = memo(function GroupedRail({
         </div>
         <div className="flex-1" />
       </div>
-
-      {/* Peer messenger — per-peer inboxes + known peers as a PRIMARY
-          surface (not a settings tab). Native = live device inbox; web =
-          the roamed read-only mirror (superuser roaming, /api/me/sync). */}
-      {true && (
-        <div className="flex">
-          <div className="w-11 flex-shrink-0 flex items-center justify-center">
-            <button
-              onClick={handlePeerMessengerClick}
-              title="Peer messages"
-              data-testid="rail-peer-messenger"
-              className={`btn-press w-9 h-9 flex items-center justify-center transition-all ${
-                peerMessengerOpen ? "primary-glow text-on-primary rounded-xl" : "bg-surface-container-high text-on-surface-variant rounded-2xl hover:rounded-xl"
-              }`}
-            >
-              <span className="material-symbols-outlined text-lg">forum</span>
-            </button>
-          </div>
-          <div className="flex-1" />
-        </div>
-      )}
 
       {/* Collapsed (gray) sources stacked at top. */}
       {collapsed.length > 0 && (

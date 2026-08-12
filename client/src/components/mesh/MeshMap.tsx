@@ -151,7 +151,27 @@ export function MeshMap() {
   // (a layer is available iff its connector is enabled). Concord is always
   // available.
   const refreshAvailableLayers = useCallback(async () => {
-    if (!isNative) return;
+    if (!isNative) {
+      // Web/docker: the instance's own pillar node IS the reticulum
+      // connector. When it reports running, the Reticulum layer is
+      // available and fetchConnectorLayerGraph serves it from
+      // /api/reticulum/mesh (identity + interfaces + announce table).
+      try {
+        const g = await fetchConnectorLayerGraph("reticulum");
+        const avail = new Set<MeshLayerId>(["concord"]);
+        if (g.nodes.length > 0) avail.add("reticulum");
+        setAvailableLayers(avail);
+        setEnabledLayers((prev) => {
+          const next = new Set<MeshLayerId>(prev);
+          if (avail.has("reticulum")) next.add("reticulum");
+          next.add("concord");
+          return next;
+        });
+      } catch {
+        /* pillar off — concord layer only */
+      }
+      return;
+    }
     try {
       const connectors = await listConnectors();
       const avail = new Set<MeshLayerId>(["concord"]);
@@ -203,7 +223,10 @@ export function MeshMap() {
   // the layer is off — the canvas just shows the other layers.
   const reticulumOn = enabledLayers.has("reticulum");
   const refetchReticulum = useCallback(async () => {
-    if (!isNative || !reticulumOn) {
+    // Works on BOTH native (engine connector graph) and web (the
+    // instance pillar's /api/reticulum/mesh) — the docker instance is a
+    // real reticulum node, not a native-only feature.
+    if (!reticulumOn) {
       setReticulumGraph(EMPTY_MESH_GRAPH);
       return;
     }
@@ -217,7 +240,7 @@ export function MeshMap() {
 
   useEffect(() => {
     void refetchReticulum();
-    if (!isNative || !reticulumOn) return;
+    if (!reticulumOn) return;
     const handle = setInterval(() => void refetchReticulum(), 5000);
     return () => clearInterval(handle);
   }, [refetchReticulum, isNative, reticulumOn]);

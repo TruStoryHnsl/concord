@@ -174,13 +174,71 @@ interface ConnectorLayerWire {
  * namespaced (e.g. `meshtastic:<num>`) so they never collide with Concord
  * base58 peer ids.
  *
- * Native-only; resolves to an empty graph on web or when the layer has no
- * registered (enabled) connector.
+ * Native: the engine's connector graph via Tauri IPC. Web/docker:
+ * the RETICULUM layer is served by the instance's own pillar node
+ * (`GET /api/reticulum/mesh` — identity, live interfaces, announce
+ * table), which is what makes the docker instance a real mesh
+ * entrypoint; other layers resolve empty on web.
  */
 export async function fetchConnectorLayerGraph(
   layerId: MeshLayerId,
 ): Promise<MeshGraph> {
-  if (!isTauri()) return EMPTY_MESH_GRAPH;
+  if (!isTauri()) {
+    if (layerId !== "reticulum") return EMPTY_MESH_GRAPH;
+    try {
+      const { getApiBase } = await import("./serverUrl");
+      const { useAuthStore } = await import("../stores/auth");
+      const token = useAuthStore.getState().accessToken;
+      if (!token) return EMPTY_MESH_GRAPH;
+      const res = await fetch(`${getApiBase()}/reticulum/mesh`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return EMPTY_MESH_GRAPH;
+      const mesh = (await res.json()) as {
+        running: boolean;
+        dest: string | null;
+        display_name?: string | null;
+        interfaces: Array<{ name: string; online: boolean }>;
+        announces: Array<{
+          dest: string;
+          hops: number | null;
+          name: string | null;
+          last_heard: number;
+        }>;
+      };
+      if (!mesh.running || !mesh.dest) return EMPTY_MESH_GRAPH;
+      const now = Date.now() / 1000;
+      const nodes = [
+        {
+          peerId: mesh.dest,
+          hopDistance: 0,
+          nodeKind: "self" as const,
+          connectionState: "online" as const,
+          hopCount: 0,
+          interfaceType:
+            mesh.interfaces.find((i) => i.online)?.name ?? undefined,
+          transport: true,
+        },
+        ...mesh.announces.map((a) => ({
+          peerId: a.dest,
+          hopDistance: a.hops,
+          nodeKind: "announce-peer" as const,
+          connectionState:
+            now - a.last_heard < 30 * 60
+              ? ("online" as const)
+              : ("offline" as const),
+          hopCount: a.hops ?? undefined,
+          interfaceType: a.name ?? undefined,
+          transport: false,
+        })),
+      ];
+      const edges = mesh.announces.map((a) => ({ a: mesh.dest as string, b: a.dest }));
+      return { nodes, edges } as MeshGraph;
+    } catch (err) {
+      console.warn("[connectors] web reticulum mesh fetch failed:", err);
+      return EMPTY_MESH_GRAPH;
+    }
+  }
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const wire = await invoke<ConnectorLayerWire>("connectors_layer_graph", {

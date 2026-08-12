@@ -26,11 +26,17 @@ function label(row: Row, contacts: Row[]): string {
   return id.length > 20 ? `${id.slice(0, 10)}…${id.slice(-6)}` : id;
 }
 
-export function WebPeerHistory({ tab }: { tab: "messages" | "peers" }) {
+export function WebPeerHistory({
+  tab,
+  initialSelected = null,
+}: {
+  tab: "messages" | "peers";
+  initialSelected?: string | null;
+}) {
   const [conversations, setConversations] = useState<Row[]>([]);
   const [messages, setMessages] = useState<Row[]>([]);
   const [contacts, setContacts] = useState<Row[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialSelected);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {

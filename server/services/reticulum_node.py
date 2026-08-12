@@ -236,6 +236,24 @@ class InboundDeposit:
     received_at: float = field(default_factory=time.time)
 
 
+class _CatchAllAnnounceHandler:
+    """RNS announce sink — records EVERY announce the transport hears.
+
+    ``aspect_filter = None`` receives all aspects (crosstalk pattern);
+    the runtime keeps a bounded table for the mesh endpoint.
+    """
+
+    def __init__(self, runtime: "ReticulumNodeRuntime") -> None:
+        self.aspect_filter = None
+        self._runtime = runtime
+
+    def received_announce(self, destination_hash, announced_identity, app_data):  # noqa: ANN001
+        try:
+            self._runtime._record_announce(destination_hash, app_data)
+        except Exception:  # noqa: BLE001 — introspection must never break RNS
+            pass
+
+
 class ReticulumNodeRuntime:
     """In-process RNS transport node + pillar mailbox.
 
@@ -255,6 +273,10 @@ class ReticulumNodeRuntime:
         self._announce_thread: threading.Thread | None = None
         self._announce_stop = threading.Event()
         self._links: dict[str, Any] = {}
+        # Announce table — every announce this transport node hears, for
+        # the mesh introspection endpoint (/api/reticulum/mesh). Bounded;
+        # keyed by destination hash hex.
+        self._announces: dict[str, dict] = {}
         self.config = ReticulumNodeConfig()
         # Deposits received over Reticulum, drained by an asyncio task in
         # the app lifespan into the pending_messages table.
@@ -309,6 +331,14 @@ class ReticulumNodeRuntime:
                 self._mailbox_dest.set_proof_strategy(RNS.Destination.PROVE_ALL)
                 self._mailbox_dest.set_packet_callback(self._on_mailbox_packet)
                 self._mailbox_dest.set_link_established_callback(self._on_link)
+
+                # Mesh introspection: hear every announce on the transport.
+                try:
+                    RNS.Transport.register_announce_handler(
+                        _CatchAllAnnounceHandler(self)
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("announce handler registration failed", exc_info=True)
 
                 self._announce_stop.clear()
                 self._announce_thread = threading.Thread(
@@ -367,6 +397,84 @@ class ReticulumNodeRuntime:
         return {"running": True, "restart_required": transport_changed}
 
     # -- identity/status ----------------------------------------------------
+
+    def _record_announce(self, destination_hash, app_data) -> None:
+        import time as _time
+
+        dest = (
+            destination_hash.hex()
+            if isinstance(destination_hash, (bytes, bytearray))
+            else str(destination_hash)
+        )
+        hops = None
+        try:
+            import RNS
+
+            h = RNS.Transport.hops_to(
+                bytes.fromhex(dest) if isinstance(dest, str) else destination_hash
+            )
+            # RNS uses a large sentinel for "no path"
+            if isinstance(h, int) and 0 <= h < 128:
+                hops = h
+        except Exception:  # noqa: BLE001
+            pass
+        name = None
+        if app_data:
+            try:
+                name = bytes(app_data)[:64].decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                name = None
+        entry = {
+            "dest": dest,
+            "hops": hops,
+            "name": name,
+            "last_heard": _time.time(),
+        }
+        with self._lock:
+            self._announces[dest] = entry
+            if len(self._announces) > 2048:
+                oldest = min(self._announces.values(), key=lambda e: e["last_heard"])
+                self._announces.pop(oldest["dest"], None)
+
+    def mesh_snapshot(self) -> dict:
+        """Live mesh introspection for /api/reticulum/mesh — the pillar's
+        own view of the reticulum network: identity, interfaces, and the
+        announce table (destinations + hops)."""
+        interfaces: list[dict] = []
+        try:
+            import RNS
+
+            for iface in list(RNS.Transport.interfaces):
+                try:
+                    interfaces.append(
+                        {
+                            "name": str(iface),
+                            "online": bool(getattr(iface, "online", False)),
+                            "mode": getattr(iface, "mode", None),
+                            "bitrate": getattr(iface, "bitrate", None),
+                            "rxb": getattr(iface, "rxb", 0),
+                            "txb": getattr(iface, "txb", 0),
+                        }
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+        except Exception:  # noqa: BLE001
+            pass
+        with self._lock:
+            announces = sorted(
+                self._announces.values(), key=lambda e: -e["last_heard"]
+            )[:512]
+            started = self._started and not self._soft_off
+        return {
+            "running": started,
+            "mode": self.config.mode,
+            "identity": self.identity_hash(),
+            "dest": self.mailbox_destination_hash(),
+            "display_name": self.config.display_name,
+            "listen_port": self.config.listen_port,
+            "interfaces": interfaces,
+            "announces": announces,
+        }
 
     def identity_hash(self) -> str | None:
         if self._identity is None:

@@ -3,6 +3,10 @@ import { useDMStore } from "../../stores/dm";
 import { useAuthStore } from "../../stores/auth";
 import { DMListItem } from "./DMListItem";
 import { NewDMModal } from "./NewDMModal";
+import { isTauri } from "../../api/servitude";
+import { fetchRoamedHistory } from "../../lib/messengerSync";
+import { usePeerMessengerSurfaceStore } from "../../stores/peerMessengerSurface";
+import { identiconDataUri } from "../mesh/identicon";
 
 interface DMSidebarProps {
   mobile?: boolean;
@@ -19,6 +23,50 @@ export const DMSidebar = memo(function DMSidebar({ mobile, onDMSelect }: DMSideb
   const accessToken = useAuthStore((s) => s.accessToken);
 
   const [showNewDM, setShowNewDM] = useState(false);
+
+  // Superuser roaming (web): the ONE inbox also lists the p2p
+  // conversations the user's native device pushed to this instance.
+  // Opening one shows the read-only device history — no second inbox
+  // tile anywhere.
+  const [roamed, setRoamed] = useState<
+    Array<{ key: string; label: string; preview: string | null }>
+  >([]);
+  useEffect(() => {
+    if (isTauri() || !accessToken) return;
+    void fetchRoamedHistory()
+      .then((r) => {
+        const contacts = r.contacts;
+        setRoamed(
+          r.conversations
+            .sort((a, b) =>
+              String(b.data.lastMessageAt ?? "").localeCompare(
+                String(a.data.lastMessageAt ?? ""),
+              ),
+            )
+            .slice(0, 100)
+            .map((c) => {
+              const contactLabel = contacts.find((x) => x.key === c.key)?.data
+                ?.label;
+              const gn = c.data.groupName;
+              const label =
+                (typeof gn === "string" && gn) ||
+                (typeof contactLabel === "string" && contactLabel) ||
+                (c.key.length > 20
+                  ? `${c.key.slice(0, 10)}…${c.key.slice(-6)}`
+                  : c.key);
+              return {
+                key: c.key,
+                label,
+                preview:
+                  typeof c.data.lastPreview === "string"
+                    ? c.data.lastPreview
+                    : null,
+              };
+            }),
+        );
+      })
+      .catch(() => {});
+  }, [accessToken]);
 
   useEffect(() => {
     if (accessToken) {
@@ -80,6 +128,35 @@ export const DMSidebar = memo(function DMSidebar({ mobile, onDMSelect }: DMSideb
           </div>
         )}
       </div>
+
+      {roamed.length > 0 && (
+        <div className="border-t border-outline-variant/10 px-2 py-2" data-testid="dm-roamed-section">
+          <div className="px-2 pb-1 text-[10px] font-label uppercase tracking-widest text-on-surface-variant">
+            From your device
+          </div>
+          {roamed.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() =>
+                usePeerMessengerSurfaceStore.getState().openConversation(c.key)
+              }
+              className="btn-press mb-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-container-high"
+              data-testid={`dm-roamed-${c.key}`}
+            >
+              <img src={identiconDataUri(c.key)} alt="" className="h-6 w-6 rounded" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-on-surface">{c.label}</span>
+                {c.preview ? (
+                  <span className="block truncate text-[11px] text-on-surface-variant">
+                    {c.preview}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {showNewDM && <NewDMModal onClose={() => setShowNewDM(false)} />}
     </div>
