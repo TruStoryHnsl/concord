@@ -4,6 +4,8 @@ import time
 from collections import defaultdict, deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+
+from services.ratelimit import client_ip as shared_client_ip
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,14 +131,10 @@ async def register_user(
     if not is_first_boot and not open_reg and not body.invite_token:
         raise HTTPException(403, "Registration requires an invite token")
 
-    # Rate limit by real client IP (prefer Cf-Connecting-Ip from Cloudflare)
-    client_ip = (
-        request.headers.get("Cf-Connecting-Ip")
-        or request.headers.get("X-Real-Ip")
-        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    )
-    if not client_ip and request.client:
-        client_ip = request.client.host
+    # Rate limit by client IP — shared trusted-proxy-aware resolver
+    # (forwarded headers count only when the direct peer is a trusted
+    # proxy; a remote caller cannot pick its own bucket).
+    client_ip = shared_client_ip(request)
     if client_ip and not _check_registration_rate_limit(client_ip):
         raise HTTPException(429, "Too many registration attempts. Please try again later.")
 
@@ -345,14 +343,9 @@ async def create_guest_session(
     if _os.getenv("GUEST_REGISTRATION", "true").lower() in ("false", "0", "no"):
         raise HTTPException(403, "Guest sessions are disabled on this instance")
 
-    # IP-based rate limit (shared pool with regular registration)
-    client_ip = (
-        request.headers.get("Cf-Connecting-Ip")
-        or request.headers.get("X-Real-Ip")
-        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    )
-    if not client_ip and request.client:
-        client_ip = request.client.host
+    # IP-based rate limit (shared pool with regular registration),
+    # trusted-proxy-aware — see the note on the register path above.
+    client_ip = shared_client_ip(request)
     if client_ip and not _check_registration_rate_limit(client_ip):
         raise HTTPException(429, "Too many registration attempts. Please try again later.")
 

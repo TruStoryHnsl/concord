@@ -19,6 +19,15 @@ _token_cache_lock = asyncio.Lock()
 _CACHE_TTL = 300  # 5 minutes
 _CACHE_MAX_SIZE = 1000
 
+# Negative cache for REJECTED tokens. Without it, a flood of random
+# Bearer tokens produces one outbound homeserver whoami call per request
+# — an unauthenticated amplification attack against the very homeserver
+# this API fronts. Rejections are remembered briefly (a token that was
+# invalid a minute ago is still invalid) with a hard size cap.
+_bad_token_cache: dict[str, float] = {}
+_BAD_TOKEN_TTL = 60
+_BAD_TOKEN_MAX_SIZE = 4096
+
 
 async def get_user_id(authorization: Optional[str] = Header(None)) -> str:
     """Validate the Bearer token against the Matrix homeserver and return the user ID.
@@ -43,6 +52,12 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> str:
         if now < expires:
             return user_id
 
+    bad_until = _bad_token_cache.get(token)
+    if bad_until is not None:
+        if now < bad_until:
+            raise HTTPException(401, "Invalid or expired access token")
+        _bad_token_cache.pop(token, None)
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
@@ -54,6 +69,9 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> str:
 
     if resp.status_code == 401:
         logger.warning("Auth failed: invalid or expired token (first 8 chars: %s...)", token[:8])
+        if len(_bad_token_cache) >= _BAD_TOKEN_MAX_SIZE:
+            _bad_token_cache.clear()
+        _bad_token_cache[token] = now + _BAD_TOKEN_TTL
         raise HTTPException(401, "Invalid or expired access token")
     if resp.status_code != 200:
         logger.warning("Auth failed: Matrix homeserver returned %d", resp.status_code)

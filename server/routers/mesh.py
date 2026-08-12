@@ -94,7 +94,7 @@ from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -231,7 +231,18 @@ class MeshPresenceRequest(BaseModel):
     persona_id: str = Field(..., min_length=1, max_length=256)
     persona_pubkey: str = Field(..., description="hex-encoded 32-byte Ed25519 public key")
     sig: str = Field(..., description="hex-encoded 64-byte Ed25519 signature")
-    adjacency: list[str] = Field(default_factory=list)
+    # Bounded: the Rust publisher already sorts/dedupes/caps its adjacency
+    # list; the server must not accept unbounded lists from arbitrary
+    # authenticated callers (they are JSON-serialized into a TEXT column).
+    adjacency: list[str] = Field(default_factory=list, max_length=64)
+
+    @field_validator("adjacency")
+    @classmethod
+    def _bounded_peer_ids(cls, v: list[str]) -> list[str]:
+        for entry in v:
+            if len(entry) > 128:
+                raise ValueError("adjacency entries must be <= 128 chars")
+        return v
     ttl: int = Field(..., description="requested TTL in seconds (clamped server-side)")
 
 

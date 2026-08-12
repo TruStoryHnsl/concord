@@ -1,6 +1,18 @@
 {
     http_port 8080
     https_port 8443
+    # Slowloris / stalled-connection mitigation (2026-08-12 protections
+    # pass): bound how long a client may dribble headers/body and how
+    # long idle keep-alives are held. Long-lived proxied streams
+    # (/_matrix sync, /livekit websockets) are unaffected — these are
+    # HTTP server read/idle timeouts, not proxy-upstream timeouts.
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 60s
+            idle 120s
+        }
+    }
     # pki block for the internal_longlived TLS_MODE snippet. Harmless
     # for the public-ACME modes — Caddy only consults `pki` when an
     # `issuer internal` directive is active on a site.

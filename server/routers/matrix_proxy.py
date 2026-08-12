@@ -28,6 +28,8 @@ from collections import defaultdict, deque
 
 import httpx
 from fastapi import APIRouter, Request, Response
+
+from services.ratelimit import client_ip as shared_client_ip
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -93,17 +95,12 @@ def _check_login_rate_limit(ip: str) -> bool:
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Trusts X-Forwarded-For (Caddy sets it for
-    us; the request never reaches concord-api from outside the docker
-    network, so a request without XFF is from a local source we already
-    trust)."""
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        # First entry is the original client; later entries are proxies.
-        return xff.split(",")[0].strip()
-    if request.client is not None:
-        return request.client.host
-    return "unknown"
+    """Client IP for rate-limit keying — delegates to the shared
+    trusted-proxy-aware resolver (services.ratelimit.client_ip), so
+    forwarded headers are honored only when the direct peer is a
+    trusted proxy. A remote caller can no longer choose its own
+    bucket key by sending X-Forwarded-For."""
+    return shared_client_ip(request)
 
 
 # Hop-by-hop headers per RFC 7230 §6.1 — these must not be forwarded

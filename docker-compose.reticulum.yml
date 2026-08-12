@@ -56,19 +56,25 @@ services:
       # invocation inside the container targets the same isolated dir.
       RNS_CONFIG_DIR: /var/lib/reticulum
 
-    # ── Loopback ports (documentation only — DO NOT publish) ────────────────
-    # rnsd binds these on 127.0.0.1 INSIDE the container. They are the RNS
-    # defaults from build_rnsd_config() (reticulum.rs):
+    # ── PILLAR ENTRYPOINT port ──────────────────────────────────────────────
+    # When the operator enables pillar mode (PUT /api/admin/reticulum with
+    # mode=private|public), the in-process RNS node listens with a
+    # TCPServerInterface on 0.0.0.0:4242 inside the container and acts as a
+    # TRANSPORT node for the mesh. This mapping is what makes the entrypoint
+    # dialable from outside. Harmless while mode=off (nothing listens).
     #
+    # PRIVATE mode secrecy is by ROUTING KNOWLEDGE, not by this port being
+    # closed: the entry domain is served only to validated users via the
+    # authenticated /api/reticulum/entrypoint endpoint and never published.
+    # Point a DNS name (kept out of any public record you control) at this
+    # host to use it as the secret entry domain.
+    ports:
+      - "${RETICULUM_ENTRYPOINT_PORT:-4242}:4242"
+
+    # ── Loopback control ports (documentation only — DO NOT publish) ────────
     #   37428/tcp  shared_instance_port   (shared_instance_type = tcp)
-    #   37429/tcp  instance_control_port  (Concord health probe target)
-    #    4242/tcp  TCPServerInterface     (loopback peering for local procs)
-    #
-    # They are loopback-only BY DESIGN — publishing them would widen exposure
-    # and, since rnsd binds 127.0.0.1, achieve nothing. To reach a REMOTE hub,
-    # add an OUTBOUND TCPClientInterface to the rnsd config (see
-    # docs/reticulum/deployment.md), or manage interfaces at runtime via the
-    # R6 settings UI — do not expose these listeners.
+    #   37429/tcp  instance_control_port  (health probe target)
+    # These stay loopback-only inside the container.
 
     # ── OPT-IN: physical / TUN interfaces (OFF by default) ──────────────────
     # The default config is loopback-TCP only and needs NO extra capabilities.

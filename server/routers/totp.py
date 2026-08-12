@@ -3,6 +3,8 @@ import base64
 import logging
 
 import pyotp
+
+from services.ratelimit import totp_lock
 import qrcode
 import qrcode.constants
 from fastapi import APIRouter, Depends, HTTPException
@@ -100,6 +102,13 @@ async def totp_verify(
     db: AsyncSession = Depends(get_db),
 ):
     """Verify a TOTP code and enable 2FA for the user."""
+    lock_remaining = totp_lock.locked(user_id)
+    if lock_remaining > 0:
+        raise HTTPException(
+            429,
+            "Too many incorrect codes. Try again later.",
+            headers={"Retry-After": str(int(lock_remaining) + 1)},
+        )
     result = await db.execute(
         select(UserTOTP).where(UserTOTP.user_id == user_id)
     )
@@ -109,7 +118,9 @@ async def totp_verify(
 
     totp = pyotp.TOTP(record.secret)
     if not totp.verify(body.code):
+        totp_lock.record_failure(user_id)
         raise HTTPException(400, "Invalid code. Please try again.")
+    totp_lock.record_success(user_id)
 
     record.enabled = True
     await db.commit()
@@ -130,6 +141,13 @@ async def totp_disable(
     db: AsyncSession = Depends(get_db),
 ):
     """Disable TOTP 2FA (requires current code)."""
+    lock_remaining = totp_lock.locked(user_id)
+    if lock_remaining > 0:
+        raise HTTPException(
+            429,
+            "Too many incorrect codes. Try again later.",
+            headers={"Retry-After": str(int(lock_remaining) + 1)},
+        )
     result = await db.execute(
         select(UserTOTP).where(UserTOTP.user_id == user_id, UserTOTP.enabled == True)
     )
@@ -139,7 +157,9 @@ async def totp_disable(
 
     totp = pyotp.TOTP(record.secret)
     if not totp.verify(body.code):
+        totp_lock.record_failure(user_id)
         raise HTTPException(400, "Invalid code")
+    totp_lock.record_success(user_id)
 
     record.enabled = False
     await db.commit()
@@ -160,6 +180,13 @@ async def totp_login_verify(
     db: AsyncSession = Depends(get_db),
 ):
     """Verify TOTP code during login flow."""
+    lock_remaining = totp_lock.locked(user_id)
+    if lock_remaining > 0:
+        raise HTTPException(
+            429,
+            "Too many incorrect codes. Try again later.",
+            headers={"Retry-After": str(int(lock_remaining) + 1)},
+        )
     result = await db.execute(
         select(UserTOTP).where(UserTOTP.user_id == user_id, UserTOTP.enabled == True)
     )
@@ -169,7 +196,9 @@ async def totp_login_verify(
 
     totp = pyotp.TOTP(record.secret)
     if not totp.verify(body.code):
+        totp_lock.record_failure(user_id)
         raise HTTPException(400, "Invalid code")
+    totp_lock.record_success(user_id)
 
     return {"status": "verified"}
 

@@ -604,6 +604,56 @@ class PersonaBinding(Base):
     )
 
 
+class PendingMessage(Base):
+    """Store-and-forward mailbox row for the p2p pathway.
+
+    Concord's native 1:1 messaging queues undelivered messages ONLY on
+    the sender's device — if the recipient stays offline, nothing ever
+    arrives. This table is the docker pillar's answer: a sender (over
+    HTTP with an authenticated session, or over Reticulum via the pillar
+    mailbox destination) deposits an OPAQUE payload addressed to a
+    recipient persona; the recipient's account fetches and acks it the
+    next time any of their devices talks to this instance.
+
+    Scoping + safety invariants:
+      - the payload is opaque bytes (base64 in transit). The pillar
+        never interprets, never needs plaintext; senders are expected to
+        seal content for the recipient (the client-side inbox dedupes on
+        ``wire_id`` so redelivery is safe).
+      - deposits are accepted only for recipients with a
+        ``persona_bindings`` row — the mailbox stores for THIS
+        instance's validated users, not for the whole internet.
+      - fetch/ack are strictly user-scoped: an account sees only rows
+        addressed to personas bound to it.
+      - rows are TTL'd (``expires_at``, swept) and capped per recipient.
+    """
+
+    __tablename__ = "pending_messages"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: secrets.token_urlsafe(16)
+    )
+    recipient_persona_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # Sender attribution — best effort, for recipient display/filtering
+    # only. Clients must not treat these as authenticated beyond what the
+    # deposit channel proved (HTTP: Matrix account + optional persona
+    # signature; Reticulum: link-identified RNS identity hash).
+    sender_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    sender_persona_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    sender_pubkey: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    sender_identity_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    channel: Mapped[str] = mapped_column(String, nullable=False, default="http")  # http | reticulum
+    # Sender-side message id (the SocialFrameV2 ``id`` / inbox ULID);
+    # recipients dedupe on it.
+    wire_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    deposited_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PlaceLedgerHeader(Base):
     """Compressed snapshot of a place ledger after a re-mint.
 

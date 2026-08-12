@@ -56,6 +56,13 @@ _HOSTNAME_RE = re.compile(
 
 _PERSONA_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
+# Per-account write bounds (2026-08-12 protections pass). These are
+# generous for real use and exist so one authenticated account cannot
+# turn the catalogue into unbounded free storage.
+MAX_SOURCES_PER_USER = 100
+MAX_PERSONAS_PER_USER = 50
+MAX_META_BYTES = 4096
+
 
 class UserSourceIn(BaseModel):
     kind: str
@@ -161,6 +168,8 @@ async def upsert_my_source(
     """
     kind, host = _validate_source(payload)
     meta_json = json.dumps(payload.meta or {})
+    if len(meta_json.encode("utf-8")) > MAX_META_BYTES:
+        raise HTTPException(400, f"meta must be <= {MAX_META_BYTES} bytes")
 
     existing = (
         await db.execute(
@@ -179,6 +188,15 @@ async def upsert_my_source(
         existing.meta = meta_json
         row = existing
     else:
+        count = len(
+            (
+                await db.execute(
+                    select(UserSource.id).where(UserSource.user_id == user_id)
+                )
+            ).all()
+        )
+        if count >= MAX_SOURCES_PER_USER:
+            raise HTTPException(429, "source catalogue limit reached")
         row = UserSource(
             user_id=user_id,
             kind=kind,
@@ -282,6 +300,15 @@ async def claim_persona(
             existing.persona_pubkey = pubkey_bytes
         row = existing
     else:
+        count = len(
+            (
+                await db.execute(
+                    select(PersonaBinding.id).where(PersonaBinding.user_id == user_id)
+                )
+            ).all()
+        )
+        if count >= MAX_PERSONAS_PER_USER:
+            raise HTTPException(429, "persona binding limit reached")
         row = PersonaBinding(
             user_id=user_id,
             persona_id=persona_id,

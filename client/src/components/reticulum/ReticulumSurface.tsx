@@ -27,6 +27,7 @@ import { useSourcesStore } from "../../stores/sources";
 import { identiconDataUri } from "../mesh/identicon";
 import { MeshMap } from "../mesh/MeshMap";
 import { ReticulumInterfacesPanel } from "../settings/ReticulumInterfacesPanel";
+import { ReticulumMessages } from "./ReticulumMessages";
 
 const EMPTY_GRAPH: MeshGraph = { nodes: [], edges: [] };
 
@@ -155,6 +156,7 @@ export function ReticulumSurface() {
           <MeshMap />
         </div>
       )}
+      {tab === "messages" && <ReticulumMessages />}
       {tab === "announces" && <AnnouncesList />}
       {tab === "interfaces" && (
         <div className="flex-1 overflow-y-auto p-4">

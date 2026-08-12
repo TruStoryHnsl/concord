@@ -16,7 +16,7 @@
 
 import { create } from "zustand";
 
-export type ReticulumTab = "network" | "announces" | "interfaces";
+export type ReticulumTab = "network" | "messages" | "announces" | "interfaces";
 
 interface ReticulumSurfaceState {
   /** The `ConcordSource.id` of the reticulum source being viewed, or

@@ -11,6 +11,7 @@ import { useSourcesStore } from "../../stores/sources";
 
 const SECTIONS: { id: ReticulumTab; icon: string; label: string; hint: string }[] = [
   { id: "network", icon: "lan", label: "Network", hint: "Topology map" },
+  { id: "messages", icon: "forum", label: "Messages", hint: "Mesh text + mailbox" },
   { id: "announces", icon: "podcasts", label: "Announces", hint: "Known destinations" },
   { id: "interfaces", icon: "settings_input_antenna", label: "Interfaces", hint: "rnsd links" },
 ];
