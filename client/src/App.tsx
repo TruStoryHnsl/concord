@@ -33,9 +33,6 @@ import { shouldShowKeychainMigration } from "./components/settings/keychainMigra
 // superuser-ux (p2p social): first-run owner-claim gate. Additive mount —
 // native-only, renders nothing on web or once an owner is already claimed.
 import { SuperuserFirstRunGate } from "./components/social/superuser/SuperuserFirstRunGate";
-// native-pm-ui (Cycle 1): the personal-messenger Home front door. Native-only,
-// mounted OVER the always-alive ChatLayout. Web/docker entry path untouched.
-import { NativeFrontDoor } from "./components/home/NativeFrontDoor";
 
 // Phase 10 (bundle split): the live `<LiveKitRoom>` provider tree is the
 // only `@livekit/components-react` consumer in App's render path. Lazy-
@@ -897,10 +894,10 @@ export default function App() {
           Used where the webview has no WebRTC (Linux WebKitGTK); shows
           itself only while live frames arrive. */}
       <NativeCallLayer />
-      {/* native-pm-ui (Cycle 1): personal-messenger Home as the native default
-          entry surface, gated on isTauri. Sits over the always-mounted
-          ChatLayout; opening a row routes into the existing navStack flow. */}
-      {isTauri && <NativeFrontDoor />}
+      {/* The June-2026 front-door Home overlay is RETIRED (user order,
+          incident 2026-08-11): every build boots into the ChatLayout
+          source-rail shell. The peer messenger lives there as a primary
+          rail surface (PeerMessengerSurface), not behind an overlay. */}
       {showKeychainMigration && (
         <KeychainMigrationPrompt
           onClose={() => setShowKeychainMigration(false)}

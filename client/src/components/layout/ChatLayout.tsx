@@ -40,6 +40,8 @@ import {
 import { useReticulumSurfaceStore } from "../../stores/reticulumSurface";
 import { ReticulumSurface } from "../reticulum/ReticulumSurface";
 import { ReticulumSidebar } from "../reticulum/ReticulumSidebar";
+import { PeerMessengerSurface } from "../social/PeerMessengerSurface";
+import { usePeerMessengerSurfaceStore } from "../../stores/peerMessengerSurface";
 import { useDMStore } from "../../stores/dm";
 import { useToastStore } from "../../stores/toast";
 import { useDisplayName } from "../../hooks/useDisplayName";
@@ -353,6 +355,10 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
   // server/DM/local surfaces; see the clearing effects below.
   const reticulumSourceId = useReticulumSurfaceStore((s) => s.sourceId);
   const reticulumOpen = reticulumSourceId !== null;
+  // Peer messenger — primary p2p surface (per-peer inboxes + known
+  // peers), promoted out of Settings. Same exclusivity contract as the
+  // reticulum surface.
+  const peerMessengerOpen = usePeerMessengerSurfaceStore((s) => s.isOpen);
   // W0.3 / F1 — when the local source's `lan_map` pseudo-channel is the
   // active view, the chat pane renders LanDiscoveryMap instead of a porch
   // channel. Tracked in the localServerSelection store so the sidebar row
@@ -388,6 +394,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     // SourcesPanel, which clear `localActive` via the effects below.
     setLocalActive(true);
     useReticulumSurfaceStore.getState().close();
+    usePeerMessengerSurfaceStore.getState().close();
     useDMStore.getState().setDMActive(false);
     useServerStore.setState({ activeServerId: null, activeChannelId: null });
     // Kick a channel-list load so the channel column populates as soon
@@ -412,6 +419,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     if (activeServerId || activeChannelId || dmActive) {
       setLocalActive(false);
       useReticulumSurfaceStore.getState().close();
+      usePeerMessengerSurfaceStore.getState().close();
     }
   }, [activeServerId, activeChannelId, dmActive]);
 
@@ -807,6 +815,7 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                     onExplore={openExplore}
                     onReticulumSelect={(sourceId) => {
                       useReticulumSurfaceStore.getState().open(sourceId);
+                      usePeerMessengerSurfaceStore.getState().close();
                       useServerStore.setState({ activeServerId: null, activeChannelId: null });
                     }}
                     onLocalServerSelect={handleLocalServerSelect}
@@ -817,7 +826,15 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
                 {/* Channel / DM sidebar */}
                 <div className="flex min-h-0" style={{ width: sidebarWidth, minWidth: SIDEBAR_MIN, maxWidth: SIDEBAR_MAX }}>
                   <SectionBoundary>
-                    {reticulumOpen ? (
+                    {peerMessengerOpen ? (
+                      <div className="w-full h-full flex flex-col min-h-0 bg-surface-container-low">
+                        <div className="px-4 py-3 border-b border-outline-variant/10">
+                          <h3 className="text-xs font-label font-medium text-on-surface-variant uppercase tracking-widest">
+                            Peer messages
+                          </h3>
+                        </div>
+                      </div>
+                    ) : reticulumOpen ? (
                       <ReticulumSidebar />
                     ) : localActive ? (
                       <LocalChannelSidebar />
@@ -1518,6 +1535,11 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
 
   // Shared chat/voice content
   const renderChatContent = () => {
+    // Peer messenger — the p2p primary surface (inboxes + peers). Owns
+    // the pane while open, above every chat surface.
+    if (peerMessengerOpen) {
+      return <PeerMessengerSurface />;
+    }
     // Reticulum source surface — framework-shaped (network/announces/
     // interfaces), NOT the Discord-style chat panes. Takes the pane over
     // every chat surface while a reticulum source is open.
