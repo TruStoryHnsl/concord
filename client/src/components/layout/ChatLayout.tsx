@@ -445,7 +445,12 @@ export function ChatLayout({ onAddSource }: { onAddSource?: () => void } = {}) {
     if (!isNativeApp) return;
     if (activeServerId || activeChannelId || dmActive) return;
     autoActivatedRef.current = true;
-    openLocal();
+    // The native app is a p2p MESSENGER first (user order, incident
+    // 2026-08-11): boot into the peer messenger (conversation list +
+    // history + peers), NOT the Discord-shaped server shell. The
+    // server/channel chrome appears only when the user opens a docker
+    // source / local space from the rail.
+    usePeerMessengerSurfaceStore.getState().open();
   }, [activeServerId, activeChannelId, dmActive, openLocal]);
 
   // Native front door (Personal-Messaging UI): the Home conversation list
