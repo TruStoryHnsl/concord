@@ -1,5 +1,8 @@
 # Concord
 
+[![CI](https://github.com/TruStoryHnsl/concord-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/TruStoryHnsl/concord-docker/actions/workflows/ci.yml)
+[![Secret scan](https://github.com/TruStoryHnsl/concord-docker/actions/workflows/secret-scan.yml/badge.svg)](https://github.com/TruStoryHnsl/concord-docker/actions/workflows/secret-scan.yml)
+
 Self-hosted Discord-style voice and text chat on Matrix.
 
 This public repository contains the Docker edition of Concord: the web client,
